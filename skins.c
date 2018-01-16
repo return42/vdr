@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: skins.c 1.14 2008/02/17 11:31:09 kls Exp $
+ * $Id: skins.c 2.10 2012/06/02 11:44:14 kls Exp $
  */
 
 #include "skins.h"
@@ -67,7 +67,13 @@ cSkinDisplay::~cSkinDisplay()
 
 cSkinDisplayMenu::cSkinDisplayMenu(void)
 {
+  menuCategory = mcUndefined;
   SetTabs(0);
+}
+
+void cSkinDisplayMenu::SetMenuCategory(eMenuCategory MenuCategory)
+{
+  menuCategory = MenuCategory;
 }
 
 void cSkinDisplayMenu::SetTabs(int Tab1, int Tab2, int Tab3, int Tab4, int Tab5)
@@ -79,7 +85,7 @@ void cSkinDisplayMenu::SetTabs(int Tab1, int Tab2, int Tab3, int Tab4, int Tab5)
   tabs[4] = Tab4 ? tabs[3] + Tab4 : 0;
   tabs[5] = Tab5 ? tabs[4] + Tab5 : 0;
   for (int i = 1; i < MaxTabs; i++)
-      tabs[i] *= 12;//XXX average character width of font used for items - see also skincurses.c!!!
+      tabs[i] *= AvgCharWidth();
 }
 
 void cSkinDisplayMenu::Scroll(bool Up, bool Page)
@@ -135,14 +141,14 @@ cSkinDisplayReplay::cProgressBar::cProgressBar(int Width, int Height, int Curren
      if (Marks) {
         bool Start = true;
         for (const cMark *m = Marks->First(); m; m = Marks->Next(m)) {
-            int p1 = Pos(m->position);
+            int p1 = Pos(m->Position());
             if (Start) {
                const cMark *m2 = Marks->Next(m);
-               int p2 = Pos(m2 ? m2->position : total);
+               int p2 = Pos(m2 ? m2->Position() : total);
                int h = Height / 3;
                DrawRectangle(p1, h, p2, Height - h, ColorSelected);
                }
-            Mark(p1, Start, m->position == Current, ColorMark, ColorCurrent);
+            Mark(p1, Start, m->Position() == Current, ColorMark, ColorCurrent);
             Start = !Start;
             }
         }
@@ -164,6 +170,11 @@ void cSkinDisplayReplay::cProgressBar::Mark(int x, bool Start, bool Current, tCo
 cSkinDisplayReplay::cSkinDisplayReplay(void)
 {
   marks = NULL;
+}
+
+void cSkinDisplayReplay::SetRecording(const cRecording *Recording)
+{
+  SetTitle(Recording->Title());
 }
 
 void cSkinDisplayReplay::SetMarks(const cMarks *Marks)
@@ -222,6 +233,10 @@ bool cSkins::SetCurrent(const char *Name)
 
 eKeys cSkins::Message(eMessageType Type, const char *s, int Seconds)
 {
+  if (!cThread::IsMainThread()) {
+     dsyslog("cSkins::Message() called from background thread - ignored! (Use cSkins::QueueMessage() instead)");
+     return kNone;
+     }
   switch (Type) {
     case mtInfo:    isyslog("info: %s", s); break;
     case mtWarning: isyslog("warning: %s", s); break;

@@ -6,7 +6,7 @@
  *   the Free Software Foundation; either version 2 of the License, or     *
  *   (at your option) any later version.                                   *
  *                                                                         *
- *   $Id: si.c 1.25 2008/03/05 17:00:55 kls Exp $
+ *   $Id: si.c 2.8 2012/09/29 14:44:20 kls Exp $
  *                                                                         *
  ***************************************************************************/
 
@@ -206,6 +206,8 @@ void DescriptorGroup::Add(GroupDescriptor *d) {
          array[i]=0;
    } else if (length != d->getLastDescriptorNumber()+1)
       return; //avoid crash in case of misuse
+   if (length <= d->getDescriptorNumber())
+      return; // see http://www.vdr-portal.de/board60-linux/board14-betriebssystem/board69-c-t-vdr/p1025777-segfault-mit-vdr-1-7-21/#post1025777
    array[d->getDescriptorNumber()]=d;
 }
 
@@ -311,6 +313,11 @@ static const char *CharacterTables2[] = {
 static const char *SystemCharacterTable = NULL;
 bool SystemCharacterTableIsSingleByte = true;
 
+bool systemCharacterTableIsSingleByte(void)
+{
+  return SystemCharacterTableIsSingleByte;
+}
+
 bool SetSystemCharacterTable(const char *CharacterTable) {
    if (CharacterTable) {
       for (unsigned int i = 0; i < NumEntries(CharacterTables1); i++) {
@@ -335,11 +342,7 @@ bool SetSystemCharacterTable(const char *CharacterTable) {
    return false;
 }
 
-// Determines the character table used in the given buffer and returns
-// a string indicating that table. If no table can be determined, the
-// default ISO6937 is returned. If a table can be determined, the buffer
-// and length are adjusted accordingly.
-static const char *getCharacterTable(const unsigned char *&buffer, int &length, bool *isSingleByte = NULL) {
+const char *getCharacterTable(const unsigned char *&buffer, int &length, bool *isSingleByte) {
    const char *cs = "ISO6937";
    // Workaround for broadcaster stupidity: according to
    // "ETSI EN 300 468" the default character set is ISO6937. But unfortunately some
@@ -375,7 +378,7 @@ static const char *getCharacterTable(const unsigned char *&buffer, int &length, 
    return cs;
 }
 
-static bool convertCharacterTable(const char *from, size_t fromLength, char *to, size_t toLength, const char *fromCode)
+bool convertCharacterTable(const char *from, size_t fromLength, char *to, size_t toLength, const char *fromCode)
 {
   if (SystemCharacterTable) {
      iconv_t cd = iconv_open(SystemCharacterTable, fromCode);
@@ -402,6 +405,21 @@ static bool convertCharacterTable(const char *from, size_t fromLength, char *to,
   return false;
 }
 
+// A similar version is used in VDR/tools.c:
+static int Utf8CharLen(const char *s)
+{
+  if (SystemCharacterTableIsSingleByte)
+     return 1;
+#define MT(s, m, v) ((*(s) & (m)) == (v)) // Mask Test
+  if (MT(s, 0xE0, 0xC0) && MT(s + 1, 0xC0, 0x80))
+     return 2;
+  if (MT(s, 0xF0, 0xE0) && MT(s + 1, 0xC0, 0x80) && MT(s + 2, 0xC0, 0x80))
+     return 3;
+  if (MT(s, 0xF8, 0xF0) && MT(s + 1, 0xC0, 0x80) && MT(s + 2, 0xC0, 0x80) && MT(s + 3, 0xC0, 0x80))
+     return 4;
+  return 1;
+}
+
 // originally from libdtv, Copyright Rolf Hakenes <hakenes@hippomi.de>
 void String::decodeText(char *buffer, int size) {
    const unsigned char *from=data.getData(0);
@@ -410,82 +428,73 @@ void String::decodeText(char *buffer, int size) {
    if (len <= 0) {
       *to = '\0';
       return;
-      }
+   }
    bool singleByte;
    const char *cs = getCharacterTable(from, len, &singleByte);
-   // FIXME Need to make this UTF-8 aware (different control codes).
-   // However, there's yet to be found a broadcaster that actually
-   // uses UTF-8 for the SI data... (kls 2007-06-10)
-   for (int i = 0; i < len; i++) {
-      if (*from == 0)
-         break;
-      if (    ((' ' <= *from) && (*from <= '~'))
-           || (*from == '\n')
-           || (0xA0 <= *from)
-         )
-         *to++ = *from;
-      else if (*from == 0x8A)
-         *to++ = '\n';
-      from++;
-      if (to - buffer >= size - 1)
-         break;
+   if (singleByte && SystemCharacterTableIsSingleByte || !convertCharacterTable((const char *)from, len, to, size, cs)) {
+      if (len >= size)
+         len = size - 1;
+      strncpy(to, (const char *)from, len);
+      to[len] = 0;
    }
-   *to = '\0';
-   if (!singleByte || !SystemCharacterTableIsSingleByte) {
-      char convBuffer[size];
-      if (convertCharacterTable(buffer, strlen(buffer), convBuffer, sizeof(convBuffer), cs))
-         strncpy(buffer, convBuffer, strlen(convBuffer) + 1);
+   else
+      len = strlen(to); // might have changed
+   // Handle control codes:
+   while (len > 0) {
+      int l = Utf8CharLen(to);
+      if (l <= 2) {
+         unsigned char *p = (unsigned char *)to;
+         if (l == 2 && *p == 0xC2) // UTF-8 sequence
+            p++;
+         bool Move = true;
+         switch (*p) {
+           case 0x8A: *to = '\n'; break;
+           case 0xA0: *to = ' ';  break;
+           default:   Move = false;
+         }
+         if (l == 2 && Move) {
+            memmove(p, p + 1, len - 1); // we also copy the terminating 0!
+            len -= 1;
+            l = 1;
+         }
+      }
+      to += l;
+      len -= l;
    }
 }
 
 void String::decodeText(char *buffer, char *shortVersion, int sizeBuffer, int sizeShortVersion) {
-   const unsigned char *from=data.getData(0);
-   char *to=buffer;
-   char *toShort=shortVersion;
-   int IsShortName=0;
-   int len=getLength();
-   if (len <= 0) {
-      *to = '\0';
-      *toShort = '\0';
+   decodeText(buffer, sizeBuffer);
+   if (!*buffer) {
+      *shortVersion = '\0';
       return;
-      }
-   bool singleByte;
-   const char *cs = getCharacterTable(from, len, &singleByte);
-   // FIXME Need to make this UTF-8 aware (different control codes).
-   // However, there's yet to be found a broadcaster that actually
-   // uses UTF-8 for the SI data... (kls 2007-06-10)
-   for (int i = 0; i < len; i++) {
-      if (    ((' ' <= *from) && (*from <= '~'))
-           || (*from == '\n')
-           || (0xA0 <= *from)
-         )
-      {
-         *to++ = *from;
-         if (IsShortName)
-            *toShort++ = *from;
-      }
-      else if (*from == 0x8A)
-         *to++ = '\n';
-      else if (*from == 0x86)
-         IsShortName++;
-      else if (*from == 0x87)
-         IsShortName--;
-      else if (*from == 0)
-         break;
-      from++;
-      if (to - buffer >= sizeBuffer - 1 || toShort - shortVersion >= sizeShortVersion - 1)
-         break;
    }
-   *to = '\0';
-   *toShort = '\0';
-   if (!singleByte || !SystemCharacterTableIsSingleByte) {
-      char convBuffer[sizeBuffer];
-      if (convertCharacterTable(buffer, strlen(buffer), convBuffer, sizeof(convBuffer), cs))
-         strncpy(buffer, convBuffer, strlen(convBuffer) + 1);
-      char convShortVersion[sizeShortVersion];
-      if (convertCharacterTable(shortVersion, strlen(shortVersion), convShortVersion, sizeof(convShortVersion), cs))
-         strncpy(shortVersion, convShortVersion, strlen(convShortVersion) + 1);
+   // Handle control codes:
+   char *to=buffer;
+   int len=strlen(to);
+   int IsShortName=0;
+   while (len > 0) {
+      int l = Utf8CharLen(to);
+      unsigned char *p = (unsigned char *)to;
+      if (l == 2 && *p == 0xC2) // UTF-8 sequence
+         p++;
+      if (*p == 0x86 || *p == 0x87) {
+         IsShortName += (*p == 0x86) ? 1 : -1;
+         memmove(to, to + l, len - l + 1); // we also copy the terminating 0!
+         len -= l;
+         l = 0;
+      }
+      if (l && IsShortName) {
+         if (l < sizeShortVersion) {
+            for (int i = 0; i < l; i++)
+                *shortVersion++ = to[i];
+            sizeShortVersion -= l;
+         }
+      }
+      to += l;
+      len -= l;
    }
+   *shortVersion = '\0';
 }
 
 Descriptor *Descriptor::getDescriptor(CharArray da, DescriptorTagDomain domain, bool returnUnimplemetedDescriptor) {
@@ -605,6 +614,15 @@ Descriptor *Descriptor::getDescriptor(CharArray da, DescriptorTagDomain domain, 
          case ExtensionDescriptorTag:
             d=new ExtensionDescriptor();
             break;
+         case RegistrationDescriptorTag:
+            d=new RegistrationDescriptor();
+            break;
+         case ContentIdentifierDescriptorTag:
+            d=new ContentIdentifierDescriptor();
+            break;
+         case DefaultAuthorityDescriptorTag:
+            d=new DefaultAuthorityDescriptor();
+            break;
 
          //note that it is no problem to implement one
          //of the unimplemented descriptors.
@@ -613,7 +631,6 @@ Descriptor *Descriptor::getDescriptor(CharArray da, DescriptorTagDomain domain, 
          case VideoStreamDescriptorTag:
          case AudioStreamDescriptorTag:
          case HierarchyDescriptorTag:
-         case RegistrationDescriptorTag:
          case DataStreamAlignmentDescriptorTag:
          case TargetBackgroundGridDescriptorTag:
          case VideoWindowDescriptorTag:
@@ -647,10 +664,8 @@ Descriptor *Descriptor::getDescriptor(CharArray da, DescriptorTagDomain domain, 
          case TransportStreamDescriptorTag:
 
          //defined in ETSI EN 300 468 v 1.7.1
-         case DefaultAuthorityDescriptorTag:
          case RelatedContentDescriptorTag:
          case TVAIdDescriptorTag:
-         case ContentIdentifierDescriptorTag:
          case TimeSliceFecIdentifierDescriptorTag:
          case ECMRepetitionRateDescriptorTag:
          case EnhancedAC3DescriptorTag:
@@ -680,6 +695,9 @@ Descriptor *Descriptor::getDescriptor(CharArray da, DescriptorTagDomain domain, 
             break;
          case MHP_DVBJApplicationLocationDescriptorTag:
             d=new MHP_DVBJApplicationLocationDescriptor();
+            break;
+         case MHP_SimpleApplicationLocationDescriptorTag:
+            d=new MHP_SimpleApplicationLocationDescriptor();
             break;
       // 0x05 - 0x0A is unimplemented this library
          case MHP_ExternalApplicationAuthorisationDescriptorTag:
@@ -720,6 +738,7 @@ Descriptor *Descriptor::getDescriptor(CharArray da, DescriptorTagDomain domain, 
             break;
       }
       break;
+   default: ; // unknown domain, nothing to do
    }
    d->setData(da);
    return d;

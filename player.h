@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: player.h 1.21 2008/02/16 13:50:11 kls Exp $
+ * $Id: player.h 2.6 2012/04/28 13:04:17 kls Exp $
  */
 
 #ifndef __PLAYER_H
@@ -26,6 +26,7 @@ protected:
   bool DevicePoll(cPoller &Poller, int TimeoutMs = 0) { return device ? device->Poll(Poller, TimeoutMs) : false; }
   bool DeviceFlush(int TimeoutMs = 0) { return device ? device->Flush(TimeoutMs) : true; }
   bool DeviceHasIBPTrickSpeed(void) { return device ? device->HasIBPTrickSpeed() : false; }
+  bool DeviceIsPlayingVideo(void) { return device ? device->IsPlayingVideo() : false; }
   void DeviceTrickSpeed(int Speed) { if (device) device->TrickSpeed(Speed); }
   void DeviceClear(void) { if (device) device->Clear(); }
   void DevicePlay(void) { if (device) device->Play(); }
@@ -33,6 +34,7 @@ protected:
   void DeviceMute(void) { if (device) device->Mute(); }
   void DeviceSetVideoDisplayFormat(eVideoDisplayFormat VideoDisplayFormat) { if (device) device->SetVideoDisplayFormat(VideoDisplayFormat); }
   void DeviceStillPicture(const uchar *Data, int Length) { if (device) device->StillPicture(Data, Length); }
+  uint64_t DeviceGetSTC(void) { return device ? device->GetSTC() : -1; }
   void Detach(void);
   virtual void Activate(bool On) {}
        // This function is called right after the cPlayer has been attached to
@@ -42,10 +44,16 @@ protected:
        // Sends the given PES Data to the device and returns the number of
        // bytes that have actually been accepted by the device (or a
        // negative value in case of an error).
+  int PlayTs(const uchar *Data, int Length, bool VideoOnly = false) { return device ? device->PlayTs(Data, Length, VideoOnly) : -1; }
+       // Sends the given TS packet to the device and returns a positive number
+       // if the packet has been accepted by the device, or a negative value in
+       // case of an error.
 public:
   cPlayer(ePlayMode PlayMode = pmAudioVideo);
   virtual ~cPlayer();
   bool IsAttached(void) { return device != NULL; }
+  virtual double FramesPerSecond(void) { return DEFAULTFRAMESPERSECOND; }
+       // Returns the number of frames per second of the currently played material.
   virtual bool GetIndex(int &Current, int &Total, bool SnapToIFrame = false) { return false; }
        // Returns the current and total frame index, optionally snapped to the
        // nearest I-frame.
@@ -78,12 +86,28 @@ public:
   virtual ~cControl();
   virtual void Hide(void) = 0;
   virtual cOsdObject *GetInfo(void);
+         ///< Returns an OSD object that displays information about the currently
+         ///< played programme. If no such information is available, NULL will be
+         ///< returned.
+  virtual const cRecording *GetRecording(void);
+         ///< Returns the cRecording that is currently being replayed, or NULL if
+         ///< this player is not playing a cRecording.
+  virtual cString GetHeader(void);
+         ///< This can be used by players that don't play a cRecording, but rather
+         ///< do something completely different. The resulting string may be used by
+         ///< skins as a last resort, in case they want to display the state of the
+         ///< current player. The return value is expected to be a short, single line
+         ///< string. The default implementation returns an empty string.
+  double FramesPerSecond(void) { return player->FramesPerSecond(); }
   bool GetIndex(int &Current, int &Total, bool SnapToIFrame = false) { return player->GetIndex(Current, Total, SnapToIFrame); }
   bool GetReplayMode(bool &Play, bool &Forward, int &Speed) { return player->GetReplayMode(Play, Forward, Speed); }
   static void Launch(cControl *Control);
   static void Attach(void);
   static void Shutdown(void);
-  static cControl *Control(void);
+  static cControl *Control(bool Hidden = false);
+         ///< Returns the current replay control (if any) in case it is currently
+         ///< visible. If Hidden is true, the control will be returned even if it is
+         ///< currently hidden.
   };
 
 #endif //__PLAYER_H

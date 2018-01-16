@@ -4,12 +4,17 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: font.c 1.25 2008/03/01 10:19:41 kls Exp $
+ * BiDi support by Osama Alrawab <alrawab@hotmail.com> @2008 Tripoli-Libya.
+ *
+ * $Id: font.c 2.13 2012/06/02 13:38:28 kls Exp $
  */
 
 #include "font.h"
 #include <ctype.h>
 #include <fontconfig/fontconfig.h>
+#ifdef BIDI
+#include <fribidi.h>
+#endif
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include "config.h"
@@ -93,6 +98,8 @@ void cGlyph::SetKerningCache(uint PrevSym, int Kerning)
 
 class cFreetypeFont : public cFont {
 private:
+  cString fontName;
+  int size;
   int height;
   int bottom;
   FT_Library library; ///< Handle to library
@@ -105,14 +112,19 @@ private:
 public:
   cFreetypeFont(const char *Name, int CharHeight, int CharWidth = 0);
   virtual ~cFreetypeFont();
+  virtual const char *FontName(void) const { return fontName; }
+  virtual int Size(void) const { return size; }
   virtual int Width(uint c) const;
   virtual int Width(const char *s) const;
   virtual int Height(void) const { return height; }
   virtual void DrawText(cBitmap *Bitmap, int x, int y, const char *s, tColor ColorFg, tColor ColorBg, int Width) const;
+  virtual void DrawText(cPixmap *Pixmap, int x, int y, const char *s, tColor ColorFg, tColor ColorBg, int Width) const;
   };
 
 cFreetypeFont::cFreetypeFont(const char *Name, int CharHeight, int CharWidth)
 {
+  fontName = Name;
+  size = CharHeight;
   height = 0;
   bottom = 0;
   int error = FT_Init_FreeType(&library);
@@ -145,7 +157,7 @@ cFreetypeFont::cFreetypeFont(const char *Name, int CharHeight, int CharWidth)
                                     0,    // horizontal device resolution
                                     0);   // vertical device resolution
            if (!error) {
-              height = ((face->size->metrics.ascender-face->size->metrics.descender) + 63) / 64;
+              height = (face->size->metrics.ascender - face->size->metrics.descender + 63) / 64;
               bottom = abs((face->size->metrics.descender - 63) / 64);
               }
            else
@@ -234,6 +246,10 @@ int cFreetypeFont::Width(const char *s) const
 {
   int w = 0;
   if (s) {
+#ifdef BIDI
+     cString bs = Bidi(s);
+     s = bs;
+#endif
      uint prevSym = 0;
      while (*s) {
            int sl = Utf8CharLen(s);
@@ -253,6 +269,10 @@ int cFreetypeFont::Width(const char *s) const
 void cFreetypeFont::DrawText(cBitmap *Bitmap, int x, int y, const char *s, tColor ColorFg, tColor ColorBg, int Width) const
 {
   if (s && height) { // checking height to make sure we actually have a valid font
+#ifdef BIDI
+     cString bs = Bidi(s);
+     s = bs;
+#endif
      bool AntiAliased = Setup.AntiAlias && Bitmap->Bpp() >= 8;
      bool TransparentBackground = ColorBg == clrTransparent;
      int16_t BlendLevelIndex[MAX_BLEND_LEVELS]; // tIndex is 8 bit unsigned, so a negative value can be used to mark unused entries
@@ -310,6 +330,53 @@ void cFreetypeFont::DrawText(cBitmap *Bitmap, int x, int y, const char *s, tColo
      }
 }
 
+void cFreetypeFont::DrawText(cPixmap *Pixmap, int x, int y, const char *s, tColor ColorFg, tColor ColorBg, int Width) const
+{
+  if (s && height) { // checking height to make sure we actually have a valid font
+#ifdef BIDI
+     cString bs = Bidi(s);
+     s = bs;
+#endif
+     bool AntiAliased = Setup.AntiAlias;
+     uint prevSym = 0;
+     while (*s) {
+           int sl = Utf8CharLen(s);
+           uint sym = Utf8CharGet(s, sl);
+           s += sl;
+           cGlyph *g = Glyph(sym, AntiAliased);
+           if (!g)
+              continue;
+           int kerning = Kerning(g, prevSym);
+           prevSym = sym;
+           uchar *buffer = g->Bitmap();
+           int symWidth = g->Width();
+           if (Width && x + symWidth + g->Left() + kerning - 1 > Width)
+              break; // we don't draw partial characters
+           if (x + symWidth + g->Left() + kerning > 0) {
+              for (int row = 0; row < g->Rows(); row++) {
+                  for (int pitch = 0; pitch < g->Pitch(); pitch++) {
+                      uchar bt = *(buffer + (row * g->Pitch() + pitch));
+                      if (AntiAliased) {
+                         if (bt > 0x00)
+                            Pixmap->DrawPixel(cPoint(x + pitch + g->Left() + kerning, y + row + (height - Bottom() - g->Top())), AlphaBlend(ColorFg, ColorBg, bt));
+                         }
+                      else { //monochrome rendering
+                         for (int col = 0; col < 8 && col + pitch * 8 <= symWidth; col++) {
+                             if (bt & 0x80)
+                                Pixmap->DrawPixel(cPoint(x + col + pitch * 8 + g->Left() + kerning, y + row + (height - Bottom() - g->Top())), ColorFg);
+                             bt <<= 1;
+                             }
+                         }
+                      }
+                  }
+              }
+           x += g->AdvanceX() + kerning;
+           if (x > Pixmap->DrawPort().Width() - 1)
+              break;
+           }
+     }
+}
+
 // --- cDummyFont ------------------------------------------------------------
 
 // A dummy font, in case there are no fonts installed:
@@ -320,6 +387,7 @@ public:
   virtual int Width(const char *s) const { return 50; }
   virtual int Height(void) const { return 20; }
   virtual void DrawText(cBitmap *Bitmap, int x, int y, const char *s, tColor ColorFg, tColor ColorBg, int Width) const {}
+  virtual void DrawText(cPixmap *Pixmap, int x, int y, const char *s, tColor ColorFg, tColor ColorBg, int Width) const {};
   };
 
 // --- cFont -----------------------------------------------------------------
@@ -328,7 +396,7 @@ cFont *cFont::fonts[eDvbFontSize] = { NULL };
 
 void cFont::SetFont(eDvbFont Font, const char *Name, int CharHeight)
 {
-  cFont *f = CreateFont(Name, CharHeight);
+  cFont *f = CreateFont(Name, constrain(CharHeight, MINFONTSIZE, MAXFONTSIZE));
   if (!f || !f->Height())
      f = new cDummyFont;
   delete fonts[Font];
@@ -344,8 +412,9 @@ const cFont *cFont::GetFont(eDvbFont Font)
   if (!fonts[Font]) {
      switch (Font) {
        case fontOsd: SetFont(Font, Setup.FontOsd, Setup.FontOsdSize); break;
-       case fontSml: SetFont(Font, Setup.FontSml, Setup.FontSmlSize); break;
+       case fontSml: SetFont(Font, Setup.FontSml, min(Setup.FontSmlSize, Setup.FontOsdSize)); break;
        case fontFix: SetFont(Font, Setup.FontFix, Setup.FontFixSize); break;
+       default: esyslog("ERROR: unknown Font %d (%s %d)", Font, __FUNCTION__, __LINE__);
        }
      }
   return fonts[Font];
@@ -395,7 +464,7 @@ bool cFont::GetAvailableFontNames(cStringList *FontNames, bool Monospaced)
      FcFontSetDestroy(fontset);
      FcPatternDestroy(pat);
      FcObjectSetDestroy(os);
-     FcFini();
+     //FcFini(); // older versions of fontconfig are broken - and FcInit() can be called more than once
      FontNames->Sort();
      }
   return FontNames->Size() > 0;
@@ -413,7 +482,8 @@ cString cFont::GetFontFileName(const char *FontName)
      FcPatternAddBool(pat, FC_SCALABLE, FcTrue);
      FcConfigSubstitute(NULL, pat, FcMatchPattern);
      FcDefaultSubstitute(pat);
-     FcFontSet *fontset = FcFontSort(NULL, pat, FcFalse, NULL, NULL);
+     FcResult fresult;
+     FcFontSet *fontset = FcFontSort(NULL, pat, FcFalse, NULL, &fresult);
      if (fontset) {
         for (int i = 0; i < fontset->nfont; i++) {
             FcBool scalable;
@@ -431,10 +501,38 @@ cString cFont::GetFontFileName(const char *FontName)
         esyslog("ERROR: no usable font found for '%s'", FontName);
      FcPatternDestroy(pat);
      free(fn);
-     FcFini();
+     //FcFini(); // older versions of fontconfig are broken - and FcInit() can be called more than once
      }
   return FontFileName;
 }
+
+#ifdef BIDI
+cString cFont::Bidi(const char *Ltr)
+{
+  if (!cCharSetConv::SystemCharacterTable()) { // bidi requires UTF-8
+     fribidi_set_mirroring(true);
+     fribidi_set_reorder_nsm(false);
+     FriBidiCharSet fribidiCharset = FRIBIDI_CHAR_SET_UTF8;
+     int LtrLen = strlen(Ltr);
+     FriBidiCharType Base = FRIBIDI_TYPE_L;
+     FriBidiChar *Logical = MALLOC(FriBidiChar, LtrLen + 1) ;
+     int RtlLen = fribidi_charset_to_unicode(fribidiCharset, const_cast<char *>(Ltr), LtrLen, Logical);
+     FriBidiChar *Visual = MALLOC(FriBidiChar, LtrLen + 1) ;
+     char *Rtl = NULL;
+     bool ok = fribidi_log2vis(Logical, RtlLen, &Base, Visual, NULL, NULL, NULL);
+     if (ok) {
+        fribidi_remove_bidi_marks(Visual, RtlLen, NULL, NULL, NULL);
+        Rtl = MALLOC(char, RtlLen * 4 + 1);
+        fribidi_unicode_to_charset(fribidiCharset, Visual, RtlLen, Rtl);
+        }
+     free(Logical);
+     free(Visual);
+     if (ok)
+        return cString(Rtl, true);
+     }
+  return cString(Ltr);
+}
+#endif
 
 // --- cTextWrapper ----------------------------------------------------------
 

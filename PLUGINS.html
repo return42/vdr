@@ -16,7 +16,13 @@ html, body {
     text-align: center;
 }
 .code {
-    background-color: #f0f0f0;
+    background-color: #F0F0F0;
+}
+.modified {
+    background-color: #FFDDDD;
+}
+modified {
+    background-color: #FFDDDD;
 }
 </style>
 </head>
@@ -25,11 +31,14 @@ html, body {
 <div class="center">
 <h1>The VDR Plugin System</h1>
 
-<b>Version 1.6</b>
+<b>Version 2.0</b>
 <p>
-Copyright &copy; 2008 Klaus Schmidinger<br>
-<a href="mailto:kls@cadsoft.de">kls@cadsoft.de</a><br>
-<a href="http://www.cadsoft.de/vdr">www.cadsoft.de/vdr</a>
+Copyright &copy; 2013 Klaus Schmidinger<br>
+<a href="mailto:vdr@tvdr.de">vdr@tvdr.de</a><br>
+<a href="http://www.tvdr.de">www.tvdr.de</a>
+</div>
+<div class="center">
+<modified>Important modifications introduced since version 1.6 are marked like this.</modified>
 </div>
 <p>
 VDR provides an easy to use plugin interface that allows additional functionality
@@ -73,7 +82,7 @@ structures and allows it to hook itself into specific areas to perform special a
 <li><a href="#Wakeup">Wakeup</a>
 <li><a href="#Setup parameters">Setup parameters</a>
 <li><a href="#The Setup menu">The Setup menu</a>
-<li><a href="#Configuration files">Configuration files</a>
+<li><modified><a href="#Additional files">Additional files</modified></a>
 <li><a href="#Internationalization">Internationalization</a>
 <li><a href="#Custom services">Custom services</a>
 <li><a href="#SVDRP commands">SVDRP commands</a>
@@ -93,6 +102,7 @@ structures and allows it to hook itself into specific areas to perform special a
 <li><a href="#Audio">Audio</a>
 <li><a href="#Remote Control">Remote Control</a>
 <li><a href="#Conditional Access">Conditional Access</a>
+<li><modified><a href="#Electronic Program Guide">Electronic Program Guide</modified></a>
 </ul>
 </ul>
 
@@ -163,9 +173,15 @@ The <tt>src</tt> directory contains one subdirectory for each plugin, which carr
 the name of that plugin (in the above example that would be <tt>hello</tt>).
 What's inside the individual source directory of a
 plugin is entirely up to the author of that plugin. The only prerequisites are
-that there is a <tt>Makefile</tt> that provides the targets <tt>all</tt> and
+that there is a <tt>Makefile</tt> that provides the targets <tt>all</tt><modified>, <tt>install</tt></modified> and
 <tt>clean</tt>, and that a call to <tt>make all</tt> actually produces a dynamically
 loadable library file for that plugin (we'll get to the details later).
+<modified>
+The dynamically loadable library file for the plugin shall be located directly under
+the plugin's source directory.
+See the section <a href="#Initializing a new plugin directory">Initializing a new plugin directory</a>
+for how to generate an example Makefile.
+</modified>
 <p>
 The <tt>lib</tt> directory contains the dynamically loadable libraries of all
 available plugins. Note that the names of these files are created by concatenating
@@ -549,6 +565,8 @@ as the <a href="#Getting started"><tt>Start()</tt></a> functions were called.
 
 <hr><h2><a name="Logging">Logging</a></h2>
 
+<div class="blurb">Traces in the sand...</div><p>
+
 <p>
 If the plugin should print log messages, you can use <tt>dsyslog()</tt>, <tt>isyslog()</tt> or <tt>esyslog()</tt>.<br>
 <ul>
@@ -557,7 +575,7 @@ If the plugin should print log messages, you can use <tt>dsyslog()</tt>, <tt>isy
 <li><tt>esyslog()</tt> prints the log message only if the log level of vdr is set to 1 or above.
 </ul>
 The output of this log is the syslog of the system vdr is running on.
-The logmessage can be formatted like <tt>printf()</tt>, as in
+The log message can be formatted like <tt>printf()</tt>, as in
 
 <p><table><tr><td class="code"><pre>
 esyslog("pluginname: error #%d has occurred", ErrorNumber);
@@ -873,39 +891,70 @@ You can first assign the temporary values to the global variables and then do th
 your setup parameters and use that one to copy all parameters with one single statement
 (like VDR does with its cSetup class).
 
-<hr><h2><a name="Configuration files">Configuration files</a></h2>
+<hr><h2><modified><a name="Additional files">Additional files</a></modified></h2>
 
 <div class="blurb">I want my own stuff!</div><p>
 
-There may be situations where a plugin requires configuration files of its own, maybe
-for data that can't be stored in the simple <a href="#Setup parameters">setup parameters</a>
-of VDR, or maybe because it needs to launch other programs that simply need a separate
-configuration file. While the plugin is free to store such files anywhere it
-sees fit, it might be a good idea to put them in a common place, preferably
-where other configuration data already exists. VDR provides the function
+<modified>
+There may be situations where a plugin requires files of its own. While the plugin is
+free to store such files anywhere it sees fit, it might be a good idea to put them in a common
+place, preferably where such data already exists.
+</modified>
+<p>
+<modified>
+<i>configuration files</i>, maybe for data that can't be stored in the simple
+<a href="#Setup parameters">setup parameters</a> of VDR, or maybe because it needs to
+launch other programs that simply need a separate configuration file.
+</modified>
+<p>
+<modified>
+<i>cache files</i>, to store data so that future requests for that data can be served faster. The data
+that is stored within a cache might be values that have been computed earlier or duplicates of
+original values that are stored elsewhere.
+</modified>
+<p>
+<modified>
+<i>resource files</i>, for providing additional files, like pictures, movie clips or channel logos.
+</modified>
+<p>
+<modified>
+Therefore VDR provides the functions
 
 <p><table><tr><td class="code"><pre>
+<modified>
 const char *ConfigDirectory(const char *PluginName = NULL);
+const char *CacheDirectory(const char *PluginName = NULL);
+const char *ResourceDirectory(const char *PluginName = NULL);
+</modified>
 </pre></td></tr></table><p>
 
-which returns a string containing the directory that VDR uses for its own configuration
-files (defined through the <tt><b>-c</b></tt> option in the call to VDR), extended by
+<modified>
+each of which returns a string containing the directory that VDR uses for its own
+files (defined through the options in the call to VDR), extended by
+</modified>
 <tt>"/plugins"</tt>. So assuming the VDR configuration directory is <tt>/video</tt>
 (the default if no <tt><b>-c</b></tt> or <tt><b>-v</b></tt> option is given),
 a call to <tt>ConfigDirectory()</tt> will return <tt>/video/plugins</tt>. The first
 call to <tt>ConfigDirectory()</tt> will automatically make sure that the <tt>plugins</tt>
 subdirectory will exist. If, for some reason, this cannot be achieved, <tt>NULL</tt>
 will be returned.
+<modified>
+The behavior of <tt>CacheDirectory()</tt> and <tt>ResourceDirectory()</tt> is similar.
+</modified>
 <p>
 The additional <tt>plugins</tt> directory is used to keep files from plugins apart
 from those of VDR itself, making sure there will be no name clashes. If a plugin
-needs only one extra configuration file, it is suggested that this file be named
-<tt>name.conf</tt>, where <i>name</i> shall be the name of the plugin.
+<modified>
+needs only one extra file, it is suggested that this file be named <tt>name.*</tt>,
+where <i>name</i> shall be the name of the plugin.
+</modified>
 <p>
 If a plugin needs more than one such file, it is suggested that the plugin stores
 these in a subdirectory of its own, named after the plugin. To easily get such a name
-the <tt>ConfigDirectory()</tt> function can be given an additional string that will
-be appended to the returned directory name, as in
+<modified>
+the functions can be given an additional string that will be appended to the returned
+directory name, as in
+</modified>
 
 <p><table><tr><td class="code"><pre>
 const char *MyConfigDir = ConfigDirectory(Name());
@@ -916,13 +965,16 @@ plugin's name. Again, VDR will make sure that the requested directory will exist
 (or return <tt>NULL</tt> in case of an error).
 <p>
 <b>
-The returned string is statically allocated and will be overwritten by subsequent
-calls to ConfigDirectory()!
+<modified>
+The returned strings are statically allocated and will be overwritten by subsequent calls!
+</modified>
 </b>
 <p>
-The <tt>ConfigDirectory()</tt> function is a static member function of the <tt>cPlugin</tt>
-class. This allows it to be called even from outside any member function of the derived
-plugin class, by writing
+<modified>
+The <tt>ConfigDirectory()</tt>, <tt>CacheDirectory()</tt> and <tt>ResourceDirectory()</tt>
+functions are static member functions of the <tt>cPlugin</tt> class. This allows them to be
+called even from outside any member function of the derived plugin class, by writing
+</modified>
 
 <p><table><tr><td class="code"><pre>
 const char *MyConfigDir = cPlugin::ConfigDirectory();
@@ -1213,10 +1265,10 @@ If a plugin wants to get informed on various events in VDR, it can derive a clas
 
 class cMyStatusMonitor : public cStatus {
 protected:
-  virtual void ChannelSwitch(const cDevice *Device, int ChannelNumber);
+  virtual void ChannelSwitch(const cDevice *Device, int ChannelNumber<modified>, bool LiveView</modified>);
   };
 
-void cMyStatusMonitor::ChannelSwitch(const cDevice *Device, int ChannelNumber)
+void cMyStatusMonitor::ChannelSwitch(const cDevice *Device, int ChannelNumber<modified>, bool LiveView</modified>)
 {
   if (ChannelNumber)
      dsyslog("channel switched to %d on DVB %d", ChannelNumber, Device-&gt;CardIndex());
@@ -1473,10 +1525,13 @@ public:
   cMyReceiver(int Pid);
   };
 
+<modified>
 cMyReceiver::cMyReceiver(int Pid)
-:cReceiver(tChannelID(), -1, Pid)
+:cReceiver(NULL, -1)
 {
+  AddPid(Pid);
 }
+</modified>
 
 cMyReceiver::~cMyReceiver()
 {
@@ -1501,7 +1556,8 @@ member functions of <tt>cReceiver</tt>.
 The above example sets up a receiver that wants to receive data from only one
 PID (for example the Teletext PID). In order to not interfere with other recording
 operations, it sets its priority to <tt>-1</tt> (any negative value will allow
-a <tt>cReceiver</tt> to be detached from its <tt>cDevice</tt> at any time.
+a <tt>cReceiver</tt> to be detached from its <tt>cDevice</tt> at any time
+<modified>in favor of a timer recording or live viewing</modified>).
 <p>
 Once a <tt>cReceiver</tt> has been created, it needs to be <i>attached</i> to
 a <tt>cDevice</tt>:
@@ -1517,8 +1573,9 @@ the receiver is attached to the device that actually receives the current live
 video stream (this may be different from the primary device in case of <i>Transfer
 Mode</i>).
 <p>
-If the <tt>cReceiver</tt> isn't needed any more, it may simply be <i>deleted</i>
-and will automatically detach itself from the <tt>cDevice</tt>.
+<modified>
+The <tt>cReceiver</tt> must be detached from its device before it is deleted.
+</modified>
 
 <hr><h2><a name="Filters">Filters</a></h2>
 
@@ -1673,7 +1730,7 @@ The first step in implementing a new skin is to derive a class from <tt>cSkin</t
 that provides the handling objects necessary to do the actual work:
 
 <p><table><tr><td class="code"><pre>
-#include "skins.h"
+#include &lt;vdr/skins.h&gt;
 
 class cMySkin : public cSkin {
 public:
@@ -1683,7 +1740,7 @@ public:
   virtual cSkinDisplayMenu *DisplayMenu(void);
   virtual cSkinDisplayReplay *DisplayReplay(bool ModeOnly);
   virtual cSkinDisplayVolume *DisplayVolume(void);
-  virtual cSkinDisplayMessage *DisplayTrack(int NumTracks, const char * const *Tracks);
+  virtual cSkinDisplayTracks *DisplayTracks(const char *Title, int NumTracks, const char * const *Tracks);
   virtual cSkinDisplayMessage *DisplayMessage(void);
   };
 </pre></td></tr></table><p>
@@ -1796,6 +1853,7 @@ If the new device can receive, it most likely needs to provide a way of
 selecting which channel it shall tune to:
 
 <p><table><tr><td class="code"><pre>
+<modified>virtual int NumProvidedSystems(void) const;</modified>
 virtual bool ProvidesSource(int Source) const;
 virtual bool ProvidesTransponder(const cChannel *Channel) const;
 virtual bool ProvidesChannel(const cChannel *Channel, int Priority = -1, bool *NeedsDetachReceivers = NULL) const;
@@ -1844,6 +1902,7 @@ virtual bool HasDecoder(void) const;
 virtual bool CanReplay(void) const;
 virtual bool SetPlayMode(ePlayMode PlayMode);
 virtual int64_t GetSTC(void);
+<modified>virtual bool IsPlayingVideo(void) const;</modified>
 virtual bool HasIBPTrickSpeed(void);
 virtual void TrickSpeed(int Speed);
 virtual void Clear(void);
@@ -1872,6 +1931,7 @@ the functions
 
 <p><table><tr><td class="code"><pre>
 virtual int OpenFilter(u_short Pid, u_char Tid, u_char Mask);
+<modified>virtual int ReadFilter(int Handle, void *Buffer, size_t Length);</modified>
 virtual void CloseFilter(int Handle);
 </pre></td></tr></table><p>
 
@@ -1920,12 +1980,23 @@ void cMyDevice::MakePrimaryDevice(bool On)
 The OSD provider object is allocated on the heap and shall not be deleted
 (it will be deleted automatically in case a different device sets up an OSD
 provider, or when the program ends).
-
+<p>
 Note that an OSD implementation need not be physically linked to the device
 in any way. All it needs to make sure is that the OSD will be visible to the
 user - whether this goes through OSD facilities of the physical device (like
 a "full featured" DVB card) or through a graphics adapter that overlays its
 output with the video signal, doesn't matter.
+<p>
+<div class="modified">
+In order to be able to determine the proper size of the OSD, the device
+should implement the function
+
+<p><table><tr><td class="code"><pre>
+virtual void GetOsdSize(int &amp;Width, int &amp;Height, double &amp;Aspect);
+</pre></td></tr></table><p>
+
+By default, an OSD size of 720x480 with an aspect ratio of 1.0 is assumed.
+</div modified>
 
 <p>
 <b>Initializing new devices</b>
@@ -1946,6 +2017,46 @@ Nothing needs to be done to shut down the devices. VDR will automatically
 shut down (delete) all devices when the program terminates. It is therefore
 important that the devices are created on the heap, using the <tt>new</tt>
 operator!
+
+<div class="modified">
+<p>
+<b>Device hooks</b>
+<p>
+VDR has builtin facilities that select which device is able to provide a given
+transponder. However, there may be situations where the setup is so special
+that it requires considerations that exceed the scope of the core VDR code.
+This is where <i>device hooks</i> can be used.
+
+<p><table><tr><td class="code"><pre>
+class cMyDeviceHook : public cDeviceHook {
+public:
+  cMyDeviceHook(void);
+  virtual bool DeviceProvidesTransponder(const cDevice *Device, const cChannel *Channel) const;
+  };
+</pre></td></tr></table><p>
+
+In its <tt>DeviceProvidesTransponder()</tt> function the device hook can take
+whatever actions are necessary to determine whether the given Device can
+provide the given Channel's transponder, as in
+
+<p><table><tr><td class="code"><pre>
+bool cMyDeviceHook::DeviceProvidesTransponder(const cDevice *Device, const cChannel *Channel) const
+{
+  if (<i>condition where Device can't provide Channel</i>)
+     return false;
+  return true;
+}
+</pre></td></tr></table><p>
+
+A plugin that creates a derived cDeviceHook shall do so in its <tt>Initialize()</tt>
+function, as in
+
+<p><table><tr><td class="code"><pre>
+new cMyDeviceHook;
+</pre></td></tr></table><p>
+
+and shall not delete this object. It will be automatically deleted when the program ends.
+</div modified>
 
 <hr><h2><a name="Audio">Audio</a></h2>
 
@@ -2110,6 +2221,13 @@ Put(uint64 Code, bool Repeat = false, bool Release = false);
 </pre></td></tr></table><p>
 
 The other parameters have the same meaning as in the first version of this function.
+<p>
+<modified>
+If your remote control has a repeat function that automatically repeats key events
+if a key is held pressed down for a while, your derived class should use the global
+parameters <tt>Setup.RcRepeatDelay</tt> and <tt>Setup.RcRepeatDelta</tt> to allow
+users to configure the behavior of this function.
+</modified>
 
 <hr><h2><a name="Conditional Access">Conditional Access</a></h2>
 
@@ -2145,6 +2263,38 @@ virtual bool Assign(cDevice *Device, bool Query = false);
 </pre></td></tr></table><p>
 
 See the description of this function in <tt>ci.h</tt> for details.
+
+<div class="modified">
+<hr><h2><a name="Electronic Program Guide">Electronic Program Guide</a></h2>
+
+<div class="blurb">The grass is always greener on the other side...</div><p>
+
+In case the <i>Electronic Program Guide (EPG)</i> provided by the broadcaster
+isn't sufficient for your taste, you can implement a <tt>cEpgHandler</tt> to
+improve it from external sources. For instance, to replace the description
+of the broadcaster's EPG with one from some external database, you could do:
+
+<p><table><tr><td class="code"><pre>
+#include &lt;vdr/epg.h&gt;
+
+class cMyEpgHandler : public cEpgHandler {
+public:
+  virtual bool SetDescription(cEvent *Event, const char *Description);
+  };
+
+bool cMyEpgHandler::SetDescription(cEvent *Event, const char *Description)
+{
+  Event-&gt;SetDescription(DescriptionFromDatabase(Event));
+  return true;
+}
+</pre></td></tr></table><p>
+
+where <tt>DescriptionFromDatabase()</tt> would derive the description of the
+ given event from some external source. Note that the function returns <tt>true</tt>
+to signal VDR that no other EPG handlers shall be queried after this one.
+<p>
+See <tt>VDR/epg.h</tt> for details.
+</div modified>
 
 </body>
 </html>

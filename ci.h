@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: ci.h 1.23 2007/01/03 12:49:10 kls Exp $
+ * $Id: ci.h 2.2 2012/02/29 10:24:27 kls Exp $
  */
 
 #ifndef __CI_H
@@ -192,7 +192,7 @@ public:
        ///< Gets a pending enquiry, or NULL if there is no enquiry.
   int Priority(void);
        ///< Returns the priority if the device this slot is currently assigned
-       ///< to, or -1 if it is not assigned to any device.
+       ///< to, or IDLEPRIORITY if it is not assigned to any device.
   bool ProvidesCa(const int *CaSystemIds);
        ///< Returns true if the CAM in this slot provides one of the given
        ///< CaSystemIds. This doesn't necessarily mean that it will be
@@ -220,7 +220,7 @@ public:
        ///< CAM is currently not decrypting anything. If there is already a
        ///< channel being decrypted, a call to CanDecrypt() checks whether the
        ///< CAM can also decrypt the given channel. Only CAMs that have replied
-       ///< to the inital QUERY will perform this check at all. CAMs that never
+       ///< to the initial QUERY will perform this check at all. CAMs that never
        ///< replied to the initial QUERY are assumed not to be able to handle
        ///< more than one channel at a time.
   void StartDecrypting(void);

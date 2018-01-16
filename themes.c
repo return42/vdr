@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: themes.c 1.8 2008/02/10 16:25:00 kls Exp $
+ * $Id: themes.c 2.2 2012/02/17 13:57:32 kls Exp $
  */
 
 #include "themes.h"
@@ -243,19 +243,35 @@ bool cThemes::Load(const char *SkinName)
      cReadDir d(themesDirectory);
      struct dirent *e;
      while ((e = d.Next()) != NULL) {
-           if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..")) {
-              if (strstr(e->d_name, SkinName) == e->d_name && e->d_name[strlen(SkinName)] == '-') {
-                 cString FileName = AddDirectory(themesDirectory, e->d_name);
-                 cTheme Theme;
-                 if (Theme.Load(*FileName, true)) {
-                    names = (char **)realloc(names, (numThemes + 1) * sizeof(char *));
+           if (strstr(e->d_name, SkinName) == e->d_name && e->d_name[strlen(SkinName)] == '-') {
+              cString FileName = AddDirectory(themesDirectory, e->d_name);
+              cTheme Theme;
+              if (Theme.Load(*FileName, true)) {
+                 if (char **NewBuffer = (char **)realloc(names, (numThemes + 1) * sizeof(char *))) {
+                    names = NewBuffer;
                     names[numThemes] = strdup(Theme.Name());
-                    fileNames = (char **)realloc(fileNames, (numThemes + 1) * sizeof(char *));
-                    fileNames[numThemes] = strdup(*FileName);
-                    descriptions = (char **)realloc(descriptions, (numThemes + 1) * sizeof(char *));
-                    descriptions[numThemes] = strdup(Theme.Description());
-                    numThemes++;
                     }
+                 else {
+                    esyslog("ERROR: out of memory");
+                    break;
+                    }
+                 if (char **NewBuffer = (char **)realloc(fileNames, (numThemes + 1) * sizeof(char *))) {
+                    fileNames = NewBuffer;
+                    fileNames[numThemes] = strdup(*FileName);
+                    }
+                 else {
+                    esyslog("ERROR: out of memory");
+                    break;
+                    }
+                 if (char **NewBuffer = (char **)realloc(descriptions, (numThemes + 1) * sizeof(char *))) {
+                    descriptions = NewBuffer;
+                    descriptions[numThemes] = strdup(Theme.Description());
+                    }
+                 else {
+                    esyslog("ERROR: out of memory");
+                    break;
+                    }
+                 numThemes++;
                  }
               }
            }

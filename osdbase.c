@@ -4,13 +4,14 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: osdbase.c 1.32 2008/02/17 11:33:04 kls Exp $
+ * $Id: osdbase.c 2.7 2012/12/07 09:50:47 kls Exp $
  */
 
 #include "osdbase.h"
 #include <string.h>
 #include "device.h"
 #include "i18n.h"
+#include "menuitems.h"
 #include "remote.h"
 #include "status.h"
 
@@ -41,7 +42,7 @@ cOsdItem::~cOsdItem()
 void cOsdItem::SetText(const char *Text, bool Copy)
 {
   free(text);
-  text = Copy ? strdup(Text) : (char *)Text; // text assumes ownership!
+  text = Copy ? strdup(Text ? Text : "") : (char *)Text; // text assumes ownership!
 }
 
 void cOsdItem::SetSelectable(bool Selectable)
@@ -52,6 +53,11 @@ void cOsdItem::SetSelectable(bool Selectable)
 void cOsdItem::SetFresh(bool Fresh)
 {
   fresh = Fresh;
+}
+
+void cOsdItem::SetMenuItem(cSkinDisplayMenu *DisplayMenu, int Index, bool Current, bool Selectable)
+{
+  DisplayMenu->SetItem(Text(), Index, Current, Selectable);
 }
 
 eOSState cOsdItem::ProcessKey(eKeys Key)
@@ -71,20 +77,22 @@ void cOsdObject::Show(void)
 
 cSkinDisplayMenu *cOsdMenu::displayMenu = NULL;
 int cOsdMenu::displayMenuCount = 0;
-int cOsdMenu::displayMenuItems = 0;//XXX dynamic???
 
 cOsdMenu::cOsdMenu(const char *Title, int c0, int c1, int c2, int c3, int c4)
 {
   isMenu = true;
   digit = 0;
   hasHotkeys = false;
+  displayMenuItems = 0;
   title = NULL;
+  menuCategory = mcUnknown;
   SetTitle(Title);
   SetCols(c0, c1, c2, c3, c4);
   first = 0;
   current = marked = -1;
   subMenu = NULL;
   helpRed = helpGreen = helpYellow = helpBlue = NULL;
+  helpDisplayed = false;
   status = NULL;
   if (!displayMenuCount++)
      SetDisplayMenu();
@@ -101,6 +109,11 @@ cOsdMenu::~cOsdMenu()
      DELETENULL(displayMenu);
 }
 
+void cOsdMenu::SetMenuCategory(eMenuCategory MenuCategory)
+{
+  menuCategory = MenuCategory;
+}
+
 void cOsdMenu::SetDisplayMenu(void)
 {
   if (displayMenu) {
@@ -108,7 +121,6 @@ void cOsdMenu::SetDisplayMenu(void)
      delete displayMenu;
      }
   displayMenu = Skins.Current()->DisplayMenu();
-  displayMenuItems = displayMenu->MaxItems();
 }
 
 const char *cOsdMenu::hk(const char *s)
@@ -154,6 +166,15 @@ void cOsdMenu::SetTitle(const char *Title)
   title = strdup(Title);
 }
 
+void cOsdMenu::DisplayHelp(bool Force)
+{
+  if (!helpDisplayed || Force) {
+     displayMenu->SetButtons(helpRed, helpGreen, helpYellow, helpBlue);
+     cStatus::MsgOsdHelpKeys(helpRed, helpGreen, helpYellow, helpBlue);
+     helpDisplayed = true;
+     }
+}
+
 void cOsdMenu::SetHelp(const char *Red, const char *Green, const char *Yellow, const char *Blue)
 {
   // strings are NOT copied - must be constants!!!
@@ -161,8 +182,7 @@ void cOsdMenu::SetHelp(const char *Red, const char *Green, const char *Yellow, c
   helpGreen  = Green;
   helpYellow = Yellow;
   helpBlue   = Blue;
-  displayMenu->SetButtons(helpRed, helpGreen, helpYellow, helpBlue);
-  cStatus::MsgOsdHelpKeys(helpRed, helpGreen, helpYellow, helpBlue);
+  DisplayHelp(true);
 }
 
 void cOsdMenu::Del(int Index)
@@ -202,11 +222,13 @@ void cOsdMenu::Display(void)
   displayMenu->SetMessage(mtStatus, NULL);
   displayMenu->Clear();
   cStatus::MsgOsdClear();
+  if (menuCategory != displayMenu->MenuCategory())
+     displayMenu->SetMenuCategory(menuCategory);
+  displayMenuItems = displayMenu->MaxItems();
   displayMenu->SetTabs(cols[0], cols[1], cols[2], cols[3], cols[4]);//XXX
   displayMenu->SetTitle(title);
   cStatus::MsgOsdTitle(title);
-  displayMenu->SetButtons(helpRed, helpGreen, helpYellow, helpBlue);
-  cStatus::MsgOsdHelpKeys(helpRed, helpGreen, helpYellow, helpBlue);
+  DisplayHelp(true);
   int count = Count();
   if (count > 0) {
      int ni = 0;
@@ -217,6 +239,7 @@ void cOsdMenu::Display(void)
          }
      if (current < 0)
         current = 0; // just for safety - there HAS to be a current item!
+     first = min(first, max(0, count - displayMenuItems)); // in case the menu size has changed
      if (current - first >= displayMenuItems || current < first) {
         first = current - displayMenuItems / 2;
         if (first + displayMenuItems > count)
@@ -228,7 +251,7 @@ void cOsdMenu::Display(void)
      int n = 0;
      for (cOsdItem *item = Get(first); item; item = Next(item)) {
          bool CurrentSelectable = (i == current) && item->Selectable();
-         displayMenu->SetItem(item->Text(), i - first, CurrentSelectable, item->Selectable());
+         item->SetMenuItem(displayMenu, i - first, CurrentSelectable, item->Selectable());
          if (CurrentSelectable)
             cStatus::MsgOsdCurrentItem(item->Text());
          if (++n == displayMenuItems)
@@ -257,11 +280,17 @@ void cOsdMenu::DisplayCurrent(bool Current)
 {
   cOsdItem *item = Get(current);
   if (item) {
-     displayMenu->SetItem(item->Text(), current - first, Current && item->Selectable(), item->Selectable());
+     item->SetMenuItem(displayMenu, current - first, Current && item->Selectable(), item->Selectable());
      if (Current && item->Selectable())
         cStatus::MsgOsdCurrentItem(item->Text());
      if (!Current)
         item->SetFresh(true); // leaving the current item resets 'fresh'
+     if (cMenuEditItem *MenuEditItem = dynamic_cast<cMenuEditItem *>(item)) {
+        if (!MenuEditItem->DisplayHelp())
+           DisplayHelp();
+        else
+           helpDisplayed = false;
+        }
      }
 }
 
@@ -272,7 +301,7 @@ void cOsdMenu::DisplayItem(cOsdItem *Item)
      int Offset = Index - first;
      if (Offset >= 0 && Offset < first + displayMenuItems) {
         bool Current = Index == current;
-        displayMenu->SetItem(Item->Text(), Offset, Current && Item->Selectable(), Item->Selectable());
+        Item->SetMenuItem(displayMenu, Offset, Current && Item->Selectable(), Item->Selectable());
         if (Current && Item->Selectable())
            cStatus::MsgOsdCurrentItem(Item->Text());
         }
@@ -499,7 +528,7 @@ eOSState cOsdMenu::ProcessKey(eKeys Key)
         return state;
         }
      }
-  switch (Key) {
+  switch (int(Key)) {
     case k0:      return osUnknown;
     case k1...k9: return hasHotkeys ? HotKey(Key) : osUnknown;
     case kUp|k_Repeat:

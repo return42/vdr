@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: skins.h 1.16 2008/02/17 11:30:56 kls Exp $
+ * $Id: skins.h 2.9 2012/12/21 11:09:13 kls Exp $
  */
 
 #ifndef __SKINS_H
@@ -17,6 +17,7 @@
 #include "recording.h"
 #include "themes.h"
 #include "thread.h"
+#include "timers.h"
 #include "tools.h"
 
 enum eMessageType { mtStatus = 0, mtInfo, mtWarning, mtError }; // will be used to calculate color offsets!
@@ -28,6 +29,8 @@ private:
 public:
   cSkinDisplay(void);
   virtual ~cSkinDisplay();
+  static int AvgCharWidth(void) { return Setup.FontOsdSize * 4 / 6; }
+       ///< Returns the average width of a character in pixel (just a raw estimate).
   int EditableWidth(void) { return editableWidth; }
   void SetEditableWidth(int Width) { editableWidth = Width; }
        ///< If an item is set through a call to cSkinDisplayMenu::SetItem(), this
@@ -47,7 +50,7 @@ public:
 
 class cSkinDisplayChannel : public cSkinDisplay {
        ///< This class is used to display the current channel, together with
-       ///< the present and following EPG even. How and to what extent this
+       ///< the present and following EPG event. How and to what extent this
        ///< is done is totally up to the derived class.
 public:
   virtual void SetChannel(const cChannel *Channel, int Number) = 0;
@@ -70,6 +73,38 @@ public:
   */
   };
 
+enum eMenuCategory {
+  mcUndefined = -1,
+  mcUnknown = 0,
+  mcMain,
+  mcSchedule,
+  mcScheduleNow,
+  mcScheduleNext,
+  mcChannel,
+  mcChannelEdit,
+  mcTimer,
+  mcTimerEdit,
+  mcRecording,
+  mcRecordingInfo,
+  mcPlugin,
+  mcPluginSetup,
+  mcSetup,
+  mcSetupOsd,
+  mcSetupEpg,
+  mcSetupDvb,
+  mcSetupLnb,
+  mcSetupCam,
+  mcSetupRecord,
+  mcSetupReplay,
+  mcSetupMisc,
+  mcSetupPlugins,
+  mcCommand,
+  mcEvent,
+  mcText,
+  mcFolder,
+  mcCam
+  };
+
 class cSkinDisplayMenu : public cSkinDisplay {
        ///< This class implements the general purpose menu display, which is
        ///< used throughout the program to display information and let the
@@ -90,6 +125,7 @@ class cSkinDisplayMenu : public cSkinDisplay {
 public:
   enum { MaxTabs = 6 };
 private:
+  eMenuCategory menuCategory;
   int tabs[MaxTabs];
 protected:
   cTextScroller textScroller;
@@ -102,6 +138,16 @@ protected:
        ///< part can be found, NULL will be returned.
 public:
   cSkinDisplayMenu(void);
+  eMenuCategory MenuCategory(void) const { return menuCategory; }
+       ///< Returns the menu category, set by a previous call to SetMenuCategory().
+  virtual void SetMenuCategory(eMenuCategory MenuCategory);
+       ///< Sets the current menu category. This allows skins to handle known
+       ///< types of menus in different ways, for instance by displaying icons
+       ///< or special decorations.
+       ///< A derived class can reimplement this function to be informed of any
+       ///< changes in the menu category. If it does, it shall call the base class
+       ///< function in order to set the members accordingly for later calls to the
+       ///< MenuCategory() function.
   virtual void SetTabs(int Tab1, int Tab2 = 0, int Tab3 = 0, int Tab4 = 0, int Tab5 = 0);
        ///< Sets the tab columns to the given values, which are the number of
        ///< characters in each column.
@@ -137,18 +183,48 @@ public:
        ///< this function will be first called for the old current item
        ///< with Current set to false, and then for the new current item
        ///< with Current set to true.
-  /*TODO
-  virtual void SetItem(const cEvent *Event, int Index, bool Current, bool Selectable, bool NowNext???, bool Schedule???);
-  virtual void SetItem(const cTimer *Timer, int Index, bool Current, bool Selectable);
-  virtual void SetItem(const cChannel *Channel, int Index, bool Current, bool Selectable);
-  virtual void SetItem(const cRecording *Recording, int Index, bool Current, bool Selectable);
-  --> false: call SetItem(text)
-  */
+  virtual bool SetItemEvent(const cEvent *Event, int Index, bool Current, bool Selectable, const cChannel *Channel, bool WithDate, eTimerMatch TimerMatch) { return false; }
+       ///< Sets the item at the given Index to Event. See SetItem() for more information.
+       ///< If a derived skin class implements this function, it can display an Event item
+       ///< in a more elaborate way than just a simple line of text.
+       ///< If Channel is not NULL, the channel's name and/or number shall be displayed.
+       ///< If WithDate is true, the date of the Event shall be displayed (in addition to the time).
+       ///< TimerMatch tells how much of this event will be recorded by a timer.
+       ///< If the skin displays the Event item in its own way, it shall return true.
+       ///< The default implementation does nothing and returns false, which results in
+       ///< a call to SetItem() with a proper text.
+  virtual bool SetItemTimer(const cTimer *Timer, int Index, bool Current, bool Selectable) { return false; }
+       ///< Sets the item at the given Index to Timer. See SetItem() for more information.
+       ///< If a derived skin class implements this function, it can display a Timer item
+       ///< in a more elaborate way than just a simple line of text.
+       ///< If the skin displays the Timer item in its own way, it shall return true.
+       ///< The default implementation does nothing and returns false, which results in
+       ///< a call to SetItem() with a proper text.
+  virtual bool SetItemChannel(const cChannel *Channel, int Index, bool Current, bool Selectable, bool WithProvider) { return false; }
+       ///< Sets the item at the given Index to Channel. See SetItem() for more information.
+       ///< If a derived skin class implements this function, it can display a Channel item
+       ///< in a more elaborate way than just a simple line of text.
+       ///< If WithProvider ist true, the provider shall be displayed in addition to the
+       ///< channel's name.
+       ///< If the skin displays the Channel item in its own way, it shall return true.
+       ///< The default implementation does nothing and returns false, which results in
+       ///< a call to SetItem() with a proper text.
+  virtual bool SetItemRecording(const cRecording *Recording, int Index, bool Current, bool Selectable, int Level, int Total, int New) { return false; }
+       ///< Sets the item at the given Index to Recording. See SetItem() for more information.
+       ///< If a derived skin class implements this function, it can display a Recording item
+       ///< in a more elaborate way than just a simple line of text.
+       ///< Level is the currently displayed level of the video directory, where 0 is the
+       ///< top level. A value of -1 means that the full path names of the recordings
+       ///< shall be displayed. If Total is greater than 0, this is a directory with the given
+       ///< total number of entries, and New contains the number of new (unwatched) recordings.
+       ///< If the skin displays the Recording item in its own way, it shall return true.
+       ///< The default implementation does nothing and returns false, which results in
+       ///< a call to SetItem() with a proper text.
   virtual void SetScrollbar(int Total, int Offset);
        ///< Sets the Total number of items in the currently displayed list, and the
        ///< Offset of the first item that is currently displayed (the skin knows how
        ///< many items it can display at once, see MaxItems()). This can be used to
-       ///< display a scollbar.
+       ///< display a scrollbar.
   virtual void SetEvent(const cEvent *Event) = 0;
        ///< Sets the Event that shall be displayed, using the entire central area
        ///< of the menu. The Event's 'description' shall be displayed using a
@@ -198,6 +274,11 @@ public:
   virtual void SetMarks(const cMarks *Marks);
        ///< Sets the editing marks to Marks, which shall be used to display the
        ///< progress bar through a cProgressBar object.
+  virtual void SetRecording(const cRecording *Recording);
+       ///< Sets the recording that is currently being played.
+       ///< The default implementation calls SetTitle() with the title and short
+       ///< text of the Recording. A derived class can use any information provided
+       ///< by the given Recording and display it.
   virtual void SetTitle(const char *Title) = 0;
        ///< Sets the title of the recording.
   virtual void SetMode(bool Play, bool Forward, int Speed) = 0;

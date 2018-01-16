@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: tools.c 1.145 2008/03/05 17:23:47 kls Exp $
+ * $Id: tools.c 2.29 2012/12/08 11:16:30 kls Exp $
  */
 
 #include "tools.h"
@@ -18,7 +18,7 @@ extern "C" {
 #include <jpeglib.h>
 #undef boolean
 }
-#include <stdarg.h>
+#include <locale.h>
 #include <stdlib.h>
 #include <sys/time.h>
 #include <sys/vfs.h>
@@ -157,8 +157,14 @@ char *strreplace(char *s, const char *s1, const char *s2)
      int l  = strlen(s);
      int l1 = strlen(s1);
      int l2 = strlen(s2);
-     if (l2 > l1)
-        s = (char *)realloc(s, l + l2 - l1 + 1);
+     if (l2 > l1) {
+        if (char *NewBuffer = (char *)realloc(s, l + l2 - l1 + 1))
+           s = NewBuffer;
+        else {
+           esyslog("ERROR: out of memory");
+           return s;
+           }
+        }
      char *sof = s + of;
      if (l2 != l1)
         memmove(sof + l2, sof + l1, l - of - l1 + 1);
@@ -256,7 +262,7 @@ int numdigits(int n)
 
 bool isnumber(const char *s)
 {
-  if (!*s)
+  if (!s || !*s)
      return false;
   do {
      if (!isdigit(*s))
@@ -265,9 +271,69 @@ bool isnumber(const char *s)
   return true;
 }
 
+int64_t StrToNum(const char *s)
+{
+  char *t = NULL;
+  int64_t n = strtoll(s, &t, 10);
+  if (t) {
+     switch (*t) {
+       case 'T': n *= 1024;
+       case 'G': n *= 1024;
+       case 'M': n *= 1024;
+       case 'K': n *= 1024;
+       }
+     }
+  return n;
+}
+
+bool StrInArray(const char *a[], const char *s)
+{
+  if (a) {
+     while (*a) {
+           if (strcmp(*a, s) == 0)
+              return true;
+           a++;
+           }
+     }
+  return false;
+}
+
 cString AddDirectory(const char *DirName, const char *FileName)
 {
   return cString::sprintf("%s/%s", DirName && *DirName ? DirName : ".", FileName);
+}
+
+#define DECIMAL_POINT_C '.'
+
+double atod(const char *s)
+{
+  static lconv *loc = localeconv();
+  if (*loc->decimal_point != DECIMAL_POINT_C) {
+     char buf[strlen(s) + 1];
+     char *p = buf;
+     while (*s) {
+           if (*s == DECIMAL_POINT_C)
+              *p = *loc->decimal_point;
+           else
+              *p = *s;
+           p++;
+           s++;
+           }
+     *p = 0;
+     return atof(buf);
+     }
+  else
+     return atof(s);
+}
+
+cString dtoa(double d, const char *Format)
+{
+  static lconv *loc = localeconv();
+  char buf[16];
+  snprintf(buf, sizeof(buf), Format, d);
+  if (*loc->decimal_point != DECIMAL_POINT_C)
+     strreplace(buf, *loc->decimal_point, DECIMAL_POINT_C);
+  return buf;
 }
 
 cString itoa(int n)
@@ -279,11 +345,11 @@ cString itoa(int n)
 
 bool EntriesOnSameFileSystem(const char *File1, const char *File2)
 {
-  struct statfs statFs;
-  if (statfs(File1, &statFs) == 0) {
-     fsid_t fsid1 = statFs.f_fsid;
-     if (statfs(File2, &statFs) == 0)
-        return memcmp(&statFs.f_fsid, &fsid1, sizeof(fsid1)) == 0;
+  struct stat st;
+  if (stat(File1, &st) == 0) {
+     dev_t dev1 = st.st_dev;
+     if (stat(File2, &st) == 0)
+        return st.st_dev == dev1;
      else
         LOG_ERROR_STR(File2);
      }
@@ -364,30 +430,35 @@ bool RemoveFileOrDir(const char *FileName, bool FollowSymlinks)
         if (d.Ok()) {
            struct dirent *e;
            while ((e = d.Next()) != NULL) {
-                 if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..")) {
-                    cString buffer = AddDirectory(FileName, e->d_name);
-                    if (FollowSymlinks) {
-                       int size = strlen(buffer) * 2; // should be large enough
-                       char *l = MALLOC(char, size);
-                       int n = readlink(buffer, l, size);
-                       if (n < 0) {
-                          if (errno != EINVAL)
-                             LOG_ERROR_STR(*buffer);
+                 cString buffer = AddDirectory(FileName, e->d_name);
+                 if (FollowSymlinks) {
+                    struct stat st2;
+                    if (lstat(buffer, &st2) == 0) {
+                       if (S_ISLNK(st2.st_mode)) {
+                          int size = st2.st_size + 1;
+                          char *l = MALLOC(char, size);
+                          int n = readlink(buffer, l, size - 1);
+                          if (n < 0) {
+                             if (errno != EINVAL)
+                                LOG_ERROR_STR(*buffer);
+                             }
+                          else {
+                             l[n] = 0;
+                             dsyslog("removing %s", l);
+                             if (remove(l) < 0)
+                                LOG_ERROR_STR(l);
+                             }
+                          free(l);
                           }
-                       else if (n < size) {
-                          l[n] = 0;
-                          dsyslog("removing %s", l);
-                          if (remove(l) < 0)
-                             LOG_ERROR_STR(l);
-                          }
-                       else
-                          esyslog("ERROR: symlink name length (%d) exceeded anticipated buffer size (%d)", n, size);
-                       free(l);
                        }
-                    dsyslog("removing %s", *buffer);
-                    if (remove(buffer) < 0)
-                       LOG_ERROR_STR(*buffer);
+                    else if (errno != ENOENT) {
+                       LOG_ERROR_STR(FileName);
+                       return false;
+                       }
                     }
+                 dsyslog("removing %s", *buffer);
+                 if (remove(buffer) < 0)
+                    LOG_ERROR_STR(*buffer);
                  }
            }
         else {
@@ -408,21 +479,24 @@ bool RemoveFileOrDir(const char *FileName, bool FollowSymlinks)
   return true;
 }
 
-bool RemoveEmptyDirectories(const char *DirName, bool RemoveThis)
+bool RemoveEmptyDirectories(const char *DirName, bool RemoveThis, const char *IgnoreFiles[])
 {
+  bool HasIgnoredFiles = false;
   cReadDir d(DirName);
   if (d.Ok()) {
      bool empty = true;
      struct dirent *e;
      while ((e = d.Next()) != NULL) {
-           if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..") && strcmp(e->d_name, "lost+found")) {
+           if (strcmp(e->d_name, "lost+found")) {
               cString buffer = AddDirectory(DirName, e->d_name);
               struct stat st;
               if (stat(buffer, &st) == 0) {
                  if (S_ISDIR(st.st_mode)) {
-                    if (!RemoveEmptyDirectories(buffer, true))
+                    if (!RemoveEmptyDirectories(buffer, true, IgnoreFiles))
                        empty = false;
                     }
+                 else if (RemoveThis && IgnoreFiles && StrInArray(IgnoreFiles, e->d_name))
+                    HasIgnoredFiles = true;
                  else
                     empty = false;
                  }
@@ -433,6 +507,19 @@ bool RemoveEmptyDirectories(const char *DirName, bool RemoveThis)
               }
            }
      if (RemoveThis && empty) {
+        if (HasIgnoredFiles) {
+           while (*IgnoreFiles) {
+                 cString buffer = AddDirectory(DirName, *IgnoreFiles);
+                 if (access(buffer, F_OK) == 0) {
+                    dsyslog("removing %s", *buffer);
+                    if (remove(buffer) < 0) {
+                       LOG_ERROR_STR(*buffer);
+                       return false;
+                       }
+                    }
+                 IgnoreFiles++;
+                 }
+           }
         dsyslog("removing %s", DirName);
         if (remove(DirName) < 0) {
            LOG_ERROR_STR(DirName);
@@ -453,24 +540,22 @@ int DirSizeMB(const char *DirName)
      int size = 0;
      struct dirent *e;
      while (size >= 0 && (e = d.Next()) != NULL) {
-           if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..")) {
-              cString buffer = AddDirectory(DirName, e->d_name);
-              struct stat st;
-              if (stat(buffer, &st) == 0) {
-                 if (S_ISDIR(st.st_mode)) {
-                    int n = DirSizeMB(buffer);
-                    if (n >= 0)
-                       size += n;
-                    else
-                       size = -1;
-                    }
+           cString buffer = AddDirectory(DirName, e->d_name);
+           struct stat st;
+           if (stat(buffer, &st) == 0) {
+              if (S_ISDIR(st.st_mode)) {
+                 int n = DirSizeMB(buffer);
+                 if (n >= 0)
+                    size += n;
                  else
-                    size += st.st_size / MEGABYTE(1);
+                    size = -1;
                  }
-              else {
-                 LOG_ERROR_STR(*buffer);
-                 size = -1;
-                 }
+              else
+                 size += st.st_size / MEGABYTE(1);
+              }
+           else {
+              LOG_ERROR_STR(*buffer);
+              size = -1;
               }
            }
      return size;
@@ -540,11 +625,22 @@ time_t LastModifiedTime(const char *FileName)
   return 0;
 }
 
+off_t FileSize(const char *FileName)
+{
+  struct stat fs;
+  if (stat(FileName, &fs) == 0)
+     return fs.st_size;
+  return -1;
+}
+
 // --- cTimeMs ---------------------------------------------------------------
 
 cTimeMs::cTimeMs(int Ms)
 {
-  Set(Ms);
+  if (Ms >= 0)
+     Set(Ms);
+  else
+     begin = 0;
 }
 
 uint64_t cTimeMs::Now(void)
@@ -633,6 +729,7 @@ uint Utf8CharGet(const char *s, int Length)
     case 2: return ((*s & 0x1F) <<  6) |  (*(s + 1) & 0x3F);
     case 3: return ((*s & 0x0F) << 12) | ((*(s + 1) & 0x3F) <<  6) |  (*(s + 2) & 0x3F);
     case 4: return ((*s & 0x07) << 18) | ((*(s + 1) & 0x3F) << 12) | ((*(s + 2) & 0x3F) << 6) | (*(s + 3) & 0x3F);
+    default: ;
     }
   return *s;
 }
@@ -768,10 +865,10 @@ char *cCharSetConv::systemCharacterTable = NULL;
 cCharSetConv::cCharSetConv(const char *FromCode, const char *ToCode)
 {
   if (!FromCode)
-     FromCode = systemCharacterTable;
+     FromCode = systemCharacterTable ? systemCharacterTable : "UTF-8";
   if (!ToCode)
      ToCode = "UTF-8";
-  cd = (FromCode && ToCode) ? iconv_open(ToCode, FromCode) : (iconv_t)-1;
+  cd = iconv_open(ToCode, FromCode);
   result = NULL;
   length = 0;
 }
@@ -779,7 +876,8 @@ cCharSetConv::cCharSetConv(const char *FromCode, const char *ToCode)
 cCharSetConv::~cCharSetConv()
 {
   free(result);
-  iconv_close(cd);
+  if (cd != (iconv_t)-1)
+     iconv_close(cd);
 }
 
 void cCharSetConv::SetSystemCharacterTable(const char *CharacterTable)
@@ -812,8 +910,15 @@ const char *cCharSetConv::Convert(const char *From, char *To, size_t ToLength)
      size_t FromLength = strlen(From);
      char *ToPtr = To;
      if (!ToPtr) {
-        length = max(length, FromLength * 2); // some reserve to avoid later reallocations
-        result = (char *)realloc(result, length);
+        int NewLength = max(length, FromLength * 2); // some reserve to avoid later reallocations
+        if (char *NewBuffer = (char *)realloc(result, NewLength)) {
+           length = NewLength;
+           result = NewBuffer;
+           }
+        else {
+           esyslog("ERROR: out of memory");
+           return From;
+           }
         ToPtr = result;
         ToLength = length;
         }
@@ -829,8 +934,15 @@ const char *cCharSetConv::Convert(const char *From, char *To, size_t ToLength)
                  // The result buffer is too small, so increase it:
                  size_t d = ToPtr - result;
                  size_t r = length / 2;
-                 length += r;
-                 Converted = result = (char *)realloc(result, length);
+                 int NewLength = length + r;
+                 if (char *NewBuffer = (char *)realloc(result, NewLength)) {
+                    length = NewLength;
+                    Converted = result = NewBuffer;
+                    }
+                 else {
+                    esyslog("ERROR: out of memory");
+                    return From;
+                    }
                  ToLength += r;
                  ToPtr = result + d;
                  }
@@ -877,6 +989,15 @@ cString &cString::operator=(const cString &String)
   return *this;
 }
 
+cString &cString::operator=(const char *String)
+{
+  if (s == String)
+    return *this;
+  free(s);
+  s = String ? strdup(String) : NULL;
+  return *this;
+}
+
 cString &cString::Truncate(int Index)
 {
   int l = strlen(s);
@@ -900,7 +1021,7 @@ cString cString::sprintf(const char *fmt, ...)
   return cString(buffer, true);
 }
 
-cString cString::sprintf(const char *fmt, va_list &ap)
+cString cString::vsprintf(const char *fmt, va_list &ap)
 {
   char *buffer;
   if (!fmt || vasprintf(&buffer, fmt, ap) < 0) {
@@ -942,8 +1063,8 @@ cString WeekDayNameFull(int WeekDay)
     case 4: return tr("Friday");
     case 5: return tr("Saturday");
     case 6: return tr("Sunday");
+    default: return "???";
     }
-  return "???";
 }
 
 cString WeekDayNameFull(time_t t)
@@ -984,6 +1105,15 @@ cString DateString(time_t t)
   return buf;
 }
 
+cString ShortDateString(time_t t)
+{
+  char buf[32];
+  struct tm tm_r;
+  tm *tm = localtime_r(&t, &tm_r);
+  strftime(buf, sizeof(buf), "%d.%m.%y", tm);
+  return buf;
+}
+
 cString TimeString(time_t t)
 {
   char buf[25];
@@ -1015,15 +1145,22 @@ static boolean JpegCompressEmptyOutputBuffer(j_compress_ptr cinfo)
   tJpegCompressData *jcd = (tJpegCompressData *)cinfo->client_data;
   if (jcd) {
      int Used = jcd->size;
-     jcd->size += JPEGCOMPRESSMEM;
-     jcd->mem = (uchar *)realloc(jcd->mem, jcd->size);
+     int NewSize = jcd->size + JPEGCOMPRESSMEM;
+     if (uchar *NewBuffer = (uchar *)realloc(jcd->mem, NewSize)) {
+        jcd->size = NewSize;
+        jcd->mem = NewBuffer;
+        }
+     else {
+        esyslog("ERROR: out of memory");
+        return false;
+        }
      if (jcd->mem) {
         cinfo->dest->next_output_byte = jcd->mem + Used;
         cinfo->dest->free_in_buffer = jcd->size - Used;
-        return TRUE;
+        return true;
         }
      }
-  return FALSE;
+  return false;
 }
 
 static void JpegCompressTermDestination(j_compress_ptr cinfo)
@@ -1032,8 +1169,12 @@ static void JpegCompressTermDestination(j_compress_ptr cinfo)
   if (jcd) {
      int Used = cinfo->dest->next_output_byte - jcd->mem;
      if (Used < jcd->size) {
-        jcd->size = Used;
-        jcd->mem = (uchar *)realloc(jcd->mem, jcd->size);
+        if (uchar *NewBuffer = (uchar *)realloc(jcd->mem, Used)) {
+           jcd->size = Used;
+           jcd->mem = NewBuffer;
+           }
+        else
+           esyslog("ERROR: out of memory");
         }
      }
 }
@@ -1131,6 +1272,47 @@ const char *cBase64Encoder::NextLine(void)
   return NULL;
 }
 
+// --- cBitStream ------------------------------------------------------------
+
+int cBitStream::GetBit(void)
+{
+  if (index >= length)
+     return 1;
+  int r = (data[index >> 3] >> (7 - (index & 7))) & 1;
+  ++index;
+  return r;
+}
+
+uint32_t cBitStream::GetBits(int n)
+{
+  uint32_t r = 0;
+  while (n--)
+        r |= GetBit() << n;
+  return r;
+}
+
+void cBitStream::ByteAlign(void)
+{
+  int n = index % 8;
+  if (n > 0)
+     SkipBits(8 - n);
+}
+
+void cBitStream::WordAlign(void)
+{
+  int n = index % 16;
+  if (n > 0)
+     SkipBits(16 - n);
+}
+
+bool cBitStream::SetLength(int Length)
+{
+  if (Length > length)
+     return false;
+  length = Length;
+  return true;
+}
+
 // --- cReadLine -------------------------------------------------------------
 
 cReadLine::cReadLine(void)
@@ -1214,7 +1396,13 @@ cReadDir::~cReadDir()
 
 struct dirent *cReadDir::Next(void)
 {
-  return directory && readdir_r(directory, &u.d, &result) == 0 ? result : NULL;
+  if (directory) {
+     while (readdir_r(directory, &u.d, &result) == 0 && result) {
+           if (strcmp(result->d_name, ".") && strcmp(result->d_name, ".."))
+              return result;
+           }
+     }
+  return NULL;
 }
 
 // --- cStringList -----------------------------------------------------------
@@ -1256,16 +1444,14 @@ bool cFileNameList::Load(const char *Directory, bool DirsOnly)
      struct dirent *e;
      if (d.Ok()) {
         while ((e = d.Next()) != NULL) {
-              if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..")) {
-                 if (DirsOnly) {
-                    struct stat ds;
-                    if (stat(AddDirectory(Directory, e->d_name), &ds) == 0) {
-                       if (!S_ISDIR(ds.st_mode))
-                          continue;
-                       }
+              if (DirsOnly) {
+                 struct stat ds;
+                 if (stat(AddDirectory(Directory, e->d_name), &ds) == 0) {
+                    if (!S_ISDIR(ds.st_mode))
+                       continue;
                     }
-                 Append(strdup(e->d_name));
                  }
+              Append(strdup(e->d_name));
               }
         Sort();
         return true;
@@ -1422,6 +1608,8 @@ bool cSafeFile::Close(void)
         LOG_ERROR_STR(tempName);
         result = false;
         }
+     fflush(f);
+     fsync(fileno(f));
      if (fclose(f) < 0) {
         LOG_ERROR_STR(tempName);
         result = false;
@@ -1473,16 +1661,18 @@ int cUnbufferedFile::Open(const char *FileName, int Flags, mode_t Mode)
 
 int cUnbufferedFile::Close(void)
 {
-#ifdef USE_FADVISE
   if (fd >= 0) {
+#ifdef USE_FADVISE
      if (totwritten)    // if we wrote anything make sure the data has hit the disk before
         fdatasync(fd);  // calling fadvise, as this is our last chance to un-cache it.
      posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
-     }
 #endif
-  int OldFd = fd;
-  fd = -1;
-  return close(OldFd);
+     int OldFd = fd;
+     fd = -1;
+     return close(OldFd);
+     }
+  errno = EBADF;
+  return -1;
 }
 
 // When replaying and going e.g. FF->PLAY the position jumps back 2..8M
@@ -1526,9 +1716,9 @@ ssize_t cUnbufferedFile::Read(void *Data, size_t Size)
      cachedstart = min(cachedstart, curpos);
 #endif
      ssize_t bytesRead = safe_read(fd, Data, Size);
-#ifdef USE_FADVISE
      if (bytesRead > 0) {
         curpos += bytesRead;
+#ifdef USE_FADVISE
         cachedend = max(cachedend, curpos);
 
         // Read ahead:
@@ -1548,8 +1738,9 @@ ssize_t cUnbufferedFile::Read(void *Data, size_t Size)
            }
         else
            ahead = curpos; // jumped -> we really don't want any readahead, otherwise e.g. fast-rewind gets in trouble.
+#endif
         }
-
+#ifdef USE_FADVISE
      if (cachedstart < cachedend) {
         if (curpos - cachedstart > READCHUNK * 2) {
            // current position has moved forward enough, shrink tail window.
@@ -1589,7 +1780,7 @@ ssize_t cUnbufferedFile::Write(const void *Data, size_t Size)
               //    last (partial) page might be skipped, writeback will start only after
               //    second call; the third call will still include this page and finally
               //    drop it from cache.
-              off_t headdrop = min(begin, WRITE_BUFFER * 2L);
+              off_t headdrop = min(begin, off_t(WRITE_BUFFER * 2));
               posix_fadvise(fd, begin - headdrop, lastpos - begin + headdrop, POSIX_FADV_DONTNEED);
               }
            begin = lastpos = curpos;
@@ -1608,7 +1799,7 @@ ssize_t cUnbufferedFile::Write(const void *Data, size_t Size)
               // kind of write gathering enabled), but the syncs cause (io) load..
               // Uncomment the next line if you think you need them.
               //fdatasync(fd);
-              off_t headdrop = min(curpos - totwritten, totwritten * 2L);
+              off_t headdrop = min(off_t(curpos - totwritten), off_t(totwritten * 2));
               posix_fadvise(fd, curpos - totwritten - headdrop, totwritten + headdrop, POSIX_FADV_DONTNEED);
               totwritten = 0;
               }
@@ -1678,7 +1869,7 @@ bool cLockFile::Lock(int WaitSeconds)
               break;
               }
            if (WaitSeconds)
-              sleep(1);
+              cCondWait::SleepMs(1000);
            }
         } while (f < 0 && time(NULL) < Timeout);
      }
@@ -1802,7 +1993,7 @@ void cListBase::Move(int From, int To)
 
 void cListBase::Move(cListObject *From, cListObject *To)
 {
-  if (From && To) {
+  if (From && To && From != To) {
      if (From->Index() < To->Index())
         To = To->Next();
      if (From == objects)

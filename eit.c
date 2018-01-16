@@ -8,14 +8,17 @@
  * Robert Schneider <Robert.Schneider@web.de> and Rolf Hakenes <hakenes@hippomi.de>.
  * Adapted to 'libsi' for VDR 1.3.0 by Marcel Wiesweg <marcel.wiesweg@gmx.de>.
  *
- * $Id: eit.c 1.126 2007/08/26 10:56:33 kls Exp $
+ * $Id: eit.c 2.23 2012/12/04 11:10:10 kls Exp $
  */
 
 #include "eit.h"
+#include <sys/time.h>
 #include "epg.h"
 #include "i18n.h"
 #include "libsi/section.h"
 #include "libsi/descriptor.h"
+
+#define VALID_TIME (31536000 * 2) // two years
 
 // --- cEIT ------------------------------------------------------------------
 
@@ -30,54 +33,65 @@ cEIT::cEIT(cSchedules *Schedules, int Source, u_char Tid, const u_char *Data, bo
   if (!CheckCRCAndParse())
      return;
 
+  time_t Now = time(NULL);
+  if (Now < VALID_TIME)
+     return; // we need the current time for handling PDC descriptors
+
+  if (!Channels.Lock(false, 10))
+     return;
   tChannelID channelID(Source, getOriginalNetworkId(), getTransportStreamId(), getServiceId());
   cChannel *channel = Channels.GetByChannelID(channelID, true);
-  if (!channel)
-     return; // only collect data for known channels
+  if (!channel || EpgHandlers.IgnoreChannel(channel)) {
+     Channels.Unlock();
+     return;
+     }
 
+  bool handledExternally = EpgHandlers.HandledExternally(channel);
   cSchedule *pSchedule = (cSchedule *)Schedules->GetSchedule(channel, true);
 
   bool Empty = true;
   bool Modified = false;
-  bool HasExternalData = false;
   time_t SegmentStart = 0;
   time_t SegmentEnd = 0;
+  struct tm tm_r;
+  struct tm t = *localtime_r(&Now, &tm_r); // this initializes the time zone in 't'
 
   SI::EIT::Event SiEitEvent;
   for (SI::Loop::Iterator it; eventLoop.getNext(SiEitEvent, it); ) {
-      bool ExternalData = false;
+      if (EpgHandlers.HandleEitEvent(pSchedule, &SiEitEvent, Tid, getVersionNumber()))
+         continue; // an EPG handler has done all of the processing
+      time_t StartTime = SiEitEvent.getStartTime();
+      int Duration = SiEitEvent.getDuration();
       // Drop bogus events - but keep NVOD reference events, where all bits of the start time field are set to 1, resulting in a negative number.
-      if (SiEitEvent.getStartTime() == 0 || SiEitEvent.getStartTime() > 0 && SiEitEvent.getDuration() == 0)
+      if (StartTime == 0 || StartTime > 0 && Duration == 0)
          continue;
       Empty = false;
       if (!SegmentStart)
-         SegmentStart = SiEitEvent.getStartTime();
-      SegmentEnd = SiEitEvent.getStartTime() + SiEitEvent.getDuration();
+         SegmentStart = StartTime;
+      SegmentEnd = StartTime + Duration;
       cEvent *newEvent = NULL;
       cEvent *rEvent = NULL;
-      cEvent *pEvent = (cEvent *)pSchedule->GetEvent(SiEitEvent.getEventId(), SiEitEvent.getStartTime());
-      if (!pEvent) {
+      cEvent *pEvent = (cEvent *)pSchedule->GetEvent(SiEitEvent.getEventId(), StartTime);
+      if (!pEvent || handledExternally) {
          if (OnlyRunningStatus)
+            continue;
+         if (handledExternally && !EpgHandlers.IsUpdate(SiEitEvent.getEventId(), StartTime, Tid, getVersionNumber()))
             continue;
          // If we don't have that event yet, we create a new one.
          // Otherwise we copy the information into the existing event anyway, because the data might have changed.
          pEvent = newEvent = new cEvent(SiEitEvent.getEventId());
-         if (!pEvent)
-            continue;
+         newEvent->SetStartTime(StartTime);
+         newEvent->SetDuration(Duration);
+         if (!handledExternally)
+            pSchedule->AddEvent(newEvent);
          }
       else {
          // We have found an existing event, either through its event ID or its start time.
          pEvent->SetSeen();
-         // If the existing event has a zero table ID it was defined externally and shall
-         // not be overwritten.
-         if (pEvent->TableID() == 0x00) {
-            if (pEvent->Version() == getVersionNumber())
-               continue;
-            HasExternalData = ExternalData = true;
-            }
+         uchar TableID = max(pEvent->TableID(), uchar(0x4E)); // for backwards compatibility, table ids less than 0x4E are treated as if they were "present"
          // If the new event has a higher table ID, let's skip it.
          // The lower the table ID, the more "current" the information.
-         else if (Tid > pEvent->TableID())
+         if (Tid > TableID)
             continue;
          // If the new event comes from the same table and has the same version number
          // as the existing one, let's skip it to avoid unnecessary work.
@@ -85,23 +99,22 @@ cEIT::cEIT(cSchedules *Schedules, int Source, u_char Tid, const u_char *Data, bo
          // the actual Premiere transponder and the Sat.1/Pro7 transponder), but use different version numbers on
          // each of them :-( So if one DVB card is tuned to the Premiere transponder, while an other one is tuned
          // to the Sat.1/Pro7 transponder, events will keep toggling because of the bogus version numbers.
-         else if (Tid == pEvent->TableID() && pEvent->Version() == getVersionNumber())
+         else if (Tid == TableID && pEvent->Version() == getVersionNumber())
             continue;
+         EpgHandlers.SetEventID(pEvent, SiEitEvent.getEventId()); // unfortunately some stations use different event ids for the same event in different tables :-(
+         EpgHandlers.SetStartTime(pEvent, StartTime);
+         EpgHandlers.SetDuration(pEvent, Duration);
          }
-      if (!ExternalData) {
-         pEvent->SetEventID(SiEitEvent.getEventId()); // unfortunately some stations use different event ids for the same event in different tables :-(
+      if (pEvent->TableID() > 0x4E) // for backwards compatibility, table ids less than 0x4E are never overwritten
          pEvent->SetTableID(Tid);
-         pEvent->SetStartTime(SiEitEvent.getStartTime());
-         pEvent->SetDuration(SiEitEvent.getDuration());
-         }
-      if (newEvent)
-         pSchedule->AddEvent(newEvent);
       if (Tid == 0x4E) { // we trust only the present/following info on the actual TS
          if (SiEitEvent.getRunningStatus() >= SI::RunningStatusNotRunning)
             pSchedule->SetRunningStatus(pEvent, SiEitEvent.getRunningStatus(), channel);
          }
-      if (OnlyRunningStatus)
+      if (OnlyRunningStatus) {
+         pEvent->SetVersion(0xFF); // we have already changed the table id above, so set the version to an invalid value to make sure the next full run will be executed
          continue; // do this before setting the version, so that the full update can be done later
+         }
       pEvent->SetVersion(getVersionNumber());
 
       int LanguagePreferenceShort = -1;
@@ -113,10 +126,6 @@ cEIT::cEIT(cSchedules *Schedules, int Source, u_char Tid, const u_char *Data, bo
       cLinkChannels *LinkChannels = NULL;
       cComponents *Components = NULL;
       for (SI::Loop::Iterator it2; (d = SiEitEvent.eventDescriptors.getNext(it2)); ) {
-          if (ExternalData && d->getDescriptorTag() != SI::ComponentDescriptorTag) {
-             delete d;
-             continue;
-             }
           switch (d->getDescriptorTag()) {
             case SI::ExtendedEventDescriptorTag: {
                  SI::ExtendedEventDescriptor *eed = (SI::ExtendedEventDescriptor *)d;
@@ -142,15 +151,43 @@ cEIT::cEIT(cSchedules *Schedules, int Source, u_char Tid, const u_char *Data, bo
                     }
                  }
                  break;
-            case SI::ContentDescriptorTag:
+            case SI::ContentDescriptorTag: {
+                 SI::ContentDescriptor *cd = (SI::ContentDescriptor *)d;
+                 SI::ContentDescriptor::Nibble Nibble;
+                 int NumContents = 0;
+                 uchar Contents[MaxEventContents] = { 0 };
+                 for (SI::Loop::Iterator it3; cd->nibbleLoop.getNext(Nibble, it3); ) {
+                     if (NumContents < MaxEventContents) {
+                        Contents[NumContents] = ((Nibble.getContentNibbleLevel1() & 0xF) << 4) | (Nibble.getContentNibbleLevel2() & 0xF);
+                        NumContents++;
+                        }
+                     }
+                 EpgHandlers.SetContents(pEvent, Contents);
+                 }
                  break;
-            case SI::ParentalRatingDescriptorTag:
+            case SI::ParentalRatingDescriptorTag: {
+                 int LanguagePreferenceRating = -1;
+                 SI::ParentalRatingDescriptor *prd = (SI::ParentalRatingDescriptor *)d;
+                 SI::ParentalRatingDescriptor::Rating Rating;
+                 for (SI::Loop::Iterator it3; prd->ratingLoop.getNext(Rating, it3); ) {
+                     if (I18nIsPreferredLanguage(Setup.EPGLanguages, Rating.languageCode, LanguagePreferenceRating)) {
+                        int ParentalRating = (Rating.getRating() & 0xFF);
+                        switch (ParentalRating) {
+                          // values defined by the DVB standard (minimum age = rating + 3 years):
+                          case 0x01 ... 0x0F: ParentalRating += 3; break;
+                          // values defined by broadcaster CSAT (now why didn't they just use 0x07, 0x09 and 0x0D?):
+                          case 0x11:          ParentalRating = 10; break;
+                          case 0x12:          ParentalRating = 12; break;
+                          case 0x13:          ParentalRating = 16; break;
+                          default:            ParentalRating = 0;
+                          }
+                        EpgHandlers.SetParentalRating(pEvent, ParentalRating);
+                        }
+                     }
+                 }
                  break;
             case SI::PDCDescriptorTag: {
                  SI::PDCDescriptor *pd = (SI::PDCDescriptor *)d;
-                 time_t now = time(NULL);
-                 struct tm tm_r;
-                 struct tm t = *localtime_r(&now, &tm_r); // this initializes the time zone in 't'
                  t.tm_isdst = -1; // makes sure mktime() will determine the correct DST setting
                  int month = t.tm_mon;
                  t.tm_mon = pd->getMonth() - 1;
@@ -163,7 +200,7 @@ cEIT::cEIT(cSchedules *Schedules, int Source, u_char Tid, const u_char *Data, bo
                  else if (month == 0 && t.tm_mon == 11) // current month is jan, but event is in dec
                     t.tm_year--;
                  time_t vps = mktime(&t);
-                 pEvent->SetVps(vps);
+                 EpgHandlers.SetVps(pEvent, vps);
                  }
                  break;
             case SI::TimeShiftedEventDescriptorTag: {
@@ -174,17 +211,16 @@ cEIT::cEIT(cSchedules *Schedules, int Source, u_char Tid, const u_char *Data, bo
                  rEvent = (cEvent *)rSchedule->GetEvent(tsed->getReferenceEventId());
                  if (!rEvent)
                     break;
-                 pEvent->SetTitle(rEvent->Title());
-                 pEvent->SetShortText(rEvent->ShortText());
-                 pEvent->SetDescription(rEvent->Description());
+                 EpgHandlers.SetTitle(pEvent, rEvent->Title());
+                 EpgHandlers.SetShortText(pEvent, rEvent->ShortText());
+                 EpgHandlers.SetDescription(pEvent, rEvent->Description());
                  }
                  break;
             case SI::LinkageDescriptorTag: {
                  SI::LinkageDescriptor *ld = (SI::LinkageDescriptor *)d;
                  tChannelID linkID(Source, ld->getOriginalNetworkId(), ld->getTransportStreamId(), ld->getServiceId());
                  if (ld->getLinkageType() == 0xB0) { // Premiere World
-                    time_t now = time(NULL);
-                    bool hit = SiEitEvent.getStartTime() <= now && now < SiEitEvent.getStartTime() + SiEitEvent.getDuration();
+                    bool hit = StartTime <= Now && Now < StartTime + Duration;
                     if (hit) {
                        char linkName[ld->privateData.getLength() + 1];
                        strn0cpy(linkName, (const char *)ld->privateData.getData(), sizeof(linkName));
@@ -219,7 +255,7 @@ cEIT::cEIT(cSchedules *Schedules, int Source, u_char Tid, const u_char *Data, bo
                  SI::ComponentDescriptor *cd = (SI::ComponentDescriptor *)d;
                  uchar Stream = cd->getStreamContent();
                  uchar Type = cd->getComponentType();
-                 if (1 <= Stream && Stream <= 3 && Type != 0) { // 1=video, 2=audio, 3=subtitles
+                 if (1 <= Stream && Stream <= 6 && Type != 0) { // 1=MPEG2-video, 2=MPEG1-audio, 3=subtitles, 4=AC3-audio, 5=H.264-video, 6=HEAAC-audio
                     if (!Components)
                        Components = new cComponents;
                     char buffer[Utf8BufSize(256)];
@@ -235,108 +271,135 @@ cEIT::cEIT(cSchedules *Schedules, int Source, u_char Tid, const u_char *Data, bo
       if (!rEvent) {
          if (ShortEventDescriptor) {
             char buffer[Utf8BufSize(256)];
-            pEvent->SetTitle(ShortEventDescriptor->name.getText(buffer, sizeof(buffer)));
-            pEvent->SetShortText(ShortEventDescriptor->text.getText(buffer, sizeof(buffer)));
+            EpgHandlers.SetTitle(pEvent, ShortEventDescriptor->name.getText(buffer, sizeof(buffer)));
+            EpgHandlers.SetShortText(pEvent, ShortEventDescriptor->text.getText(buffer, sizeof(buffer)));
             }
-         else if (!HasExternalData) {
-            pEvent->SetTitle(NULL);
-            pEvent->SetShortText(NULL);
+         else {
+            EpgHandlers.SetTitle(pEvent, NULL);
+            EpgHandlers.SetShortText(pEvent, NULL);
             }
          if (ExtendedEventDescriptors) {
             char buffer[Utf8BufSize(ExtendedEventDescriptors->getMaximumTextLength(": ")) + 1];
-            pEvent->SetDescription(ExtendedEventDescriptors->getText(buffer, sizeof(buffer), ": "));
+            EpgHandlers.SetDescription(pEvent, ExtendedEventDescriptors->getText(buffer, sizeof(buffer), ": "));
             }
-         else if (!HasExternalData)
-            pEvent->SetDescription(NULL);
+         else
+            EpgHandlers.SetDescription(pEvent, NULL);
          }
       delete ExtendedEventDescriptors;
       delete ShortEventDescriptor;
 
-      pEvent->SetComponents(Components);
+      EpgHandlers.SetComponents(pEvent, Components);
 
-      if (!HasExternalData)
-         pEvent->FixEpgBugs();
+      EpgHandlers.FixEpgBugs(pEvent);
       if (LinkChannels)
          channel->SetLinkChannels(LinkChannels);
       Modified = true;
+      EpgHandlers.HandleEvent(pEvent);
+      if (handledExternally)
+         delete pEvent;
       }
-  if (Empty && Tid == 0x4E && getSectionNumber() == 0)
-     // ETR 211: an empty entry in section 0 of table 0x4E means there is currently no event running
-     pSchedule->ClrRunningStatus(channel);
-  if (Tid == 0x4E)
+  if (Tid == 0x4E) {
+     if (Empty && getSectionNumber() == 0)
+        // ETR 211: an empty entry in section 0 of table 0x4E means there is currently no event running
+        pSchedule->ClrRunningStatus(channel);
      pSchedule->SetPresentSeen();
-  if (OnlyRunningStatus)
-     return;
-  if (Modified) {
-     pSchedule->Sort();
-     if (!HasExternalData)
-        pSchedule->DropOutdated(SegmentStart, SegmentEnd, Tid, getVersionNumber());
+     }
+  if (Modified && !OnlyRunningStatus) {
+     EpgHandlers.SortSchedule(pSchedule);
+     EpgHandlers.DropOutdated(pSchedule, SegmentStart, SegmentEnd, Tid, getVersionNumber());
      Schedules->SetModified(pSchedule);
      }
+  Channels.Unlock();
 }
 
 // --- cTDT ------------------------------------------------------------------
 
+#define MAX_TIME_DIFF   1 // number of seconds the local time may differ from dvb time before making any corrections
+#define MAX_ADJ_DIFF   10 // number of seconds the local time may differ from dvb time to allow smooth adjustment
+#define ADJ_DELTA     300 // number of seconds between calls for smooth time adjustment
+
 class cTDT : public SI::TDT {
 private:
   static cMutex mutex;
-  static int lastDiff;
+  static time_t lastAdj;
 public:
   cTDT(const u_char *Data);
   };
 
 cMutex cTDT::mutex;
-int cTDT::lastDiff = 0;
+time_t cTDT::lastAdj = 0;
 
 cTDT::cTDT(const u_char *Data)
 :SI::TDT(Data, false)
 {
   CheckParse();
 
-  time_t sattim = getTime();
+  time_t dvbtim = getTime();
   time_t loctim = time(NULL);
 
-  int diff = abs(sattim - loctim);
-  if (diff > 2) {
+  int diff = dvbtim - loctim;
+  if (abs(diff) > MAX_TIME_DIFF) {
      mutex.Lock();
-     if (abs(diff - lastDiff) < 3) {
-        isyslog("System Time = %s (%ld)", *TimeToString(loctim), loctim);
-        isyslog("Local Time  = %s (%ld)", *TimeToString(sattim), sattim);
-        if (stime(&sattim) < 0)
+     if (abs(diff) > MAX_ADJ_DIFF) {
+        if (stime(&dvbtim) == 0)
+           isyslog("system time changed from %s (%ld) to %s (%ld)", *TimeToString(loctim), loctim, *TimeToString(dvbtim), dvbtim);
+        else
            esyslog("ERROR while setting system time: %m");
         }
-     lastDiff = diff;
+     else if (time(NULL) - lastAdj > ADJ_DELTA) {
+        lastAdj = time(NULL);
+        timeval delta;
+        delta.tv_sec = diff;
+        delta.tv_usec = 0;
+        if (adjtime(&delta, NULL) == 0)
+           isyslog("system time adjustment initiated from %s (%ld) to %s (%ld)", *TimeToString(loctim), loctim, *TimeToString(dvbtim), dvbtim);
+        else
+           esyslog("ERROR while adjusting system time: %m");
+        }
      mutex.Unlock();
      }
 }
 
 // --- cEitFilter ------------------------------------------------------------
 
+time_t cEitFilter::disableUntil = 0;
+
 cEitFilter::cEitFilter(void)
 {
-  Set(0x12, 0x4E, 0xFE);  // event info, actual(0x4E)/other(0x4F) TS, present/following
-  Set(0x12, 0x50, 0xF0);  // event info, actual TS, schedule(0x50)/schedule for future days(0x5X)
-  Set(0x12, 0x60, 0xF0);  // event info, other  TS, schedule(0x60)/schedule for future days(0x6X)
+  Set(0x12, 0x40, 0xC0);  // event info now&next actual/other TS (0x4E/0x4F), future actual/other TS (0x5X/0x6X)
   Set(0x14, 0x70);        // TDT
+}
+
+void cEitFilter::SetDisableUntil(time_t Time)
+{
+  disableUntil = Time;
 }
 
 void cEitFilter::Process(u_short Pid, u_char Tid, const u_char *Data, int Length)
 {
+  if (disableUntil) {
+     if (time(NULL) > disableUntil)
+        disableUntil = 0;
+     else
+        return;
+     }
   switch (Pid) {
     case 0x12: {
-         cSchedulesLock SchedulesLock(true, 10);
-         cSchedules *Schedules = (cSchedules *)cSchedules::Schedules(SchedulesLock);
-         if (Schedules)
-            cEIT EIT(Schedules, Source(), Tid, Data);
-         else {
-            // If we don't get a write lock, let's at least get a read lock, so
-            // that we can set the running status and 'seen' timestamp (well, actually
-            // with a read lock we shouldn't be doing that, but it's only integers that
-            // get changed, so it should be ok)
-            cSchedulesLock SchedulesLock;
+         if (Tid >= 0x4E && Tid <= 0x6F) {
+            cSchedulesLock SchedulesLock(true, 10);
             cSchedules *Schedules = (cSchedules *)cSchedules::Schedules(SchedulesLock);
             if (Schedules)
-               cEIT EIT(Schedules, Source(), Tid, Data, true);
+               cEIT EIT(Schedules, Source(), Tid, Data);
+            else {
+               // If we don't get a write lock, let's at least get a read lock, so
+               // that we can set the running status and 'seen' timestamp (well, actually
+               // with a read lock we shouldn't be doing that, but it's only integers that
+               // get changed, so it should be ok)
+               cSchedulesLock SchedulesLock;
+               cSchedules *Schedules = (cSchedules *)cSchedules::Schedules(SchedulesLock);
+               if (Schedules)
+                  cEIT EIT(Schedules, Source(), Tid, Data, true);
+               }
             }
          }
          break;
@@ -345,5 +408,6 @@ void cEitFilter::Process(u_short Pid, u_char Tid, const u_char *Data, int Length
             cTDT TDT(Data);
          }
          break;
+    default: ;
     }
 }

@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: config.h 1.310 2008/03/23 10:26:10 kls Exp $
+ * $Id: config.h 2.76 2013/03/31 09:30:18 kls Exp $
  */
 
 #ifndef __CONFIG_H
@@ -22,13 +22,13 @@
 
 // VDR's own version number:
 
-#define VDRVERSION  "1.6.0"
-#define VDRVERSNUM   10600  // Version * 10000 + Major * 100 + Minor
+#define VDRVERSION  "2.0.0"
+#define VDRVERSNUM   20000  // Version * 10000 + Major * 100 + Minor
 
 // The plugin API's version number:
 
-#define APIVERSION  "1.6.0"
-#define APIVERSNUM   10600  // Version * 10000 + Major * 100 + Minor
+#define APIVERSION  "2.0.0"
+#define APIVERSNUM   20000  // Version * 10000 + Major * 100 + Minor
 
 // When loading plugins, VDR searches them by their APIVERSION, which
 // may be smaller than VDRVERSION in case there have been no changes to
@@ -36,32 +36,35 @@
 // plugins to work with newer versions of the core VDR as long as no
 // VDR header files have changed.
 
-#define MAXPRIORITY 99
-#define MAXLIFETIME 99
+#define MAXPRIORITY       99
+#define MINPRIORITY       (-MAXPRIORITY)
+#define LIVEPRIORITY      0                  // priority used when selecting a device for live viewing
+#define TRANSFERPRIORITY  (LIVEPRIORITY - 1) // priority used for actual local Transfer Mode
+#define IDLEPRIORITY      (MINPRIORITY - 1)  // priority of an idle device
+#define MAXLIFETIME       99
+#define DEFINSTRECTIME    180 // default instant recording time (minutes)
 
-#define MINOSDWIDTH  480
-#define MAXOSDWIDTH  672
-#define MINOSDHEIGHT 324
-#define MAXOSDHEIGHT 567
+#define TIMERMACRO_TITLE    "TITLE"
+#define TIMERMACRO_EPISODE  "EPISODE"
 
-#define MaxFileName 256
+#define MINOSDWIDTH   480
+#define MAXOSDWIDTH  1920
+#define MINOSDHEIGHT  324
+#define MAXOSDHEIGHT 1200
+
+#define MaxFileName NAME_MAX // obsolete - use NAME_MAX directly instead!
 #define MaxSkinName 16
 #define MaxThemeName 16
 
-class cCommand : public cListObject {
-private:
-  char *title;
-  char *command;
-  bool confirm;
-  static char *result;
-public:
-  cCommand(void);
-  virtual ~cCommand();
-  bool Parse(const char *s);
-  const char *Title(void) { return title; }
-  bool Confirm(void) { return confirm; }
-  const char *Execute(const char *Parameters = NULL);
-  };
+// Basically VDR works according to the DVB standard, but there are countries/providers
+// that use other standards, which in some details deviate from the DVB standard.
+// This makes it necessary to handle things differently in some areas, depending on
+// which standard is actually used. The following macros are used to distinguish
+// these cases (make sure to adjust cMenuSetupDVB::standardComplianceTexts accordingly
+// when adding a new standard):
+
+#define STANDARD_DVB       0
+#define STANDARD_ANSISCTE  1
 
 typedef uint32_t in_addr_t; //XXX from /usr/include/netinet/in.h (apparently this is not defined on systems with glibc < 2.2)
 
@@ -72,7 +75,27 @@ private:
 public:
   cSVDRPhost(void);
   bool Parse(const char *s);
+  bool IsLocalhost(void);
   bool Accepts(in_addr_t Address);
+  };
+
+class cSatCableNumbers {
+private:
+  int size;
+  int *array;
+public:
+  cSatCableNumbers(int Size, const char *s = NULL);
+  ~cSatCableNumbers();
+  int Size(void) const { return size; }
+  int *Array(void) { return array; }
+  bool FromString(const char *s);
+  cString ToString(void);
+  int FirstDeviceIndex(int DeviceIndex) const;
+      ///< Returns the first device index (starting at 0) that uses the same
+      ///< sat cable number as the device with the given DeviceIndex.
+      ///< If the given device does not use the same sat cable as any other device,
+      ///< or if the resulting value would be the same as DeviceIndex,
+      ///< or if DeviceIndex is out of range, -1 is returned.
   };
 
 template<class T> class cConfig : public cList<T> {
@@ -117,12 +140,11 @@ public:
                 if (!isempty(s)) {
                    T *l = new T;
                    if (l->Parse(s))
-                      Add(l);
+                      this->Add(l);
                    else {
                       esyslog("ERROR: error in %s, line %d", fileName, line);
                       delete l;
                       result = false;
-                      break;
                       }
                    }
                 }
@@ -159,15 +181,43 @@ public:
   }
   };
 
-class cCommands : public cConfig<cCommand> {};
+class cNestedItem : public cListObject {
+private:
+  char *text;
+  cList<cNestedItem> *subItems;
+public:
+  cNestedItem(const char *Text, bool WithSubItems = false);
+  virtual ~cNestedItem();
+  virtual int Compare(const cListObject &ListObject) const;
+  const char *Text(void) const { return text; }
+  cList<cNestedItem> *SubItems(void) { return subItems; }
+  void AddSubItem(cNestedItem *Item);
+  void SetText(const char *Text);
+  void SetSubItems(bool On);
+  };
+
+class cNestedItemList : public cList<cNestedItem> {
+private:
+  char *fileName;
+  bool Parse(FILE *f, cList<cNestedItem> *List, int &Line);
+  bool Write(FILE *f, cList<cNestedItem> *List, int Indent = 0);
+public:
+  cNestedItemList(void);
+  virtual ~cNestedItemList();
+  void Clear(void);
+  bool Load(const char *FileName);
+  bool Save(void);
+  };
 
 class cSVDRPhosts : public cConfig<cSVDRPhost> {
 public:
+  bool LocalhostOnly(void);
   bool Acceptable(in_addr_t Address);
   };
 
-extern cCommands Commands;
-extern cCommands RecordingCommands;
+extern cNestedItemList Folders;
+extern cNestedItemList Commands;
+extern cNestedItemList RecordingCommands;
 extern cSVDRPhosts SVDRPhosts;
 
 class cSetupLine : public cListObject {
@@ -196,6 +246,7 @@ private:
   cSetupLine *Get(const char *Name, const char *Plugin = NULL);
   void Store(const char *Name, const char *Value, const char *Plugin = NULL, bool AllowMultiple = false);
   void Store(const char *Name, int Value, const char *Plugin = NULL);
+  void Store(const char *Name, double &Value, const char *Plugin = NULL);
 public:
   // Also adjust cMenuSetup (menu.c) when adding parameters here!
   int __BeginData__;
@@ -209,7 +260,7 @@ public:
   int MenuScrollWrap;
   int MenuKeyCloses;
   int MarkInstantRecord;
-  char NameInstantRecord[MaxFileName];
+  char NameInstantRecord[NAME_MAX + 1];
   int InstantRecordTime;
   int LnbSLOF;
   int LnbFrequLo;
@@ -218,6 +269,7 @@ public:
   int SetSystemTime;
   int TimeSource;
   int TimeTransponder;
+  int StandardCompliance;
   int MarginStart, MarginStop;
   int AudioLanguages[I18N_MAX_LANGUAGES + 1];
   int DisplaySubtitles;
@@ -231,43 +283,61 @@ public:
   int SVDRPTimeout;
   int ZapTimeout;
   int ChannelEntryTimeout;
-  int PrimaryLimit;
+  int RcRepeatDelay;
+  int RcRepeatDelta;
   int DefaultPriority, DefaultLifetime;
   int PausePriority, PauseLifetime;
+  int PauseKeyHandling;
   int UseSubtitle;
   int UseVps;
   int VpsMargin;
   int RecordingDirs;
+  int FoldersInTimerMenu;
+  int AlwaysSortFoldersFirst;
+  int NumberKeysForChars;
+  int ColorKey0, ColorKey1, ColorKey2, ColorKey3;
   int VideoDisplayFormat;
   int VideoFormat;
   int UpdateChannels;
   int UseDolbyDigital;
   int ChannelInfoPos;
   int ChannelInfoTime;
+  double OSDLeftP, OSDTopP, OSDWidthP, OSDHeightP;
   int OSDLeft, OSDTop, OSDWidth, OSDHeight;
+  double OSDAspect;
   int OSDMessageTime;
   int UseSmallFont;
   int AntiAlias;
   char FontOsd[MAXFONTNAME];
   char FontSml[MAXFONTNAME];
   char FontFix[MAXFONTNAME];
+  double FontOsdSizeP;
+  double FontSmlSizeP;
+  double FontFixSizeP;
   int FontOsdSize;
   int FontSmlSize;
   int FontFixSize;
   int MaxVideoFileSize;
   int SplitEditedFiles;
+  int DelTimeshiftRec;
   int MinEventTimeout, MinUserInactivity;
   time_t NextWakeupTime;
   int MultiSpeedMode;
   int ShowReplayMode;
+  int ShowRemainingTime;
+  int ProgressDisplayTime;
+  int PauseOnMarkSet;
   int ResumeID;
   int CurrentChannel;
   int CurrentVolume;
   int CurrentDolby;
-  int InitialChannel;
   int InitialVolume;
+  int ChannelsWrap;
+  int ShowChannelNamesWithSource;
   int EmergencyExit;
   int __EndData__;
+  cString InitialChannel;
+  cString DeviceBondings;
   cSetup(void);
   cSetup& operator= (const cSetup &s);
   bool Load(const char *FileName);

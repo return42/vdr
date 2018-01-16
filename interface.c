@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: interface.c 1.77 2008/02/10 15:49:15 kls Exp $
+ * $Id: interface.c 2.2 2012/11/19 12:21:43 kls Exp $
  */
 
 #include "interface.h"
@@ -79,7 +79,7 @@ bool cInterface::QueryKeys(cRemote *Remote, cSkinDisplayMenu *DisplayMenu)
      DisplayMenu->SetItem(tr("RC code detected!"), 4, false, false);
      DisplayMenu->SetItem(tr("Do not press any key..."), 5, false, false);
      DisplayMenu->Flush();
-     sleep(3);
+     cCondWait::SleepMs(3000);
      DisplayMenu->SetItem("", 4, false, false);
      DisplayMenu->SetItem("", 5, false, false);
 
@@ -160,6 +160,7 @@ void cInterface::LearnKeys(void)
       dsyslog("remote control %s - %s", Remote->Name(), known ? "keys known" : "learning keys");
       if (!known) {
          cSkinDisplayMenu *DisplayMenu = Skins.Current()->DisplayMenu();
+         DisplayMenu->SetMenuCategory(mcUnknown);
          char Headline[256];
          snprintf(Headline, sizeof(Headline), tr("Learning Remote Control Keys"));
          cRemote::Clear();

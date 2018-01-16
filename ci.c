@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: ci.c 1.48 2007/04/30 13:02:49 kls Exp $
+ * $Id: ci.c 2.12 2013/02/17 13:17:28 kls Exp $
  */
 
 #include "ci.h"
@@ -35,7 +35,7 @@ static bool DumpDateTime = false;
 
 static const uint8_t *GetLength(const uint8_t *Data, int &Length)
 ///< Gets the length field from the beginning of Data.
-///< \return Returns a pointer to the first byte after the length and
+///< Returns a pointer to the first byte after the length and
 ///< stores the length value in Length.
 {
   Length = *Data++;
@@ -50,7 +50,7 @@ static const uint8_t *GetLength(const uint8_t *Data, int &Length)
 
 static uint8_t *SetLength(uint8_t *Data, int Length)
 ///< Sets the length field at the beginning of Data.
-///< \return Returns a pointer to the first byte after the length.
+///< Returns a pointer to the first byte after the length.
 {
   uint8_t *p = Data;
   if (Length < 128)
@@ -70,7 +70,7 @@ static uint8_t *SetLength(uint8_t *Data, int Length)
 
 static char *CopyString(int Length, const uint8_t *Data)
 ///< Copies the string at Data.
-///< \return Returns a pointer to a newly allocated string.
+///< Returns a pointer to a newly allocated string.
 {
   // Some CAMs send funny characters at the beginning of strings.
   // Let's just skip them:
@@ -88,7 +88,7 @@ static char *CopyString(int Length, const uint8_t *Data)
 
 static char *GetString(int &Length, const uint8_t **Data)
 ///< Gets the string at Data.
-///< \return Returns a pointer to a newly allocated string, or NULL in case of error.
+///< Returns a pointer to a newly allocated string, or NULL in case of error.
 ///< Upon return Length and Data represent the remaining data after the string has been skipped.
 {
   if (Length > 0 && Data && *Data) {
@@ -371,7 +371,7 @@ cCiSession::~cCiSession()
 
 int cCiSession::GetTag(int &Length, const uint8_t **Data)
 ///< Gets the tag at Data.
-///< \return Returns the actual tag, or AOT_NONE in case of error.
+///< Returns the actual tag, or AOT_NONE in case of error.
 ///< Upon return Length and Data represent the remaining data after the tag has been skipped.
 {
   if (Length >= 3 && Data && *Data) {
@@ -551,6 +551,8 @@ bool cCiApplicationInformation::EnterMenu(void)
 
 // --- cCiCaPmt --------------------------------------------------------------
 
+#define MAXCASYSTEMIDS 64
+
 // Ca Pmt List Management:
 
 #define CPLM_MORE    0x00
@@ -574,9 +576,10 @@ private:
   int length;
   int esInfoLengthPos;
   uint8_t capmt[2048]; ///< XXX is there a specified maximum?
-  int caDescriptorsLength;
-  uint8_t caDescriptors[2048];
-  bool streamFlag;
+  int source;
+  int transponder;
+  int programNumber;
+  int caSystemIds[MAXCASYSTEMIDS + 1]; // list is zero terminated!
   void AddCaDescriptors(int Length, const uint8_t *Data);
 public:
   cCiCaPmt(uint8_t CmdId, int Source, int Transponder, int ProgramNumber, const int *CaSystemIds);
@@ -589,7 +592,17 @@ public:
 cCiCaPmt::cCiCaPmt(uint8_t CmdId, int Source, int Transponder, int ProgramNumber, const int *CaSystemIds)
 {
   cmdId = CmdId;
-  caDescriptorsLength = GetCaDescriptors(Source, Transponder, ProgramNumber, CaSystemIds, sizeof(caDescriptors), caDescriptors, streamFlag);
+  source = Source;
+  transponder = Transponder;
+  programNumber = ProgramNumber;
+  int i = 0;
+  if (CaSystemIds) {
+     for (; CaSystemIds[i]; i++)
+         caSystemIds[i] = CaSystemIds[i];
+     }
+  caSystemIds[i] = 0;
+  uint8_t caDescriptors[512];
+  int caDescriptorsLength = GetCaDescriptors(source, transponder, programNumber, caSystemIds, sizeof(caDescriptors), caDescriptors, 0);
   length = 0;
   capmt[length++] = CPLM_ONLY;
   capmt[length++] = (ProgramNumber >> 8) & 0xFF;
@@ -598,8 +611,7 @@ cCiCaPmt::cCiCaPmt(uint8_t CmdId, int Source, int Transponder, int ProgramNumber
   esInfoLengthPos = length;
   capmt[length++] = 0x00; // program_info_length H (at program level)
   capmt[length++] = 0x00; // program_info_length L
-  if (!streamFlag)
-     AddCaDescriptors(caDescriptorsLength, caDescriptors);
+  AddCaDescriptors(caDescriptorsLength, caDescriptors);
 }
 
 void cCiCaPmt::SetListManagement(uint8_t ListManagement)
@@ -610,6 +622,8 @@ void cCiCaPmt::SetListManagement(uint8_t ListManagement)
 void cCiCaPmt::AddPid(int Pid, uint8_t StreamType)
 {
   if (Pid) {
+     uint8_t caDescriptors[512];
+     int caDescriptorsLength = GetCaDescriptors(source, transponder, programNumber, caSystemIds, sizeof(caDescriptors), caDescriptors, Pid);
      //XXX buffer overflow check???
      capmt[length++] = StreamType;
      capmt[length++] = (Pid >> 8) & 0xFF;
@@ -617,8 +631,7 @@ void cCiCaPmt::AddPid(int Pid, uint8_t StreamType)
      esInfoLengthPos = length;
      capmt[length++] = 0x00; // ES_info_length H (at ES level)
      capmt[length++] = 0x00; // ES_info_length L
-     if (streamFlag)
-        AddCaDescriptors(caDescriptorsLength, caDescriptors);
+     AddCaDescriptors(caDescriptorsLength, caDescriptors);
      }
 }
 
@@ -626,12 +639,14 @@ void cCiCaPmt::AddCaDescriptors(int Length, const uint8_t *Data)
 {
   if (esInfoLengthPos) {
      if (length + Length < int(sizeof(capmt))) {
-        capmt[length++] = cmdId;
-        memcpy(capmt + length, Data, Length);
-        length += Length;
-        int l = length - esInfoLengthPos - 2;
-        capmt[esInfoLengthPos]     = (l >> 8) & 0xFF;
-        capmt[esInfoLengthPos + 1] =  l       & 0xFF;
+        if (Length || cmdId == CPCI_QUERY) {
+           capmt[length++] = cmdId;
+           memcpy(capmt + length, Data, Length);
+           length += Length;
+           int l = length - esInfoLengthPos - 2;
+           capmt[esInfoLengthPos]     = (l >> 8) & 0xFF;
+           capmt[esInfoLengthPos + 1] =  l       & 0xFF;
+           }
         }
      else
         esyslog("ERROR: buffer overflow in CA descriptor");
@@ -642,8 +657,6 @@ void cCiCaPmt::AddCaDescriptors(int Length, const uint8_t *Data)
 }
 
 // --- cCiConditionalAccessSupport -------------------------------------------
-
-#define MAXCASYSTEMIDS 64
 
 // CA Enable Ids:
 
@@ -832,9 +845,9 @@ void cCiDateTime::SendDateTime(void)
      int D = tm_gmt.tm_mday;
      int L = (M == 1 || M == 2) ? 1 : 0;
      int MJD = 14956 + D + int((Y - L) * 365.25) + int((M + 1 + L * 12) * 30.6001);
-#define DEC2BCD(d) (((d / 10) << 4) + (d % 10))
+#define DEC2BCD(d) uint8_t(((d / 10) << 4) + (d % 10))
      struct tTime { uint16_t mjd; uint8_t h, m, s; short offset; };
-     tTime T = { mjd : htons(MJD), h : DEC2BCD(tm_gmt.tm_hour), m : DEC2BCD(tm_gmt.tm_min), s : DEC2BCD(tm_gmt.tm_sec), offset : htons(tm_loc.tm_gmtoff / 60) };
+     tTime T = { mjd : htons(MJD), h : DEC2BCD(tm_gmt.tm_hour), m : DEC2BCD(tm_gmt.tm_min), s : DEC2BCD(tm_gmt.tm_sec), offset : short(htons(tm_loc.tm_gmtoff / 60)) };
      bool OldDumpTPDUDataTransfer = DumpTPDUDataTransfer;
      DumpTPDUDataTransfer &= DumpDateTime;
      if (DumpDateTime)
@@ -946,7 +959,7 @@ cCiMMI::~cCiMMI()
 
 char *cCiMMI::GetText(int &Length, const uint8_t **Data)
 ///< Gets the text at Data.
-///< \return Returns a pointer to a newly allocated string, or NULL in case of error.
+///< Returns a pointer to a newly allocated string, or NULL in case of error.
 ///< Upon return Length and Data represent the remaining data after the text has been skipped.
 {
   int Tag = GetTag(Length, Data);
@@ -1410,6 +1423,15 @@ bool cCiTransportConnection::Process(cTPDU *TPDU)
                    SendTPDU(T_DTC_REPLY);
                    state = stIDLE;
                    return true;
+              case T_RCV:
+              case T_CREATE_TC:
+              case T_CTC_REPLY:
+              case T_DTC_REPLY:
+              case T_NEW_TC:
+              case T_TC_ERROR:
+                   break;
+              default:
+                   esyslog("ERROR: unknown TPDU tag: 0x%02X (%s)", TPDU->Tag(), __FUNCTION__);
               }
             }
          else if (timer.TimedOut())
@@ -1429,6 +1451,8 @@ bool cCiTransportConnection::Process(cTPDU *TPDU)
             state = stIDLE;
             }
          return true;
+    default:
+         esyslog("ERROR: unknown state: %d (%s)", state, __FUNCTION__);
     }
   return true;
 }
@@ -1525,7 +1549,7 @@ void cCiAdapter::Action(void)
 
 cCamSlots CamSlots;
 
-#define MODULE_CHECK_INTERVAL 100 // ms
+#define MODULE_CHECK_INTERVAL 500 // ms
 #define MODULE_RESET_TIMEOUT    2 // s
 
 cCamSlot::cCamSlot(cCiAdapter *CiAdapter)
@@ -1654,6 +1678,8 @@ void cCamSlot::Process(cTPDU *TPDU)
                NewConnection();
                resendPmt = caProgramList.Count() > 0;
                break;
+          default:
+               esyslog("ERROR: unknown module status %d (%s)", ms, __FUNCTION__);
           }
         lastModuleStatus = ms;
         }
@@ -1689,6 +1715,7 @@ bool cCamSlot::Reset(void)
      if (ciAdapter->Reset(slotIndex)) {
         resetTime = time(NULL);
         dbgprotocol("ok.\n");
+        lastModuleStatus = msReset;
         return true;
         }
      dbgprotocol("failed!\n");
@@ -1815,7 +1842,7 @@ const int *cCamSlot::GetCaSystemIds(void)
 int cCamSlot::Priority(void)
 {
   cDevice *d = Device();
-  return d ? d->Priority() : -1;
+  return d ? d->Priority() : IDLEPRIORITY;
 }
 
 bool cCamSlot::ProvidesCa(const int *CaSystemIds)
@@ -1868,9 +1895,9 @@ void cCamSlot::SetPid(int Pid, bool Active)
 }
 
 // see ISO/IEC 13818-1
-#define STREAM_TYPE_VIDEO  0x02
-#define STREAM_TYPE_AUDIO  0x04
-#define STREAM_TYPE_DOLBY  0x06
+#define STREAM_TYPE_VIDEO    0x02
+#define STREAM_TYPE_AUDIO    0x04
+#define STREAM_TYPE_PRIVATE  0x06
 
 void cCamSlot::AddChannel(const cChannel *Channel)
 {
@@ -1884,7 +1911,9 @@ void cCamSlot::AddChannel(const cChannel *Channel)
      for (const int *Apid = Channel->Apids(); *Apid; Apid++)
          AddPid(Channel->Sid(), *Apid, STREAM_TYPE_AUDIO);
      for (const int *Dpid = Channel->Dpids(); *Dpid; Dpid++)
-         AddPid(Channel->Sid(), *Dpid, STREAM_TYPE_DOLBY);
+         AddPid(Channel->Sid(), *Dpid, STREAM_TYPE_PRIVATE);
+     for (const int *Spid = Channel->Spids(); *Spid; Spid++)
+         AddPid(Channel->Sid(), *Spid, STREAM_TYPE_PRIVATE);
      }
 }
 
@@ -1905,7 +1934,9 @@ bool cCamSlot::CanDecrypt(const cChannel *Channel)
      for (const int *Apid = Channel->Apids(); *Apid; Apid++)
          CaPmt.AddPid(*Apid, STREAM_TYPE_AUDIO);
      for (const int *Dpid = Channel->Dpids(); *Dpid; Dpid++)
-         CaPmt.AddPid(*Dpid, STREAM_TYPE_DOLBY);
+         CaPmt.AddPid(*Dpid, STREAM_TYPE_PRIVATE);
+     for (const int *Spid = Channel->Spids(); *Spid; Spid++)
+         CaPmt.AddPid(*Spid, STREAM_TYPE_PRIVATE);
      cas->SendPMT(&CaPmt);
      cTimeMs Timeout(QUERY_REPLY_TIMEOUT);
      do {

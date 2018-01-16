@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: timers.h 1.31 2008/02/16 14:33:23 kls Exp $
+ * $Id: timers.h 2.7 2013/03/11 10:35:53 kls Exp $
  */
 
 #ifndef __TIMERS_H
@@ -29,6 +29,7 @@ class cTimer : public cListObject {
 private:
   mutable time_t startTime, stopTime;
   time_t lastSetEvent;
+  mutable time_t deferred; ///< Matches(time_t, ...) will return false if the current time is before this value
   bool recording, pending, inVpsMargin;
   uint flags;
   cChannel *channel;
@@ -38,7 +39,7 @@ private:
   int stop;
   int priority;
   int lifetime;
-  mutable char file[MaxFileName];
+  mutable char file[NAME_MAX * 2 + 1]; // *2 to be able to hold 'title' and 'episode', which can each be up to 255 characters long
   char *aux;
   const cEvent *event;
 public:
@@ -62,6 +63,7 @@ public:
   const char *File(void) const { return file; }
   time_t FirstDay(void) const { return weekdays ? day : 0; }
   const char *Aux(void) const { return aux; }
+  time_t Deferred(void) const { return deferred; }
   cString ToText(bool UseChannelID = false) const;
   cString ToDescr(void) const;
   const cEvent *Event(void) const { return event; }
@@ -73,9 +75,9 @@ public:
   bool DayMatches(time_t t) const;
   static time_t IncDay(time_t t, int Days);
   static time_t SetTime(time_t t, int SecondsFromMidnight);
-  char *SetFile(const char *File);
+  void SetFile(const char *File);
   bool Matches(time_t t = 0, bool Directly = false, int Margin = 0) const;
-  int Matches(const cEvent *Event, int *Overlap = NULL) const;
+  eTimerMatch Matches(const cEvent *Event, int *Overlap = NULL) const;
   bool Expired(void) const;
   time_t StartTime(void) const;
   time_t StopTime(void) const;
@@ -84,7 +86,14 @@ public:
   void SetRecording(bool Recording);
   void SetPending(bool Pending);
   void SetInVpsMargin(bool InVpsMargin);
+  void SetDay(time_t Day);
+  void SetWeekDays(int WeekDays);
+  void SetStart(int Start);
+  void SetStop(int Stop);
   void SetPriority(int Priority);
+  void SetLifetime(int Lifetime);
+  void SetAux(const char *Aux);
+  void SetDeferred(int Seconds);
   void SetFlags(uint Flags);
   void ClrFlags(uint Flags);
   void InvFlags(uint Flags);
@@ -107,7 +116,7 @@ public:
   cTimers(void);
   cTimer *GetTimer(cTimer *Timer);
   cTimer *GetMatch(time_t t);
-  cTimer *GetMatch(const cEvent *Event, int *Match = NULL);
+  cTimer *GetMatch(const cEvent *Event, eTimerMatch *Match = NULL);
   cTimer *GetNextActiveTimer(void);
   int BeingEdited(void) { return beingEdited; }
   void IncBeingEdited(void) { beingEdited++; }
@@ -125,5 +134,10 @@ public:
   };
 
 extern cTimers Timers;
+
+class cSortedTimers : public cVector<const cTimer *> {
+public:
+  cSortedTimers(void);
+  };
 
 #endif //__TIMERS_H

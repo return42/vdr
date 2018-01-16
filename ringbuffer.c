@@ -7,7 +7,7 @@
  * Parts of this file were inspired by the 'ringbuffy.c' from the
  * LinuxDVB driver (see linuxtv.org).
  *
- * $Id: ringbuffer.c 1.25 2007/11/17 13:49:34 kls Exp $
+ * $Id: ringbuffer.c 2.5 2012/09/22 11:26:49 kls Exp $
  */
 
 #include "ringbuffer.h"
@@ -20,6 +20,8 @@
 #define OVERFLOWREPORTDELTA 5 // seconds between reports
 #define PERCENTAGEDELTA     10
 #define PERCENTAGETHRESHOLD 70
+#define IOTHROTTLELOW       20
+#define IOTHROTTLEHIGH      50
 
 cRingBuffer::cRingBuffer(int Size, bool Statistics)
 {
@@ -31,10 +33,12 @@ cRingBuffer::cRingBuffer(int Size, bool Statistics)
   putTimeout = getTimeout = 0;
   lastOverflowReport = 0;
   overflowCount = overflowBytes = 0;
+  ioThrottle = NULL;
 }
 
 cRingBuffer::~cRingBuffer()
 {
+  delete ioThrottle;
   if (statistics)
      dsyslog("buffer stats: %d (%d%%) used", maxFill, maxFill * 100 / (size - 1));
 }
@@ -43,12 +47,18 @@ void cRingBuffer::UpdatePercentage(int Fill)
 {
   if (Fill > maxFill)
      maxFill = Fill;
-  int percent = Fill * 100 / (Size() - 1) / PERCENTAGEDELTA * PERCENTAGEDELTA;
+  int percent = Fill * 100 / (Size() - 1) / PERCENTAGEDELTA * PERCENTAGEDELTA; // clamp down to nearest quantum
   if (percent != lastPercent) {
      if (percent >= PERCENTAGETHRESHOLD && percent > lastPercent || percent < PERCENTAGETHRESHOLD && lastPercent >= PERCENTAGETHRESHOLD) {
         dsyslog("buffer usage: %d%% (tid=%d)", percent, getThreadTid);
         lastPercent = percent;
         }
+     }
+  if (ioThrottle) {
+     if (percent >= IOTHROTTLEHIGH)
+        ioThrottle->Activate();
+     else if (percent < IOTHROTTLELOW)
+        ioThrottle->Release();
      }
 }
 
@@ -66,13 +76,13 @@ void cRingBuffer::WaitForGet(void)
 
 void cRingBuffer::EnablePut(void)
 {
-  if (putTimeout && Free() > Size() / 3)
+  if (putTimeout && Free() > Size() / 10)
      readyForPut.Signal();
 }
 
 void cRingBuffer::EnableGet(void)
 {
-  if (getTimeout && Available() > Size() / 3)
+  if (getTimeout && Available() > Size() / 10)
      readyForGet.Signal();
 }
 
@@ -80,6 +90,12 @@ void cRingBuffer::SetTimeouts(int PutTimeout, int GetTimeout)
 {
   putTimeout = PutTimeout;
   getTimeout = GetTimeout;
+}
+
+void cRingBuffer::SetIoThrottle(void)
+{
+  if (!ioThrottle)
+     ioThrottle = new cIoThrottle;
 }
 
 void cRingBuffer::ReportOverflow(int Bytes)
@@ -200,7 +216,7 @@ int cRingBufferLinear::Available(void)
 
 void cRingBufferLinear::Clear(void)
 {
-  tail = head;
+  tail = head = margin;
 #ifdef DEBUGRINGBUFFERS
   lastHead = head;
   lastTail = tail;
@@ -217,11 +233,50 @@ int cRingBufferLinear::Read(int FileHandle, int Max)
   int free = (diff > 0) ? diff - 1 : Size() - head;
   if (Tail <= margin)
      free--;
-  int Count = 0;
+  int Count = -1;
+  errno = EAGAIN;
   if (free > 0) {
      if (0 < Max && Max < free)
         free = Max;
      Count = safe_read(FileHandle, buffer + head, free);
+     if (Count > 0) {
+        int Head = head + Count;
+        if (Head >= Size())
+           Head = margin;
+        head = Head;
+        if (statistics) {
+           int fill = head - Tail;
+           if (fill < 0)
+              fill = Size() + fill;
+           else if (fill >= Size())
+              fill = Size() - 1;
+           UpdatePercentage(fill);
+           }
+        }
+     }
+#ifdef DEBUGRINGBUFFERS
+  lastHead = head;
+  lastPut = Count;
+#endif
+  EnableGet();
+  if (free == 0)
+     WaitForPut();
+  return Count;
+}
+
+int cRingBufferLinear::Read(cUnbufferedFile *File, int Max)
+{
+  int Tail = tail;
+  int diff = Tail - head;
+  int free = (diff > 0) ? diff - 1 : Size() - head;
+  if (Tail <= margin)
+     free--;
+  int Count = -1;
+  errno = EAGAIN;
+  if (free > 0) {
+     if (0 < Max && Max < free)
+        free = Max;
+     Count = File->Read(buffer + head, free);
      if (Count > 0) {
         int Head = head + Count;
         if (Head >= Size())
@@ -335,11 +390,12 @@ void cRingBufferLinear::Del(int Count)
 
 // --- cFrame ----------------------------------------------------------------
 
-cFrame::cFrame(const uchar *Data, int Count, eFrameType Type, int Index)
+cFrame::cFrame(const uchar *Data, int Count, eFrameType Type, int Index, uint32_t Pts)
 {
   count = abs(Count);
   type = Type;
   index = Index;
+  pts = Pts;
   if (Count < 0)
      data = (uchar *)Data;
   else {

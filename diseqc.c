@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: diseqc.c 1.6 2008/02/10 14:09:27 kls Exp $
+ * $Id: diseqc.c 2.9 2011/09/17 14:13:31 kls Exp $
  */
 
 #include "diseqc.h"
@@ -12,13 +12,93 @@
 #include "sources.h"
 #include "thread.h"
 
+static bool ParseDeviceNumbers(const char *s, int &Devices)
+{
+  if (*s && s[strlen(s) - 1] == ':') {
+     const char *p = s;
+     while (*p && *p != ':') {
+           char *t = NULL;
+           int d = strtol(p, &t, 10);
+           p = t;
+           if (0 < d && d < 31)
+              Devices |= (1 << d - 1);
+           else {
+              esyslog("ERROR: invalid device number %d in '%s'", d, s);
+              return false;
+              }
+           }
+     }
+  return true;
+}
+
+// --- cScr ------------------------------------------------------------------
+
+cScr::cScr(void)
+{
+  devices = 0;
+  channel = -1;
+  userBand = 0;
+  pin = -1;
+  used = false;
+}
+
+bool cScr::Parse(const char *s)
+{
+  if (!ParseDeviceNumbers(s, devices))
+     return false;
+  if (devices)
+     return true;
+  bool result = false;
+  int fields = sscanf(s, "%d %u %d", &channel, &userBand, &pin);
+  if (fields == 2 || fields == 3) {
+     if (channel >= 0 && channel < 8) {
+        result = true;
+        if (fields == 3 && (pin < 0 || pin > 255)) {
+           esyslog("Error: invalid SCR pin '%d'", pin);
+           result = false;
+           }
+        }
+     else
+        esyslog("Error: invalid SCR channel '%d'", channel);
+     }
+  return result;
+}
+
+// --- cScrs -----------------------------------------------------------------
+
+cScrs Scrs;
+
+cScr *cScrs::GetUnused(int Device)
+{
+  cMutexLock MutexLock(&mutex);
+  int Devices = 0;
+  for (cScr *p = First(); p; p = Next(p)) {
+      if (p->Devices()) {
+         Devices = p->Devices();
+         continue;
+         }
+      if (Devices && !(Devices & (1 << Device - 1)))
+         continue;
+      if (!p->Used()) {
+        p->SetUsed(true);
+        return p;
+        }
+      }
+  return NULL;
+}
+
 // --- cDiseqc ---------------------------------------------------------------
 
 cDiseqc::cDiseqc(void)
 {
+  devices = 0;
+  source = 0;
+  slof = 0;
+  polarization = 0;
+  lof = 0;
+  scrBank = -1;
   commands = NULL;
   parsing = false;
-  numCodes = 0;
 }
 
 cDiseqc::~cDiseqc()
@@ -28,6 +108,10 @@ cDiseqc::~cDiseqc()
 
 bool cDiseqc::Parse(const char *s)
 {
+  if (!ParseDeviceNumbers(s, devices))
+     return false;
+  if (devices)
+     return true;
   bool result = false;
   char *sourcebuf = NULL;
   int fields = sscanf(s, "%a[^ ] %d %c %d %a[^\n]", &sourcebuf, &slof, &polarization, &lof, &commands);
@@ -36,11 +120,11 @@ bool cDiseqc::Parse(const char *s)
   if (4 <= fields && fields <= 5) {
      source = cSource::FromString(sourcebuf);
      if (Sources.Get(source)) {
-        polarization = toupper(polarization);
+        polarization = char(toupper(polarization));
         if (polarization == 'V' || polarization == 'H' || polarization == 'L' || polarization == 'R') {
            parsing = true;
-           char *CurrentAction = NULL;
-           while (Execute(&CurrentAction) != daNone)
+           const char *CurrentAction = NULL;
+           while (Execute(&CurrentAction, NULL, NULL, NULL, NULL) != daNone)
                  ;
            parsing = false;
            result = !commands || !*CurrentAction;
@@ -55,7 +139,32 @@ bool cDiseqc::Parse(const char *s)
   return result;
 }
 
-char *cDiseqc::Wait(char *s)
+uint cDiseqc::SetScrFrequency(uint SatFrequency, const cScr *Scr, uint8_t *Codes) const
+{
+  uint t = SatFrequency == 0 ? 0 : (SatFrequency + Scr->UserBand() + 2) / 4 - 350; // '+ 2' together with '/ 4' results in rounding!
+  if (t < 1024 && Scr->Channel() >= 0 && Scr->Channel() < 8) {
+     Codes[3] = t >> 8 | (t == 0 ? 0 : scrBank << 2) | Scr->Channel() << 5;
+     Codes[4] = t;
+     if (t)
+        return (t + 350) * 4 - SatFrequency;
+     }
+  return 0;
+}
+
+int cDiseqc::SetScrPin(const cScr *Scr, uint8_t *Codes) const
+{
+  if (Scr->Pin() >= 0 && Scr->Pin() <= 255) {
+     Codes[2] = 0x5C;
+     Codes[5] = Scr->Pin();
+     return 6;
+     }
+  else {
+     Codes[2] = 0x5A;
+     return 5;
+     }
+}
+
+const char *cDiseqc::Wait(const char *s) const
 {
   char *p = NULL;
   errno = 0;
@@ -69,19 +178,44 @@ char *cDiseqc::Wait(char *s)
   return NULL;
 }
 
-char *cDiseqc::Codes(char *s)
+const char *cDiseqc::GetScrBank(const char *s) const
 {
-  char *e = strchr(s, ']');
+  char *p = NULL;
+  errno = 0;
+  int n = strtol(s, &p, 10);
+  if (!errno && p != s && n >= 0 && n < 8) {
+     if (parsing) {
+        if (scrBank < 0)
+           scrBank = n;
+        else
+           esyslog("ERROR: more than one scr bank in '%s'", s - 1);
+        }
+     return p;
+     }
+  esyslog("ERROR: more than one scr bank in '%s'", s - 1);
+  return NULL;
+}
+
+const char *cDiseqc::GetCodes(const char *s, uchar *Codes, uint8_t *MaxCodes) const
+{
+  const char *e = strchr(s, ']');
   if (e) {
-     numCodes = 0;
-     char *t = s;
-     char *p = s;
+     int NumCodes = 0;
+     const char *t = s;
      while (t < e) {
-           if (numCodes < MaxDiseqcCodes) {
+           if (NumCodes < MaxDiseqcCodes) {
               errno = 0;
+              char *p;
               int n = strtol(t, &p, 16);
               if (!errno && p != t && 0 <= n && n <= 255) {
-                 codes[numCodes++] = n;
+                 if (Codes) {
+                    if (NumCodes < *MaxCodes)
+                       Codes[NumCodes++] = uchar(n);
+                    else {
+                       esyslog("ERROR: too many codes in code sequence '%s'", s - 1);
+                       return NULL;
+                       }
+                    }
                  t = skipspace(p);
                  }
               else {
@@ -94,6 +228,8 @@ char *cDiseqc::Codes(char *s)
               return NULL;
               }
            }
+     if (MaxCodes)
+        *MaxCodes = NumCodes;
      return e + 1;
      }
   else
@@ -101,7 +237,7 @@ char *cDiseqc::Codes(char *s)
   return NULL;
 }
 
-cDiseqc::eDiseqcActions cDiseqc::Execute(char **CurrentAction)
+cDiseqc::eDiseqcActions cDiseqc::Execute(const char **CurrentAction, uchar *Codes, uint8_t *MaxCodes, const cScr *Scr, uint *Frequency) const
 {
   if (!*CurrentAction)
      *CurrentAction = commands;
@@ -115,7 +251,16 @@ cDiseqc::eDiseqcActions cDiseqc::Execute(char **CurrentAction)
           case 'A': return daMiniA;
           case 'B': return daMiniB;
           case 'W': *CurrentAction = Wait(*CurrentAction); break;
-          case '[': *CurrentAction = Codes(*CurrentAction); return *CurrentAction ? daCodes : daNone;
+          case 'S': *CurrentAction = GetScrBank(*CurrentAction); break;
+          case '[': *CurrentAction = GetCodes(*CurrentAction, Codes, MaxCodes);
+                    if (*CurrentAction) {
+                       if (Scr && Frequency) {
+                          *Frequency = SetScrFrequency(*Frequency, Scr, Codes);
+                          *MaxCodes = SetScrPin(Scr, Codes);
+                          }
+                       return daCodes;
+                       }
+                    break;
           default: return daNone;
           }
         }
@@ -126,11 +271,26 @@ cDiseqc::eDiseqcActions cDiseqc::Execute(char **CurrentAction)
 
 cDiseqcs Diseqcs;
 
-cDiseqc *cDiseqcs::Get(int Source, int Frequency, char Polarization)
+const cDiseqc *cDiseqcs::Get(int Device, int Source, int Frequency, char Polarization, const cScr **Scr) const
 {
-  for (cDiseqc *p = First(); p; p = Next(p)) {
-      if (p->Source() == Source && p->Slof() > Frequency && p->Polarization() == toupper(Polarization))
-        return p;
+  int Devices = 0;
+  for (const cDiseqc *p = First(); p; p = Next(p)) {
+      if (p->Devices()) {
+         Devices = p->Devices();
+         continue;
+         }
+      if (Devices && !(Devices & (1 << Device - 1)))
+         continue;
+      if (p->Source() == Source && p->Slof() > Frequency && p->Polarization() == toupper(Polarization)) {
+         if (p->IsScr() && Scr && !*Scr) {
+            *Scr = Scrs.GetUnused(Device);
+            if (*Scr)
+               dsyslog("SCR %d assigned to device %d", (*Scr)->Channel(), Device);
+            else
+               esyslog("ERROR: no free SCR entry available for device %d", Device);
+            }
+         return p;
+         }
       }
   return NULL;
 }

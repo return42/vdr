@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: recording.c 1.162 2008/02/24 10:28:53 kls Exp $
+ * $Id: recording.c 2.91 2013/03/11 10:34:41 kls Exp $
  */
 
 #include "recording.h"
@@ -12,6 +12,9 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#define __STDC_FORMAT_MACROS // Required for format specifiers
+#include <inttypes.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -19,7 +22,8 @@
 #include "channels.h"
 #include "i18n.h"
 #include "interface.h"
-#include "remux.h" //XXX+ I_FRAME
+#include "remux.h"
+#include "ringbuffer.h"
 #include "skins.h"
 #include "tools.h"
 #include "videodir.h"
@@ -31,21 +35,25 @@
 /* This was the original code, which works fine in a Linux only environment.
    Unfortunately, because of Windows and its brain dead file system, we have
    to use a more complicated approach, in order to allow users who have enabled
-   the VFAT compile time option to see their recordings even if they forget to
-   enable VFAT when compiling a new version of VDR... Gee, do I hate Windows.
+   the --vfat command line option to see their recordings even if they forget to
+   enable --vfat when restarting VDR... Gee, do I hate Windows.
    (kls 2002-07-27)
 #define DATAFORMAT   "%4d-%02d-%02d.%02d:%02d.%02d.%02d" RECEXT
 #define NAMEFORMAT   "%s/%s/" DATAFORMAT
 */
-#define DATAFORMAT   "%4d-%02d-%02d.%02d%*c%02d.%02d.%02d" RECEXT
-#define NAMEFORMAT   "%s/%s/" "%4d-%02d-%02d.%02d.%02d.%02d.%02d" RECEXT
+#define DATAFORMATPES   "%4d-%02d-%02d.%02d%*c%02d.%02d.%02d" RECEXT
+#define NAMEFORMATPES   "%s/%s/" "%4d-%02d-%02d.%02d.%02d.%02d.%02d" RECEXT
+#define DATAFORMATTS    "%4d-%02d-%02d.%02d.%02d.%d-%d" RECEXT
+#define NAMEFORMATTS    "%s/%s/" DATAFORMATTS
 
-#define RESUMEFILESUFFIX  "/resume%s%s.vdr"
+#define RESUMEFILESUFFIX  "/resume%s%s"
 #ifdef SUMMARYFALLBACK
 #define SUMMARYFILESUFFIX "/summary.vdr"
 #endif
-#define INFOFILESUFFIX    "/info.vdr"
-#define MARKSFILESUFFIX   "/marks.vdr"
+#define INFOFILESUFFIX    "/info"
+#define MARKSFILESUFFIX   "/marks"
+
+#define SORTMODEFILE      ".sort"
 
 #define MINDISKSPACE 1024 // MB
 
@@ -53,15 +61,15 @@
 #define DELETEDLIFETIME   300 // seconds after which a deleted recording will be actually removed
 #define DISKCHECKDELTA    100 // seconds between checks for free disk space
 #define REMOVELATENCY      10 // seconds to wait until next check after removing a file
-
-#define TIMERMACRO_TITLE    "TITLE"
-#define TIMERMACRO_EPISODE  "EPISODE"
-
-#define MAX_SUBTITLE_LENGTH  40
+#define MARKSUPDATEDELTA   10 // seconds between checks for updating editing marks
+#define MININDEXAGE      3600 // seconds before an index file is considered no longer to be written
 
 #define MAX_LINK_LEVEL  6
 
-bool VfatFileSystem = false;
+int DirectoryPathMax = PATH_MAX - 1;
+int DirectoryNameMax = NAME_MAX;
+bool DirectoryEncoding = false;
+int InstanceId = 0;
 
 cRecordings DeletedRecordings(true);
 
@@ -75,20 +83,21 @@ public:
   };
 
 cRemoveDeletedRecordingsThread::cRemoveDeletedRecordingsThread(void)
-:cThread("remove deleted recordings")
+:cThread("remove deleted recordings", true)
 {
 }
 
 void cRemoveDeletedRecordingsThread::Action(void)
 {
-  SetPriority(19);
   // Make sure only one instance of VDR does this:
   cLockFile LockFile(VideoDirectory);
   if (LockFile.Lock()) {
      bool deleted = false;
      cThreadLock DeletedRecordingsLock(&DeletedRecordings);
      for (cRecording *r = DeletedRecordings.First(); r; ) {
-         if (r->deleted && time(NULL) - r->deleted > DELETEDLIFETIME) {
+         if (cIoThrottle::Engaged())
+            return;
+         if (r->Deleted() && time(NULL) - r->Deleted() > DELETEDLIFETIME) {
             cRecording *next = DeletedRecordings.Next(r);
             r->Remove();
             DeletedRecordings.Del(r);
@@ -98,8 +107,10 @@ void cRemoveDeletedRecordingsThread::Action(void)
             }
          r = DeletedRecordings.Next(r);
          }
-     if (deleted)
-        RemoveEmptyVideoDirectories();
+     if (deleted) {
+        const char *IgnoreFiles[] = { SORTMODEFILE, NULL };
+        RemoveEmptyVideoDirectories(IgnoreFiles);
+        }
      }
 }
 
@@ -114,7 +125,7 @@ void RemoveDeletedRecordings(void)
      if (!RemoveDeletedRecordingsThread.Active()) {
         cThreadLock DeletedRecordingsLock(&DeletedRecordings);
         for (cRecording *r = DeletedRecordings.First(); r; r = DeletedRecordings.Next(r)) {
-            if (r->deleted && time(NULL) - r->deleted > DELETEDLIFETIME) {
+            if (r->Deleted() && time(NULL) - r->Deleted() > DELETEDLIFETIME) {
                RemoveDeletedRecordingsThread.Start();
                break;
                }
@@ -146,15 +157,16 @@ void AssertFreeDiskSpace(int Priority, bool Force)
            cRecording *r = DeletedRecordings.First();
            cRecording *r0 = NULL;
            while (r) {
-                 if (IsOnVideoDirectoryFileSystem(r->FileName())) { // only remove recordings that will actually increase the free video disk space
-                    if (!r0 || r->start < r0->start)
+                 if (r->IsOnVideoDirectoryFileSystem()) { // only remove recordings that will actually increase the free video disk space
+                    if (!r0 || r->Start() < r0->Start())
                        r0 = r;
                     }
                  r = DeletedRecordings.Next(r);
                  }
-           if (r0 && r0->Remove()) {
+           if (r0) {
+              if (r0->Remove())
+                 LastFreeDiskCheck += REMOVELATENCY / Factor;
               DeletedRecordings.Del(r0);
-              LastFreeDiskCheck += REMOVELATENCY / Factor;
               return;
               }
            }
@@ -172,12 +184,12 @@ void AssertFreeDiskSpace(int Priority, bool Force)
            cRecording *r = Recordings.First();
            cRecording *r0 = NULL;
            while (r) {
-                 if (IsOnVideoDirectoryFileSystem(r->FileName())) { // only delete recordings that will actually increase the free video disk space
-                    if (!r->IsEdited() && r->lifetime < MAXLIFETIME) { // edited recordings and recordings with MAXLIFETIME live forever
-                       if ((r->lifetime == 0 && Priority > r->priority) || // the recording has no guaranteed lifetime and the new recording has higher priority
-                           (r->lifetime > 0 && (time(NULL) - r->start) / SECSINDAY >= r->lifetime)) { // the recording's guaranteed lifetime has expired
+                 if (r->IsOnVideoDirectoryFileSystem()) { // only delete recordings that will actually increase the free video disk space
+                    if (!r->IsEdited() && r->Lifetime() < MAXLIFETIME) { // edited recordings and recordings with MAXLIFETIME live forever
+                       if ((r->Lifetime() == 0 && Priority > r->Priority()) || // the recording has no guaranteed lifetime and the new recording has higher priority
+                           (r->Lifetime() > 0 && (time(NULL) - r->Start()) / SECSINDAY >= r->Lifetime())) { // the recording's guaranteed lifetime has expired
                           if (r0) {
-                             if (r->priority < r0->priority || (r->priority == r0->priority && r->start < r0->start))
+                             if (r->Priority() < r0->Priority() || (r->Priority() == r0->Priority() && r->Start() < r0->Start()))
                                 r0 = r; // in any case we delete the one with the lowest priority (or the older one in case of equal priorities)
                              }
                           else
@@ -202,12 +214,14 @@ void AssertFreeDiskSpace(int Priority, bool Force)
 
 // --- cResumeFile -----------------------------------------------------------
 
-cResumeFile::cResumeFile(const char *FileName)
+cResumeFile::cResumeFile(const char *FileName, bool IsPesRecording)
 {
-  fileName = MALLOC(char, strlen(FileName) + strlen(RESUMEFILESUFFIX) + 1);
+  isPesRecording = IsPesRecording;
+  const char *Suffix = isPesRecording ? RESUMEFILESUFFIX ".vdr" : RESUMEFILESUFFIX;
+  fileName = MALLOC(char, strlen(FileName) + strlen(Suffix) + 1);
   if (fileName) {
      strcpy(fileName, FileName);
-     sprintf(fileName + strlen(fileName), RESUMEFILESUFFIX, Setup.ResumeID ? "." : "", Setup.ResumeID ? *itoa(Setup.ResumeID) : "");
+     sprintf(fileName + strlen(fileName), Suffix, Setup.ResumeID ? "." : "", Setup.ResumeID ? *itoa(Setup.ResumeID) : "");
      }
   else
      esyslog("ERROR: can't allocate memory for resume file name");
@@ -227,16 +241,38 @@ int cResumeFile::Read(void)
         if ((st.st_mode & S_IWUSR) == 0) // no write access, assume no resume
            return -1;
         }
-     int f = open(fileName, O_RDONLY);
-     if (f >= 0) {
-        if (safe_read(f, &resume, sizeof(resume)) != sizeof(resume)) {
-           resume = -1;
-           LOG_ERROR_STR(fileName);
+     if (isPesRecording) {
+        int f = open(fileName, O_RDONLY);
+        if (f >= 0) {
+           if (safe_read(f, &resume, sizeof(resume)) != sizeof(resume)) {
+              resume = -1;
+              LOG_ERROR_STR(fileName);
+              }
+           close(f);
            }
-        close(f);
+        else if (errno != ENOENT)
+           LOG_ERROR_STR(fileName);
         }
-     else if (errno != ENOENT)
-        LOG_ERROR_STR(fileName);
+     else {
+        FILE *f = fopen(fileName, "r");
+        if (f) {
+           cReadLine ReadLine;
+           char *s;
+           int line = 0;
+           while ((s = ReadLine.Read(f)) != NULL) {
+                 ++line;
+                 char *t = skipspace(s + 1);
+                 switch (*s) {
+                   case 'I': resume = atoi(t);
+                             break;
+                   default: ;
+                   }
+                 }
+           fclose(f);
+           }
+        else if (errno != ENOENT)
+           LOG_ERROR_STR(fileName);
+        }
      }
   return resume;
 }
@@ -244,12 +280,25 @@ int cResumeFile::Read(void)
 bool cResumeFile::Save(int Index)
 {
   if (fileName) {
-     int f = open(fileName, O_WRONLY | O_CREAT | O_TRUNC, DEFFILEMODE);
-     if (f >= 0) {
-        if (safe_write(f, &Index, sizeof(Index)) < 0)
+     if (isPesRecording) {
+        int f = open(fileName, O_WRONLY | O_CREAT | O_TRUNC, DEFFILEMODE);
+        if (f >= 0) {
+           if (safe_write(f, &Index, sizeof(Index)) < 0)
+              LOG_ERROR_STR(fileName);
+           close(f);
+           Recordings.ResetResume(fileName);
+           return true;
+           }
+        }
+     else {
+        FILE *f = fopen(fileName, "w");
+        if (f) {
+           fprintf(f, "I %d\n", Index);
+           fclose(f);
+           Recordings.ResetResume(fileName);
+           }
+        else
            LOG_ERROR_STR(fileName);
-        close(f);
-        Recordings.ResetResume(fileName);
         return true;
         }
      }
@@ -259,9 +308,10 @@ bool cResumeFile::Save(int Index)
 void cResumeFile::Delete(void)
 {
   if (fileName) {
-     if (remove(fileName) < 0 && errno != ENOENT)
+     if (remove(fileName) == 0)
+        Recordings.ResetResume(fileName);
+     else if (errno != ENOENT)
         LOG_ERROR_STR(fileName);
-     Recordings.ResetResume(fileName);
      }
 }
 
@@ -274,6 +324,10 @@ cRecordingInfo::cRecordingInfo(const cChannel *Channel, const cEvent *Event)
   ownEvent = Event ? NULL : new cEvent(0);
   event = ownEvent ? ownEvent : Event;
   aux = NULL;
+  framesPerSecond = DEFAULTFRAMESPERSECOND;
+  priority = MAXPRIORITY;
+  lifetime = MAXLIFETIME;
+  fileName = NULL;
   if (Channel) {
      // Since the EPG data's component records can carry only a single
      // language code, let's see whether the channel's PID data has
@@ -297,7 +351,9 @@ cRecordingInfo::cRecordingInfo(const cChannel *Channel, const cEvent *Event)
      for (int i = 0; i < MAXDPIDS; i++) {
          const char *s = Channel->Dlang(i);
          if (*s) {
-            tComponent *Component = Components->GetComponent(i, 2, 5);
+            tComponent *Component = Components->GetComponent(i, 4, 0); // AC3 component according to the DVB standard
+            if (!Component)
+               Component = Components->GetComponent(i, 2, 5); // fallback "Dolby" component according to the "Premiere pseudo standard"
             if (!Component)
                Components->SetComponent(Components->NumComponents(), 2, 5, s, NULL);
             else if (strlen(s) > strlen(Component->language))
@@ -320,11 +376,25 @@ cRecordingInfo::cRecordingInfo(const cChannel *Channel, const cEvent *Event)
      }
 }
 
+cRecordingInfo::cRecordingInfo(const char *FileName)
+{
+  channelID = tChannelID::InvalidID;
+  channelName = NULL;
+  ownEvent = new cEvent(0);
+  event = ownEvent;
+  aux = NULL;
+  framesPerSecond = DEFAULTFRAMESPERSECOND;
+  priority = MAXPRIORITY;
+  lifetime = MAXLIFETIME;
+  fileName = strdup(cString::sprintf("%s%s", FileName, INFOFILESUFFIX));
+}
+
 cRecordingInfo::~cRecordingInfo()
 {
   delete ownEvent;
   free(aux);
   free(channelName);
+  free(fileName);
 }
 
 void cRecordingInfo::SetData(const char *Title, const char *ShortText, const char *Description)
@@ -341,6 +411,11 @@ void cRecordingInfo::SetAux(const char *Aux)
 {
   free(aux);
   aux = Aux ? strdup(Aux) : NULL;
+}
+
+void cRecordingInfo::SetFramesPerSecond(double FramesPerSecond)
+{
+  framesPerSecond = FramesPerSecond;
 }
 
 bool cRecordingInfo::Read(FILE *f)
@@ -375,10 +450,16 @@ bool cRecordingInfo::Read(FILE *f)
                             ownEvent->SetEventID(EventID);
                             ownEvent->SetStartTime(StartTime);
                             ownEvent->SetDuration(Duration);
-                            ownEvent->SetTableID(TableID);
-                            ownEvent->SetVersion(Version);
+                            ownEvent->SetTableID(uchar(TableID));
+                            ownEvent->SetVersion(uchar(Version));
                             }
                        }
+                       break;
+             case 'F': framesPerSecond = atod(t);
+                       break;
+             case 'L': lifetime = atoi(t);
+                       break;
+             case 'P': priority = atoi(t);
                        break;
              case '@': free(aux);
                        aux = strdup(t);
@@ -401,9 +482,46 @@ bool cRecordingInfo::Write(FILE *f, const char *Prefix) const
   if (channelID.Valid())
      fprintf(f, "%sC %s%s%s\n", Prefix, *channelID.ToString(), channelName ? " " : "", channelName ? channelName : "");
   event->Dump(f, Prefix, true);
+  fprintf(f, "%sF %s\n", Prefix, *dtoa(framesPerSecond, "%.10g"));
+  fprintf(f, "%sP %d\n", Prefix, priority);
+  fprintf(f, "%sL %d\n", Prefix, lifetime);
   if (aux)
      fprintf(f, "%s@ %s\n", Prefix, aux);
   return true;
+}
+
+bool cRecordingInfo::Read(void)
+{
+  bool Result = false;
+  if (fileName) {
+     FILE *f = fopen(fileName, "r");
+     if (f) {
+        if (Read(f))
+           Result = true;
+        else
+           esyslog("ERROR: EPG data problem in file %s", fileName);
+        fclose(f);
+        }
+     else if (errno != ENOENT)
+        LOG_ERROR_STR(fileName);
+     }
+  return Result;
+}
+
+bool cRecordingInfo::Write(void) const
+{
+  bool Result = false;
+  if (fileName) {
+     cSafeFile f(fileName);
+     if (f.Open()) {
+        if (Write(f))
+           Result = true;
+        f.Close();
+        }
+     else
+        LOG_ERROR_STR(fileName);
+     }
+  return Result;
 }
 
 // --- cRecording ------------------------------------------------------------
@@ -412,8 +530,8 @@ bool cRecordingInfo::Write(FILE *f, const char *Prefix) const
 
 struct tCharExchange { char a; char b; };
 tCharExchange CharExchange[] = {
-  { '~',  '/'    },
-  { '/',  '~'    },
+  { FOLDERDELIMCHAR,  '/' },
+  { '/',  FOLDERDELIMCHAR },
   { ' ',  '_'    },
   // backwards compatibility:
   { '\'', '\''   },
@@ -422,30 +540,42 @@ tCharExchange CharExchange[] = {
   { 0, 0 }
   };
 
+const char *InvalidChars = "\"\\/:*?|<>#";
+
+bool NeedsConversion(const char *p)
+{
+  return DirectoryEncoding &&
+         (strchr(InvalidChars, *p) // characters that can't be part of a Windows file/directory name
+          || *p == '.' && (!*(p + 1) || *(p + 1) == FOLDERDELIMCHAR)); // Windows can't handle '.' at the end of file/directory names
+}
+
 char *ExchangeChars(char *s, bool ToFileSystem)
 {
   char *p = s;
   while (*p) {
-        if (VfatFileSystem) {
-           // The VFAT file system can't handle all characters, so we
+        if (DirectoryEncoding) {
+           // Some file systems can't handle all characters, so we
            // have to take extra efforts to encode/decode them:
            if (ToFileSystem) {
-              const char *InvalidChars = "\"\\/:*?|<>#";
               switch (*p) {
                      // characters that can be mapped to other characters:
                      case ' ': *p = '_'; break;
-                     case '~': *p = '/'; break;
+                     case FOLDERDELIMCHAR: *p = '/'; break;
                      // characters that have to be encoded:
                      default:
-                       if (strchr(InvalidChars, *p) || *p == '.' && (!*(p + 1) || *(p + 1) == '~')) { // Windows can't handle '.' at the end of file/directory names
+                       if (NeedsConversion(p)) {
                           int l = p - s;
-                          s = (char *)realloc(s, strlen(s) + 10);
-                          p = s + l;
-                          char buf[4];
-                          sprintf(buf, "#%02X", (unsigned char)*p);
-                          memmove(p + 2, p, strlen(p) + 1);
-                          strncpy(p, buf, 3);
-                          p += 2;
+                          if (char *NewBuffer = (char *)realloc(s, strlen(s) + 10)) {
+                             s = NewBuffer;
+                             p = s + l;
+                             char buf[4];
+                             sprintf(buf, "#%02X", (unsigned char)*p);
+                             memmove(p + 2, p, strlen(p) + 1);
+                             strncpy(p, buf, 3);
+                             p += 2;
+                             }
+                          else
+                             esyslog("ERROR: out of memory");
                           }
                      }
               }
@@ -453,13 +583,13 @@ char *ExchangeChars(char *s, bool ToFileSystem)
               switch (*p) {
                 // mapped characters:
                 case '_': *p = ' '; break;
-                case '/': *p = '~'; break;
+                case '/': *p = FOLDERDELIMCHAR; break;
                 // encoded characters:
                 case '#': {
                      if (strlen(p) > 2 && isxdigit(*(p + 1)) && isxdigit(*(p + 2))) {
                         char buf[3];
                         sprintf(buf, "%c%c", *(p + 1), *(p + 2));
-                        unsigned char c = strtol(buf, NULL, 16);
+                        uchar c = uchar(strtol(buf, NULL, 16));
                         if (c) {
                            *p = c;
                            memmove(p + 1, p + 3, strlen(p) - 2);
@@ -471,6 +601,7 @@ char *ExchangeChars(char *s, bool ToFileSystem)
                 case '\x01': *p = '\''; break;
                 case '\x02': *p = '/';  break;
                 case '\x03': *p = ':';  break;
+                default: ;
                 }
               }
            }
@@ -487,30 +618,131 @@ char *ExchangeChars(char *s, bool ToFileSystem)
   return s;
 }
 
+char *LimitNameLengths(char *s, int PathMax, int NameMax)
+{
+  // Limits the total length of the directory path in 's' to PathMax, and each
+  // individual directory name to NameMax. The lengths of characters that need
+  // conversion when using 's' as a file name are taken into account accordingly.
+  // If a directory name exceeds NameMax, it will be truncated. If the whole
+  // directory path exceeds PathMax, individual directory names will be shortened
+  // (from right to left) until the limit is met, or until the currently handled
+  // directory name consists of only a single character. All operations are performed
+  // directly on the given 's', which may become shorter (but never longer) than
+  // the original value.
+  // Returns a pointer to 's'.
+  int Length = strlen(s);
+  int PathLength = 0;
+  // Collect the resulting lengths of each character:
+  bool NameTooLong = false;
+  int8_t a[Length];
+  int n = 0;
+  int NameLength = 0;
+  for (char *p = s; *p; p++) {
+      if (*p == FOLDERDELIMCHAR) {
+         a[n] = -1; // FOLDERDELIMCHAR is a single character, neg. sign marks it
+         NameTooLong |= NameLength > NameMax;
+         NameLength = 0;
+         PathLength += 1;
+         }
+      else if (NeedsConversion(p)) {
+         a[n] = 3; // "#xx"
+         NameLength += 3;
+         PathLength += 3;
+         }
+      else {
+         int8_t l = Utf8CharLen(p);
+         a[n] = l;
+         NameLength += l;
+         PathLength += l;
+         while (l-- > 1) {
+               a[++n] = 0;
+               p++;
+               }
+         }
+      n++;
+      }
+  NameTooLong |= NameLength > NameMax;
+  // Limit names to NameMax:
+  if (NameTooLong) {
+     while (n > 0) {
+           // Calculate the length of the current name:
+           int NameLength = 0;
+           int i = n;
+           int b = i;
+           while (i-- > 0 && a[i] >= 0) {
+                 NameLength += a[i];
+                 b = i;
+                 }
+           // Shorten the name if necessary:
+           if (NameLength > NameMax) {
+              int l = 0;
+              i = n;
+              while (i-- > 0 && a[i] >= 0) {
+                    l += a[i];
+                    if (NameLength - l <= NameMax) {
+                       memmove(s + i, s + n, Length - n + 1);
+                       memmove(a + i, a + n, Length - n + 1);
+                       Length -= n - i;
+                       PathLength -= l;
+                       break;
+                       }
+                    }
+              }
+           // Switch to the next name:
+           n = b - 1;
+           }
+     }
+  // Limit path to PathMax:
+  n = Length;
+  while (PathLength > PathMax && n > 0) {
+        // Calculate how much to cut off the current name:
+        int i = n;
+        int b = i;
+        int l = 0;
+        while (--i > 0 && a[i - 1] >= 0) {
+              if (a[i] > 0) {
+                 l += a[i];
+                 b = i;
+                 if (PathLength - l <= PathMax)
+                    break;
+                 }
+              }
+        // Shorten the name if necessary:
+        if (l > 0) {
+           memmove(s + b, s + n, Length - n + 1);
+           Length -= n - b;
+           PathLength -= l;
+           }
+        // Switch to the next name:
+        n = i - 1;
+        }
+  return s;
+}
+
 cRecording::cRecording(cTimer *Timer, const cEvent *Event)
 {
   resume = RESUME_NOT_INITIALIZED;
   titleBuffer = NULL;
-  sortBuffer = NULL;
+  sortBufferName = sortBufferTime = NULL;
   fileName = NULL;
   name = NULL;
   fileSizeMB = -1; // unknown
+  channel = Timer->Channel()->Number();
+  instanceId = InstanceId;
+  isPesRecording = false;
+  isOnVideoDirectoryFileSystem = -1; // unknown
+  framesPerSecond = DEFAULTFRAMESPERSECOND;
+  numFrames = -1;
   deleted = 0;
   // set up the actual name:
   const char *Title = Event ? Event->Title() : NULL;
   const char *Subtitle = Event ? Event->ShortText() : NULL;
-  char SubtitleBuffer[MAX_SUBTITLE_LENGTH];
   if (isempty(Title))
      Title = Timer->Channel()->Name();
   if (isempty(Subtitle))
      Subtitle = " ";
-  else if (strlen(Subtitle) > MAX_SUBTITLE_LENGTH) {
-     // let's make sure the Subtitle doesn't produce too long a file name:
-     Utf8Strn0Cpy(SubtitleBuffer, Subtitle, MAX_SUBTITLE_LENGTH);
-     Subtitle = SubtitleBuffer;
-     }
-  char *macroTITLE   = strstr(Timer->File(), TIMERMACRO_TITLE);
-  char *macroEPISODE = strstr(Timer->File(), TIMERMACRO_EPISODE);
+  const char *macroTITLE   = strstr(Timer->File(), TIMERMACRO_TITLE);
+  const char *macroEPISODE = strstr(Timer->File(), TIMERMACRO_EPISODE);
   if (macroTITLE || macroEPISODE) {
      name = strdup(Timer->File());
      name = strreplace(name, TIMERMACRO_TITLE, Title);
@@ -518,7 +750,7 @@ cRecording::cRecording(cTimer *Timer, const cEvent *Event)
      // avoid blanks at the end:
      int l = strlen(name);
      while (l-- > 2) {
-           if (name[l] == ' ' && name[l - 1] != '~')
+           if (name[l] == ' ' && name[l - 1] != FOLDERDELIMCHAR)
               name[l] = 0;
            else
               break;
@@ -540,27 +772,41 @@ cRecording::cRecording(cTimer *Timer, const cEvent *Event)
   // handle info:
   info = new cRecordingInfo(Timer->Channel(), Event);
   info->SetAux(Timer->Aux());
+  info->priority = priority;
+  info->lifetime = lifetime;
 }
 
 cRecording::cRecording(const char *FileName)
 {
   resume = RESUME_NOT_INITIALIZED;
   fileSizeMB = -1; // unknown
+  channel = -1;
+  instanceId = -1;
+  priority = MAXPRIORITY; // assume maximum in case there is no info file
+  lifetime = MAXLIFETIME;
+  isPesRecording = false;
+  isOnVideoDirectoryFileSystem = -1; // unknown
+  framesPerSecond = DEFAULTFRAMESPERSECOND;
+  numFrames = -1;
   deleted = 0;
   titleBuffer = NULL;
-  sortBuffer = NULL;
-  fileName = strdup(FileName);
-  FileName += strlen(VideoDirectory) + 1;
-  char *p = strrchr(FileName, '/');
+  sortBufferName = sortBufferTime = NULL;
+  FileName = fileName = strdup(FileName);
+  if (*(fileName + strlen(fileName) - 1) == '/')
+     *(fileName + strlen(fileName) - 1) = 0;
+  if (strstr(FileName, VideoDirectory) == FileName)
+     FileName += strlen(VideoDirectory) + 1;
+  const char *p = strrchr(FileName, '/');
 
   name = NULL;
-  info = new cRecordingInfo;
+  info = new cRecordingInfo(fileName);
   if (p) {
      time_t now = time(NULL);
      struct tm tm_r;
      struct tm t = *localtime_r(&now, &tm_r); // this initializes the time zone in 't'
      t.tm_isdst = -1; // makes sure mktime() will determine the correct DST setting
-     if (7 == sscanf(p + 1, DATAFORMAT, &t.tm_year, &t.tm_mon, &t.tm_mday, &t.tm_hour, &t.tm_min, &priority, &lifetime)) {
+     if (7 == sscanf(p + 1, DATAFORMATTS, &t.tm_year, &t.tm_mon, &t.tm_mday, &t.tm_hour, &t.tm_min, &channel, &instanceId)
+      || 7 == sscanf(p + 1, DATAFORMATPES, &t.tm_year, &t.tm_mon, &t.tm_mday, &t.tm_hour, &t.tm_min, &priority, &lifetime)) {
         t.tm_year -= 1900;
         t.tm_mon--;
         t.tm_sec = 0;
@@ -569,17 +815,27 @@ cRecording::cRecording(const char *FileName)
         strncpy(name, FileName, p - FileName);
         name[p - FileName] = 0;
         name = ExchangeChars(name, false);
+        isPesRecording = instanceId < 0;
         }
+     else
+        return;
      GetResume();
      // read an optional info file:
-     cString InfoFileName = cString::sprintf("%s%s", fileName, INFOFILESUFFIX);
+     cString InfoFileName = cString::sprintf("%s%s", fileName, isPesRecording ? INFOFILESUFFIX ".vdr" : INFOFILESUFFIX);
      FILE *f = fopen(InfoFileName, "r");
      if (f) {
         if (!info->Read(f))
            esyslog("ERROR: EPG data problem in file %s", *InfoFileName);
+        else if (!isPesRecording) {
+           priority = info->priority;
+           lifetime = info->lifetime;
+           framesPerSecond = info->framesPerSecond;
+           }
         fclose(f);
         }
-     else if (errno != ENOENT)
+     else if (errno == ENOENT)
+        info->ownEvent->SetTitle(name);
+     else
         LOG_ERROR_STR(*InfoFileName);
 #ifdef SUMMARYFALLBACK
      // fall back to the old 'summary.vdr' if there was no 'info.vdr':
@@ -596,9 +852,13 @@ cRecording::cRecording(const char *FileName)
                     if (data[line]) {
                        int len = strlen(s);
                        len += strlen(data[line]) + 1;
-                       data[line] = (char *)realloc(data[line], len + 1);
-                       strcat(data[line], "\n");
-                       strcat(data[line], s);
+                       if (char *NewBuffer = (char *)realloc(data[line], len + 1)) {
+                          data[line] = NewBuffer;
+                          strcat(data[line], "\n");
+                          strcat(data[line], s);
+                          }
+                       else
+                          esyslog("ERROR: out of memory");
                        }
                     else
                        data[line] = strdup(s);
@@ -617,12 +877,16 @@ cRecording::cRecording(const char *FileName)
               // line 1 and line 2 to be the long text:
               int len = strlen(data[1]);
               if (len > 80) {
-                 data[1] = (char *)realloc(data[1], len + 1 + strlen(data[2]) + 1);
-                 strcat(data[1], "\n");
-                 strcat(data[1], data[2]);
-                 free(data[2]);
-                 data[2] = data[1];
-                 data[1] = NULL;
+                 if (char *NewBuffer = (char *)realloc(data[1], len + 1 + strlen(data[2]) + 1)) {
+                    data[1] = NewBuffer;
+                    strcat(data[1], "\n");
+                    strcat(data[1], data[2]);
+                    free(data[2]);
+                    data[2] = data[1];
+                    data[1] = NULL;
+                    }
+                 else
+                    esyslog("ERROR: out of memory");
                  }
               }
            info->SetData(data[0], data[1], data[2]);
@@ -639,13 +903,14 @@ cRecording::cRecording(const char *FileName)
 cRecording::~cRecording()
 {
   free(titleBuffer);
-  free(sortBuffer);
+  free(sortBufferName);
+  free(sortBufferTime);
   free(fileName);
   free(name);
   delete info;
 }
 
-char *cRecording::StripEpisodeName(char *s)
+char *cRecording::StripEpisodeName(char *s, bool Strip)
 {
   char *t = s, *s1 = NULL, *s2 = NULL;
   while (*t) {
@@ -660,28 +925,46 @@ char *cRecording::StripEpisodeName(char *s)
            }
         t++;
         }
-  if (s1 && s2)
-     memmove(s1 + 1, s2, t - s2 + 1);
+  if (s1 && s2) {
+     // To have folders sorted before plain recordings, the '/' s1 points to
+     // is replaced by the character '1'. All other slashes will be replaced
+     // by '0' in SortName() (see below), which will result in the desired
+     // sequence:
+     *s1 = '1';
+     if (Strip) {
+        s1++;
+        memmove(s1, s2, t - s2 + 1);
+        }
+     }
   return s;
 }
 
 char *cRecording::SortName(void) const
 {
-  if (!sortBuffer) {
-     char *s = StripEpisodeName(strdup(FileName() + strlen(VideoDirectory) + 1));
-     strreplace(s, '/', 'a'); // some locales ignore '/' when sorting
+  char **sb = (RecordingsSortMode == rsmName) ? &sortBufferName : &sortBufferTime;
+  if (!*sb) {
+     char *s = strdup(FileName() + strlen(VideoDirectory));
+     if (RecordingsSortMode != rsmName || Setup.AlwaysSortFoldersFirst)
+        s = StripEpisodeName(s, RecordingsSortMode != rsmName);
+     strreplace(s, '/', '0'); // some locales ignore '/' when sorting
      int l = strxfrm(NULL, s, 0) + 1;
-     sortBuffer = MALLOC(char, l);
-     strxfrm(sortBuffer, s, l);
+     *sb = MALLOC(char, l);
+     strxfrm(*sb, s, l);
      free(s);
      }
-  return sortBuffer;
+  return *sb;
+}
+
+void cRecording::ClearSortName(void)
+{
+  DELETENULL(sortBufferName);
+  DELETENULL(sortBufferTime);
 }
 
 int cRecording::GetResume(void) const
 {
   if (resume == RESUME_NOT_INITIALIZED) {
-     cResumeFile ResumeFile(FileName());
+     cResumeFile ResumeFile(FileName(), isPesRecording);
      resume = ResumeFile.Read();
      }
   return resume;
@@ -698,9 +981,15 @@ const char *cRecording::FileName(void) const
   if (!fileName) {
      struct tm tm_r;
      struct tm *t = localtime_r(&start, &tm_r);
-     name = ExchangeChars(name, true);
-     fileName = strdup(cString::sprintf(NAMEFORMAT, VideoDirectory, name, t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, priority, lifetime));
-     name = ExchangeChars(name, false);
+     const char *fmt = isPesRecording ? NAMEFORMATPES : NAMEFORMATTS;
+     int ch = isPesRecording ? priority : channel;
+     int ri = isPesRecording ? lifetime : instanceId;
+     char *Name = LimitNameLengths(strdup(name), DirectoryPathMax - strlen(VideoDirectory) - 1 - 42, DirectoryNameMax); // 42 = length of an actual recording directory name (generated with DATAFORMATTS) plus some reserve
+     if (strcmp(Name, name) != 0)
+        dsyslog("recording file name '%s' truncated to '%s'", name, Name);
+     Name = ExchangeChars(Name, true);
+     fileName = strdup(cString::sprintf(fmt, VideoDirectory, Name, t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, ch, ri));
+     free(Name);
      }
   return fileName;
 }
@@ -714,32 +1003,42 @@ const char *cRecording::Title(char Delimiter, bool NewIndicator, int Level) cons
      struct tm tm_r;
      struct tm *t = localtime_r(&start, &tm_r);
      char *s;
-     if (Level > 0 && (s = strrchr(name, '~')) != NULL)
+     if (Level > 0 && (s = strrchr(name, FOLDERDELIMCHAR)) != NULL)
         s++;
      else
         s = name;
-     titleBuffer = strdup(cString::sprintf("%02d.%02d.%02d%c%02d:%02d%c%c%s",
+     cString Length("");
+     if (NewIndicator) {
+        int Minutes = max(0, (LengthInSeconds() + 30) / 60);
+        Length = cString::sprintf("%c%d:%02d",
+                   Delimiter,
+                   Minutes / 60,
+                   Minutes % 60
+                   );
+        }
+     titleBuffer = strdup(cString::sprintf("%02d.%02d.%02d%c%02d:%02d%s%c%c%s",
                             t->tm_mday,
                             t->tm_mon + 1,
                             t->tm_year % 100,
                             Delimiter,
                             t->tm_hour,
                             t->tm_min,
+                            *Length,
                             New,
                             Delimiter,
                             s));
-     // let's not display a trailing '~':
+     // let's not display a trailing FOLDERDELIMCHAR:
      if (!NewIndicator)
         stripspace(titleBuffer);
      s = &titleBuffer[strlen(titleBuffer) - 1];
-     if (*s == '~')
+     if (*s == FOLDERDELIMCHAR)
         *s = 0;
      }
   else if (Level < HierarchyLevels()) {
      const char *s = name;
      const char *p = s;
      while (*++s) {
-           if (*s == '~') {
+           if (*s == FOLDERDELIMCHAR) {
               if (Level--)
                  p = s + 1;
               else
@@ -772,7 +1071,7 @@ int cRecording::HierarchyLevels(void) const
   const char *s = name;
   int level = 0;
   while (*++s) {
-        if (*s == '~')
+        if (*s == FOLDERDELIMCHAR)
            level++;
         }
   return level;
@@ -780,14 +1079,29 @@ int cRecording::HierarchyLevels(void) const
 
 bool cRecording::IsEdited(void) const
 {
-  const char *s = strrchr(name, '~');
+  const char *s = strrchr(name, FOLDERDELIMCHAR);
   s = !s ? name : s + 1;
   return *s == '%';
 }
 
+bool cRecording::IsOnVideoDirectoryFileSystem(void) const
+{
+  if (isOnVideoDirectoryFileSystem < 0)
+     isOnVideoDirectoryFileSystem = ::IsOnVideoDirectoryFileSystem(FileName());
+  return isOnVideoDirectoryFileSystem;
+}
+
+void cRecording::ReadInfo(void)
+{
+  info->Read();
+  priority = info->priority;
+  lifetime = info->lifetime;
+  framesPerSecond = info->framesPerSecond;
+}
+
 bool cRecording::WriteInfo(void)
 {
-  cString InfoFileName = cString::sprintf("%s%s", fileName, INFOFILESUFFIX);
+  cString InfoFileName = cString::sprintf("%s%s", fileName, isPesRecording ? INFOFILESUFFIX ".vdr" : INFOFILESUFFIX);
   FILE *f = fopen(InfoFileName, "w");
   if (f) {
      info->Write(f);
@@ -796,6 +1110,13 @@ bool cRecording::WriteInfo(void)
   else
      LOG_ERROR_STR(*InfoFileName);
   return true;
+}
+
+void cRecording::SetStartTime(time_t Start)
+{
+  start = Start;
+  free(fileName);
+  fileName = NULL;
 }
 
 bool cRecording::Delete(void)
@@ -811,8 +1132,10 @@ bool cRecording::Delete(void)
         RemoveVideoFile(NewName);
         }
      isyslog("deleting recording '%s'", FileName());
-     if (access(FileName(), F_OK) == 0)
+     if (access(FileName(), F_OK) == 0) {
         result = RenameVideoFile(FileName(), NewName);
+        cRecordingUserCommand::InvokeCommand(RUC_DELETERECORDING, NewName);
+        }
      else {
         isyslog("recording '%s' vanished", FileName());
         result = true; // well, we were going to delete it, anyway
@@ -864,6 +1187,36 @@ void cRecording::ResetResume(void) const
   resume = RESUME_NOT_INITIALIZED;
 }
 
+int cRecording::NumFrames(void) const
+{
+  if (numFrames < 0) {
+     int nf = cIndexFile::GetLength(FileName(), IsPesRecording());
+     if (time(NULL) - LastModifiedTime(cIndexFile::IndexFileName(FileName(), IsPesRecording())) < MININDEXAGE)
+        return nf; // check again later for ongoing recordings
+     numFrames = nf;
+     }
+  return numFrames;
+}
+
+int cRecording::LengthInSeconds(void) const
+{
+  int nf = NumFrames();
+  if (nf >= 0)
+     return int(nf / FramesPerSecond());
+  return -1;
+}
+
+int cRecording::FileSizeMB(void) const
+{
+  if (fileSizeMB < 0) {
+     int fs = DirSizeMB(FileName());
+     if (time(NULL) - LastModifiedTime(cIndexFile::IndexFileName(FileName(), IsPesRecording())) < MININDEXAGE)
+        return fs; // check again later for ongoing recordings
+     fileSizeMB = fs;
+     }
+  return fileSizeMB;
+}
+
 // --- cRecordings -----------------------------------------------------------
 
 cRecordings Recordings;
@@ -910,48 +1263,38 @@ void cRecordings::ScanVideoDir(const char *DirName, bool Foreground, int LinkLev
   cReadDir d(DirName);
   struct dirent *e;
   while ((Foreground || Running()) && (e = d.Next()) != NULL) {
-        if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..")) {
-           char *buffer = strdup(AddDirectory(DirName, e->d_name));
-           struct stat st;
-           if (stat(buffer, &st) == 0) {
-              int Link = 0;
-              if (S_ISLNK(st.st_mode)) {
-                 if (LinkLevel > MAX_LINK_LEVEL) {
-                    isyslog("max link level exceeded - not scanning %s", buffer);
-                    continue;
-                    }
-                 Link = 1;
-                 char *old = buffer;
-                 buffer = ReadLink(old);
-                 free(old);
-                 if (!buffer)
-                    continue;
-                 if (stat(buffer, &st) != 0) {
-                    free(buffer);
-                    continue;
-                    }
+        cString buffer = AddDirectory(DirName, e->d_name);
+        struct stat st;
+        if (lstat(buffer, &st) == 0) {
+           int Link = 0;
+           if (S_ISLNK(st.st_mode)) {
+              if (LinkLevel > MAX_LINK_LEVEL) {
+                 isyslog("max link level exceeded - not scanning %s", *buffer);
+                 continue;
                  }
-              if (S_ISDIR(st.st_mode)) {
-                 if (endswith(buffer, deleted ? DELEXT : RECEXT)) {
-                    cRecording *r = new cRecording(buffer);
-                    if (r->Name()) {
-                       Lock();
-                       Add(r);
-                       ChangeState();
-                       Unlock();
-                       if (deleted) {
-                          r->fileSizeMB = DirSizeMB(buffer);
-                          r->deleted = time(NULL);
-                          }
-                       }
-                    else
-                       delete r;
+              Link = 1;
+              if (stat(buffer, &st) != 0)
+                 continue;
+              }
+           if (S_ISDIR(st.st_mode)) {
+              if (endswith(buffer, deleted ? DELEXT : RECEXT)) {
+                 cRecording *r = new cRecording(buffer);
+                 if (r->Name()) {
+                    r->NumFrames(); // initializes the numFrames member
+                    r->FileSizeMB(); // initializes the fileSizeMB member
+                    if (deleted)
+                       r->deleted = time(NULL);
+                    Lock();
+                    Add(r);
+                    ChangeState();
+                    Unlock();
                     }
                  else
-                    ScanVideoDir(buffer, Foreground, LinkLevel + Link);
+                    delete r;
                  }
+              else
+                 ScanVideoDir(buffer, Foreground, LinkLevel + Link);
               }
-           free(buffer);
            }
         }
 }
@@ -969,7 +1312,7 @@ void cRecordings::TouchUpdate(void)
   bool needsUpdate = NeedsUpdate();
   TouchFile(UpdateFileName());
   if (!needsUpdate)
-     lastUpdate = time(NULL); // make sure we don't tigger ourselves
+     lastUpdate = time(NULL); // make sure we don't trigger ourselves
 }
 
 bool cRecordings::NeedsUpdate(void)
@@ -1022,18 +1365,27 @@ void cRecordings::DelByName(const char *FileName)
   if (recording) {
      cThreadLock DeletedRecordingsLock(&DeletedRecordings);
      Del(recording, false);
-     char *ext = strrchr(recording->FileName(), '.');
+     char *ext = strrchr(recording->fileName, '.');
      if (ext) {
         strncpy(ext, DELEXT, strlen(ext));
-        recording->fileSizeMB = DirSizeMB(recording->FileName());
-        recording->deleted = time(NULL);
-        DeletedRecordings.Add(recording);
+        if (access(recording->FileName(), F_OK) == 0) {
+           recording->deleted = time(NULL);
+           DeletedRecordings.Add(recording);
+           recording = NULL; // to prevent it from being deleted below
+           }
         }
-     else
-        delete recording;
+     delete recording;
      ChangeState();
      TouchUpdate();
      }
+}
+
+void cRecordings::UpdateByName(const char *FileName)
+{
+  LOCK_THREAD;
+  cRecording *recording = GetByName(FileName);
+  if (recording)
+     recording->ReadInfo();
 }
 
 int cRecordings::TotalFileSizeMB(void)
@@ -1041,10 +1393,31 @@ int cRecordings::TotalFileSizeMB(void)
   int size = 0;
   LOCK_THREAD;
   for (cRecording *recording = First(); recording; recording = Next(recording)) {
-      if (recording->fileSizeMB > 0 && IsOnVideoDirectoryFileSystem(recording->FileName()))
-         size += recording->fileSizeMB;
+      int FileSizeMB = recording->FileSizeMB();
+      if (FileSizeMB > 0 && recording->IsOnVideoDirectoryFileSystem())
+         size += FileSizeMB;
       }
   return size;
+}
+
+double cRecordings::MBperMinute(void)
+{
+  int size = 0;
+  int length = 0;
+  LOCK_THREAD;
+  for (cRecording *recording = First(); recording; recording = Next(recording)) {
+      if (recording->IsOnVideoDirectoryFileSystem()) {
+         int FileSizeMB = recording->FileSizeMB();
+         if (FileSizeMB > 0) {
+            int LengthInSeconds = recording->LengthInSeconds();
+            if (LengthInSeconds > 0) {
+               size += FileSizeMB;
+               length += LengthInSeconds;
+               }
+            }
+         }
+      }
+  return (size && length) ? double(size) * 60 / length : -1;
 }
 
 void cRecordings::ResetResume(const char *ResumeFileName)
@@ -1057,29 +1430,39 @@ void cRecordings::ResetResume(const char *ResumeFileName)
   ChangeState();
 }
 
+void cRecordings::ClearSortNames(void)
+{
+  LOCK_THREAD;
+  for (cRecording *recording = First(); recording; recording = Next(recording))
+      recording->ClearSortName();
+}
+
 // --- cMark -----------------------------------------------------------------
 
-cMark::cMark(int Position, const char *Comment)
+double MarkFramesPerSecond = DEFAULTFRAMESPERSECOND;
+cMutex MutexMarkFramesPerSecond;
+
+cMark::cMark(int Position, const char *Comment, double FramesPerSecond)
 {
   position = Position;
-  comment = Comment ? strdup(Comment) : NULL;
+  comment = Comment;
+  framesPerSecond = FramesPerSecond;
 }
 
 cMark::~cMark()
 {
-  free(comment);
 }
 
 cString cMark::ToText(void)
 {
-  return cString::sprintf("%s%s%s\n", *IndexToHMSF(position, true), comment ? " " : "", comment ? comment : "");
+  return cString::sprintf("%s%s%s\n", *IndexToHMSF(position, true, framesPerSecond), Comment() ? " " : "", Comment() ? Comment() : "");
 }
 
 bool cMark::Parse(const char *s)
 {
-  free(comment);
   comment = NULL;
-  position = HMSFToIndex(s);
+  framesPerSecond = MarkFramesPerSecond;
+  position = HMSFToIndex(s, framesPerSecond);
   const char *p = strchr(s, ' ');
   if (p) {
      p = skipspace(p);
@@ -1096,20 +1479,75 @@ bool cMark::Save(FILE *f)
 
 // --- cMarks ----------------------------------------------------------------
 
-bool cMarks::Load(const char *RecordingFileName)
+bool cMarks::Load(const char *RecordingFileName, double FramesPerSecond, bool IsPesRecording)
 {
-  if (cConfig<cMark>::Load(AddDirectory(RecordingFileName, MARKSFILESUFFIX))) {
-     Sort();
+  recordingFileName = RecordingFileName;
+  fileName = AddDirectory(RecordingFileName, IsPesRecording ? MARKSFILESUFFIX ".vdr" : MARKSFILESUFFIX);
+  framesPerSecond = FramesPerSecond;
+  isPesRecording = IsPesRecording;
+  nextUpdate = 0;
+  lastFileTime = -1; // the first call to Load() must take place!
+  lastChange = 0;
+  return Update();
+}
+
+bool cMarks::Update(void)
+{
+  time_t t = time(NULL);
+  if (t > nextUpdate) {
+     time_t LastModified = LastModifiedTime(fileName);
+     if (LastModified != lastFileTime) // change detected, or first run
+        lastChange = LastModified > 0 ? LastModified : t;
+     int d = t - lastChange;
+     if (d < 60)
+        d = 1; // check frequently if the file has just been modified
+     else if (d < 3600)
+        d = 10; // older files are checked less frequently
+     else
+        d /= 360; // phase out checking for very old files
+     nextUpdate = t + d;
+     if (LastModified != lastFileTime) { // change detected, or first run
+        lastFileTime = LastModified;
+        if (lastFileTime == t)
+           lastFileTime--; // make sure we don't miss updates in the remaining second
+        cMutexLock MutexLock(&MutexMarkFramesPerSecond);
+        MarkFramesPerSecond = framesPerSecond;
+        if (cConfig<cMark>::Load(fileName)) {
+           Align();
+           Sort();
+           return true;
+           }
+        }
+     }
+  return false;
+}
+
+bool cMarks::Save(void)
+{
+  if (cConfig<cMark>::Save()) {
+     lastFileTime = LastModifiedTime(fileName);
      return true;
      }
   return false;
+}
+
+void cMarks::Align(void)
+{
+  cIndexFile IndexFile(recordingFileName, false, isPesRecording);
+  for (cMark *m = First(); m; m = Next(m)) {
+      int p = IndexFile.GetClosestIFrame(m->Position());
+      if (int d = m->Position() - p) {
+         isyslog("aligned editing mark %s to %s (off by %d frame%s)", *IndexToHMSF(m->Position(), true, framesPerSecond), *IndexToHMSF(p, true, framesPerSecond), d, abs(d) > 1 ? "s" : "");
+         m->SetPosition(p);
+         }
+      }
 }
 
 void cMarks::Sort(void)
 {
   for (cMark *m1 = First(); m1; m1 = Next(m1)) {
       for (cMark *m2 = Next(m1); m2; m2 = Next(m2)) {
-          if (m2->position < m1->position) {
+          if (m2->Position() < m1->Position()) {
              swap(m1->position, m2->position);
              swap(m1->comment, m2->comment);
              }
@@ -1117,20 +1555,16 @@ void cMarks::Sort(void)
       }
 }
 
-cMark *cMarks::Add(int Position)
+void cMarks::Add(int Position)
 {
-  cMark *m = Get(Position);
-  if (!m) {
-     cConfig<cMark>::Add(m = new cMark(Position));
-     Sort();
-     }
-  return m;
+  cConfig<cMark>::Add(new cMark(Position, NULL, framesPerSecond));
+  Sort();
 }
 
 cMark *cMarks::Get(int Position)
 {
   for (cMark *mi = First(); mi; mi = Next(mi)) {
-      if (mi->position == Position)
+      if (mi->Position() == Position)
          return mi;
       }
   return NULL;
@@ -1139,7 +1573,7 @@ cMark *cMarks::Get(int Position)
 cMark *cMarks::GetPrev(int Position)
 {
   for (cMark *mi = Last(); mi; mi = Prev(mi)) {
-      if (mi->position < Position)
+      if (mi->Position() < Position)
          return mi;
       }
   return NULL;
@@ -1148,106 +1582,330 @@ cMark *cMarks::GetPrev(int Position)
 cMark *cMarks::GetNext(int Position)
 {
   for (cMark *mi = First(); mi; mi = Next(mi)) {
-      if (mi->position > Position)
+      if (mi->Position() > Position)
          return mi;
       }
   return NULL;
+}
+
+cMark *cMarks::GetNextBegin(cMark *EndMark)
+{
+  cMark *BeginMark = EndMark ? Next(EndMark) : First();
+  if (BeginMark) {
+     while (cMark *NextMark = Next(BeginMark)) {
+           if (BeginMark->Position() == NextMark->Position()) { // skip Begin/End at the same position
+              if (!(BeginMark = Next(NextMark)))
+                 break;
+              }
+           else
+              break;
+           }
+     }
+  return BeginMark;
+}
+
+cMark *cMarks::GetNextEnd(cMark *BeginMark)
+{
+  if (!BeginMark)
+     return NULL;
+  cMark *EndMark = Next(BeginMark);
+  if (EndMark) {
+     while (cMark *NextMark = Next(EndMark)) {
+           if (EndMark->Position() == NextMark->Position()) { // skip End/Begin at the same position
+              if (!(EndMark = Next(NextMark)))
+                 break;
+              }
+           else
+              break;
+           }
+     }
+  return EndMark;
+}
+
+int cMarks::GetNumSequences(void)
+{
+  int NumSequences = 0;
+  if (cMark *BeginMark = GetNextBegin()) {
+     while (cMark *EndMark = GetNextEnd(BeginMark)) {
+           NumSequences++;
+           BeginMark = GetNextBegin(EndMark);
+           }
+     if (BeginMark) {
+        NumSequences++; // the last sequence had no actual "end" mark
+        if (NumSequences == 1 && BeginMark->Position() == 0)
+           NumSequences = 0; // there is only one actual "begin" mark at offset zero, and no actual "end" mark
+        }
+     }
+  return NumSequences;
 }
 
 // --- cRecordingUserCommand -------------------------------------------------
 
 const char *cRecordingUserCommand::command = NULL;
 
-void cRecordingUserCommand::InvokeCommand(const char *State, const char *RecordingFileName)
+void cRecordingUserCommand::InvokeCommand(const char *State, const char *RecordingFileName, const char *SourceFileName)
 {
   if (command) {
-     cString cmd = cString::sprintf("%s %s \"%s\"", command, State, *strescape(RecordingFileName, "\\\"$"));
-     isyslog("executing '%s'", *cmd);
-     SystemExec(cmd);
-     }
+    cString cmd;
+    if (SourceFileName)
+       cmd = cString::sprintf("%s %s \"%s\" \"%s\"", command, State, *strescape(RecordingFileName, "\\\"$"), *strescape(SourceFileName, "\\\"$"));
+    else
+       cmd = cString::sprintf("%s %s \"%s\"", command, State, *strescape(RecordingFileName, "\\\"$"));
+    isyslog("executing '%s'", *cmd);
+    SystemExec(cmd);
+  }
 }
 
-// --- XXX+
+// --- cIndexFileGenerator ---------------------------------------------------
 
-//XXX+ somewhere else???
+#define IFG_BUFFER_SIZE KILOBYTE(100)
+
+class cIndexFileGenerator : public cThread {
+private:
+  cString recordingName;
+protected:
+  virtual void Action(void);
+public:
+  cIndexFileGenerator(const char *RecordingName);
+  ~cIndexFileGenerator();
+  };
+
+cIndexFileGenerator::cIndexFileGenerator(const char *RecordingName)
+:cThread("index file generator")
+,recordingName(RecordingName)
+{
+  Start();
+}
+
+cIndexFileGenerator::~cIndexFileGenerator()
+{
+  Cancel(3);
+}
+
+void cIndexFileGenerator::Action(void)
+{
+  bool IndexFileComplete = false;
+  bool IndexFileWritten = false;
+  bool Rewind = false;
+  cFileName FileName(recordingName, false);
+  cUnbufferedFile *ReplayFile = FileName.Open();
+  cRingBufferLinear Buffer(IFG_BUFFER_SIZE, MIN_TS_PACKETS_FOR_FRAME_DETECTOR * TS_SIZE);
+  cPatPmtParser PatPmtParser;
+  cFrameDetector FrameDetector;
+  cIndexFile IndexFile(recordingName, true);
+  int BufferChunks = KILOBYTE(1); // no need to read a lot at the beginning when parsing PAT/PMT
+  off_t FileSize = 0;
+  off_t FrameOffset = -1;
+  Skins.QueueMessage(mtInfo, tr("Regenerating index file"));
+  while (Running()) {
+        // Rewind input file:
+        if (Rewind) {
+           ReplayFile = FileName.SetOffset(1);
+           Buffer.Clear();
+           Rewind = false;
+           }
+        // Process data:
+        int Length;
+        uchar *Data = Buffer.Get(Length);
+        if (Data) {
+           if (FrameDetector.Synced()) {
+              // Step 3 - generate the index:
+              if (TsPid(Data) == PATPID)
+                 FrameOffset = FileSize; // the PAT/PMT is at the beginning of an I-frame
+              int Processed = FrameDetector.Analyze(Data, Length);
+              if (Processed > 0) {
+                 if (FrameDetector.NewFrame()) {
+                    IndexFile.Write(FrameDetector.IndependentFrame(), FileName.Number(), FrameOffset >= 0 ? FrameOffset : FileSize);
+                    FrameOffset = -1;
+                    IndexFileWritten = true;
+                    }
+                 FileSize += Processed;
+                 Buffer.Del(Processed);
+                 }
+              }
+           else if (PatPmtParser.Vpid()) {
+              // Step 2 - sync FrameDetector:
+              int Processed = FrameDetector.Analyze(Data, Length);
+              if (Processed > 0) {
+                 if (FrameDetector.Synced()) {
+                    // Synced FrameDetector, so rewind for actual processing:
+                    Rewind = true;
+                    }
+                 Buffer.Del(Processed);
+                 }
+              }
+           else {
+              // Step 1 - parse PAT/PMT:
+              uchar *p = Data;
+              while (Length >= TS_SIZE) {
+                    int Pid = TsPid(p);
+                    if (Pid == PATPID)
+                       PatPmtParser.ParsePat(p, TS_SIZE);
+                    else if (PatPmtParser.IsPmtPid(Pid))
+                       PatPmtParser.ParsePmt(p, TS_SIZE);
+                    Length -= TS_SIZE;
+                    p += TS_SIZE;
+                    if (PatPmtParser.Vpid()) {
+                       // Found Vpid, so rewind to sync FrameDetector:
+                       FrameDetector.SetPid(PatPmtParser.Vpid(), PatPmtParser.Vtype());
+                       BufferChunks = IFG_BUFFER_SIZE;
+                       Rewind = true;
+                       break;
+                       }
+                    }
+              Buffer.Del(p - Data);
+              }
+           }
+        // Read data:
+        else if (ReplayFile) {
+           int Result = Buffer.Read(ReplayFile, BufferChunks);
+           if (Result == 0) { // EOF
+              ReplayFile = FileName.NextFile();
+              FileSize = 0;
+              FrameOffset = -1;
+              Buffer.Clear();
+              }
+           }
+        // Recording has been processed:
+        else {
+           IndexFileComplete = true;
+           break;
+           }
+        }
+  if (IndexFileComplete) {
+     if (IndexFileWritten) {
+        cRecordingInfo RecordingInfo(recordingName);
+        if (RecordingInfo.Read()) {
+           if (FrameDetector.FramesPerSecond() > 0 && !DoubleEqual(RecordingInfo.FramesPerSecond(), FrameDetector.FramesPerSecond())) {
+              RecordingInfo.SetFramesPerSecond(FrameDetector.FramesPerSecond());
+              RecordingInfo.Write();
+              Recordings.UpdateByName(recordingName);
+              }
+           }
+        Skins.QueueMessage(mtInfo, tr("Index file regeneration complete"));
+        return;
+        }
+     else
+        Skins.QueueMessage(mtError, tr("Index file regeneration failed!"));
+     }
+  // Delete the index file if the recording has not been processed entirely:
+  IndexFile.Delete();
+}
+
 // --- cIndexFile ------------------------------------------------------------
 
-#define INDEXFILESUFFIX     "/index.vdr"
-
-// The number of frames to stay off the end in case of time shift:
-#define INDEXSAFETYLIMIT 150 // frames
+#define INDEXFILESUFFIX     "/index"
 
 // The maximum time to wait before giving up while catching up on an index file:
-#define MAXINDEXCATCHUP   8 // seconds
+#define MAXINDEXCATCHUP    8 // number of retries
+#define INDEXCATCHUPWAIT 100 // milliseconds
 
-// The minimum age of an index file for considering it no longer to be written:
-#define MININDEXAGE    3600 // seconds
+struct tIndexPes {
+  uint32_t offset;
+  uchar type;
+  uchar number;
+  uint16_t reserved;
+  };
 
-cIndexFile::cIndexFile(const char *FileName, bool Record)
-:resumeFile(FileName)
+struct tIndexTs {
+  uint64_t offset:40; // up to 1TB per file (not using off_t here - must definitely be exactly 64 bit!)
+  int reserved:7;     // reserved for future use
+  int independent:1;  // marks frames that can be displayed by themselves (for trick modes)
+  uint16_t number:16; // up to 64K files per recording
+  tIndexTs(off_t Offset, bool Independent, uint16_t Number)
+  {
+    offset = Offset;
+    reserved = 0;
+    independent = Independent;
+    number = Number;
+  }
+  };
+
+#define MAXWAITFORINDEXFILE     10 // max. time to wait for the regenerated index file (seconds)
+#define INDEXFILECHECKINTERVAL 500 // ms between checks for existence of the regenerated index file
+#define INDEXFILETESTINTERVAL   10 // ms between tests for the size of the index file in case of pausing live video
+
+cIndexFile::cIndexFile(const char *FileName, bool Record, bool IsPesRecording, bool PauseLive)
+:resumeFile(FileName, IsPesRecording)
 {
   f = -1;
-  fileName = NULL;
   size = 0;
   last = -1;
   index = NULL;
+  isPesRecording = IsPesRecording;
+  indexFileGenerator = NULL;
   if (FileName) {
-     fileName = MALLOC(char, strlen(FileName) + strlen(INDEXFILESUFFIX) + 1);
-     if (fileName) {
-        strcpy(fileName, FileName);
-        char *pFileExt = fileName + strlen(fileName);
-        strcpy(pFileExt, INDEXFILESUFFIX);
-        int delta = 0;
-        if (access(fileName, R_OK) == 0) {
-           struct stat buf;
-           if (stat(fileName, &buf) == 0) {
-              delta = buf.st_size % sizeof(tIndex);
-              if (delta) {
-                 delta = sizeof(tIndex) - delta;
-                 esyslog("ERROR: invalid file size (%ld) in '%s'", buf.st_size, fileName);
-                 }
-              last = (buf.st_size + delta) / sizeof(tIndex) - 1;
-              if (!Record && last >= 0) {
-                 size = last + 1;
-                 index = MALLOC(tIndex, size);
-                 if (index) {
-                    f = open(fileName, O_RDONLY);
-                    if (f >= 0) {
-                       if ((int)safe_read(f, index, buf.st_size) != buf.st_size) {
-                          esyslog("ERROR: can't read from file '%s'", fileName);
-                          free(index);
-                          index = NULL;
-                          close(f);
-                          f = -1;
-                          }
-                       // we don't close f here, see CatchUp()!
-                       }
-                    else
-                       LOG_ERROR_STR(fileName);
-                    }
-                 else
-                    esyslog("ERROR: can't allocate %zd bytes for index '%s'", size * sizeof(tIndex), fileName);
-                 }
-              }
-           else
-              LOG_ERROR;
-           }
-        else if (!Record)
-           isyslog("missing index file %s", fileName);
-        if (Record) {
-           if ((f = open(fileName, O_WRONLY | O_CREAT | O_APPEND, DEFFILEMODE)) >= 0) {
-              if (delta) {
-                 esyslog("ERROR: padding index file with %d '0' bytes", delta);
-                 while (delta--)
-                       writechar(f, 0);
-                 }
-              }
-           else
-              LOG_ERROR_STR(fileName);
+     fileName = IndexFileName(FileName, isPesRecording);
+     if (!Record && PauseLive) {
+        // Wait until the index file contains at least two frames:
+        time_t tmax = time(NULL) + MAXWAITFORINDEXFILE;
+        while (time(NULL) < tmax && FileSize(fileName) < off_t(2 * sizeof(tIndexTs)))
+              cCondWait::SleepMs(INDEXFILETESTINTERVAL);
+        }
+     int delta = 0;
+     if (!Record && access(fileName, R_OK) != 0) {
+        // Index file doesn't exist, so try to regenerate it:
+        if (!isPesRecording) { // sorry, can only do this for TS recordings
+           resumeFile.Delete(); // just in case
+           indexFileGenerator = new cIndexFileGenerator(FileName);
+           // Wait until the index file exists:
+           time_t tmax = time(NULL) + MAXWAITFORINDEXFILE;
+           do {
+              cCondWait::SleepMs(INDEXFILECHECKINTERVAL); // start with a sleep, to give it a head start
+              } while (access(fileName, R_OK) != 0 && time(NULL) < tmax);
            }
         }
-     else
-        esyslog("ERROR: can't copy file name '%s'", FileName);
+     if (access(fileName, R_OK) == 0) {
+        struct stat buf;
+        if (stat(fileName, &buf) == 0) {
+           delta = int(buf.st_size % sizeof(tIndexTs));
+           if (delta) {
+              delta = sizeof(tIndexTs) - delta;
+              esyslog("ERROR: invalid file size (%"PRId64") in '%s'", buf.st_size, *fileName);
+              }
+           last = int((buf.st_size + delta) / sizeof(tIndexTs) - 1);
+           if (!Record && last >= 0) {
+              size = last + 1;
+              index = MALLOC(tIndexTs, size);
+              if (index) {
+                 f = open(fileName, O_RDONLY);
+                 if (f >= 0) {
+                    if (safe_read(f, index, size_t(buf.st_size)) != buf.st_size) {
+                       esyslog("ERROR: can't read from file '%s'", *fileName);
+                       free(index);
+                       index = NULL;
+                       }
+                    else if (isPesRecording)
+                       ConvertFromPes(index, size);
+                    if (!index || time(NULL) - buf.st_mtime >= MININDEXAGE) {
+                       close(f);
+                       f = -1;
+                       }
+                    // otherwise we don't close f here, see CatchUp()!
+                    }
+                 else
+                    LOG_ERROR_STR(*fileName);
+                 }
+              else
+                 esyslog("ERROR: can't allocate %zd bytes for index '%s'", size * sizeof(tIndexTs), *fileName);
+              }
+           }
+        else
+           LOG_ERROR;
+        }
+     else if (!Record)
+        isyslog("missing index file %s", *fileName);
+     if (Record) {
+        if ((f = open(fileName, O_WRONLY | O_CREAT | O_APPEND, DEFFILEMODE)) >= 0) {
+           if (delta) {
+              esyslog("ERROR: padding index file with %d '0' bytes", delta);
+              while (delta--)
+                    writechar(f, 0);
+              }
+           }
+        else
+           LOG_ERROR_STR(*fileName);
+        }
      }
 }
 
@@ -1255,8 +1913,38 @@ cIndexFile::~cIndexFile()
 {
   if (f >= 0)
      close(f);
-  free(fileName);
   free(index);
+  delete indexFileGenerator;
+}
+
+cString cIndexFile::IndexFileName(const char *FileName, bool IsPesRecording)
+{
+  return cString::sprintf("%s%s", FileName, IsPesRecording ? INDEXFILESUFFIX ".vdr" : INDEXFILESUFFIX);
+}
+
+void cIndexFile::ConvertFromPes(tIndexTs *IndexTs, int Count)
+{
+  tIndexPes IndexPes;
+  while (Count-- > 0) {
+        memcpy(&IndexPes, IndexTs, sizeof(IndexPes));
+        IndexTs->offset = IndexPes.offset;
+        IndexTs->independent = IndexPes.type == 1; // I_FRAME
+        IndexTs->number = IndexPes.number;
+        IndexTs++;
+        }
+}
+
+void cIndexFile::ConvertToPes(tIndexTs *IndexTs, int Count)
+{
+  tIndexPes IndexPes;
+  while (Count-- > 0) {
+        IndexPes.offset = uint32_t(IndexTs->offset);
+        IndexPes.type = uchar(IndexTs->independent ? 1 : 2); // I_FRAME : "not I_FRAME" (exact frame type doesn't matter)
+        IndexPes.number = uchar(IndexTs->number);
+        IndexPes.reserved = 0;
+        memcpy(IndexTs, &IndexPes, sizeof(*IndexTs));
+        IndexTs++;
+        }
 }
 
 bool cIndexFile::CatchUp(int Index)
@@ -1264,26 +1952,24 @@ bool cIndexFile::CatchUp(int Index)
   // returns true unless something really goes wrong, so that 'index' becomes NULL
   if (index && f >= 0) {
      cMutexLock MutexLock(&mutex);
+     // Note that CatchUp() is triggered even if Index is 'last' (and thus valid).
+     // This is done to make absolutely sure we don't miss any data at the very end.
      for (int i = 0; i <= MAXINDEXCATCHUP && (Index < 0 || Index >= last); i++) {
          struct stat buf;
          if (fstat(f, &buf) == 0) {
-            if (time(NULL) - buf.st_mtime > MININDEXAGE) {
-               // apparently the index file is not being written any more
-               close(f);
-               f = -1;
-               break;
-               }
-            int newLast = buf.st_size / sizeof(tIndex) - 1;
+            int newLast = int(buf.st_size / sizeof(tIndexTs) - 1);
             if (newLast > last) {
-               if (size <= newLast) {
-                  size *= 2;
-                  if (size <= newLast)
-                     size = newLast + 1;
+               int NewSize = size;
+               if (NewSize <= newLast) {
+                  NewSize *= 2;
+                  if (NewSize <= newLast)
+                     NewSize = newLast + 1;
                   }
-               index = (tIndex *)realloc(index, size * sizeof(tIndex));
-               if (index) {
-                  int offset = (last + 1) * sizeof(tIndex);
-                  int delta = (newLast - last) * sizeof(tIndex);
+               if (tIndexTs *NewBuffer = (tIndexTs *)realloc(index, NewSize * sizeof(tIndexTs))) {
+                  size = NewSize;
+                  index = NewBuffer;
+                  int offset = (last + 1) * sizeof(tIndexTs);
+                  int delta = (newLast - last) * sizeof(tIndexTs);
                   if (lseek(f, offset, SEEK_SET) == offset) {
                      if (safe_read(f, &index[last + 1], delta) != delta) {
                         esyslog("ERROR: can't read from index");
@@ -1293,31 +1979,38 @@ bool cIndexFile::CatchUp(int Index)
                         f = -1;
                         break;
                         }
+                     if (isPesRecording)
+                        ConvertFromPes(&index[last + 1], newLast - last);
                      last = newLast;
                      }
                   else
-                     LOG_ERROR_STR(fileName);
+                     LOG_ERROR_STR(*fileName);
                   }
-               else
+               else {
                   esyslog("ERROR: can't realloc() index");
+                  break;
+                  }
                }
             }
          else
-            LOG_ERROR_STR(fileName);
-         if (Index < last - (i ? 2 * INDEXSAFETYLIMIT : 0) || Index > 10 * INDEXSAFETYLIMIT) // keep off the end in case of "Pause live video"
+            LOG_ERROR_STR(*fileName);
+         if (Index < last)
             break;
-         cCondWait::SleepMs(1000);
+         cCondVar CondVar;
+         CondVar.TimedWait(mutex, INDEXCATCHUPWAIT);
          }
      }
   return index != NULL;
 }
 
-bool cIndexFile::Write(uchar PictureType, uchar FileNumber, int FileOffset)
+bool cIndexFile::Write(bool Independent, uint16_t FileNumber, off_t FileOffset)
 {
   if (f >= 0) {
-     tIndex i = { FileOffset, PictureType, FileNumber, 0 };
+     tIndexTs i(FileOffset, Independent, FileNumber);
+     if (isPesRecording)
+        ConvertToPes(&i, 1);
      if (safe_write(f, &i, sizeof(i)) < 0) {
-        LOG_ERROR_STR(fileName);
+        LOG_ERROR_STR(*fileName);
         close(f);
         f = -1;
         return false;
@@ -1327,21 +2020,25 @@ bool cIndexFile::Write(uchar PictureType, uchar FileNumber, int FileOffset)
   return f >= 0;
 }
 
-bool cIndexFile::Get(int Index, uchar *FileNumber, int *FileOffset, uchar *PictureType, int *Length)
+bool cIndexFile::Get(int Index, uint16_t *FileNumber, off_t *FileOffset, bool *Independent, int *Length)
 {
   if (CatchUp(Index)) {
-     if (Index >= 0 && Index < last) {
+     if (Index >= 0 && Index <= last) {
         *FileNumber = index[Index].number;
         *FileOffset = index[Index].offset;
-        if (PictureType)
-           *PictureType = index[Index].type;
+        if (Independent)
+           *Independent = index[Index].independent;
         if (Length) {
-           int fn = index[Index + 1].number;
-           int fo = index[Index + 1].offset;
-           if (fn == *FileNumber)
-              *Length = fo - *FileOffset;
+           if (Index < last) {
+              uint16_t fn = index[Index + 1].number;
+              off_t fo = index[Index + 1].offset;
+              if (fn == *FileNumber)
+                 *Length = int(fo - *FileOffset);
+              else
+                 *Length = -1; // this means "everything up to EOF" (the buffer's Read function will act accordingly)
+              }
            else
-              *Length = -1; // this means "everything up to EOF" (the buffer's Read function will act accordingly)
+              *Length = -1;
            }
         return true;
         }
@@ -1349,32 +2046,33 @@ bool cIndexFile::Get(int Index, uchar *FileNumber, int *FileOffset, uchar *Pictu
   return false;
 }
 
-int cIndexFile::GetNextIFrame(int Index, bool Forward, uchar *FileNumber, int *FileOffset, int *Length, bool StayOffEnd)
+int cIndexFile::GetNextIFrame(int Index, bool Forward, uint16_t *FileNumber, off_t *FileOffset, int *Length)
 {
   if (CatchUp()) {
      int d = Forward ? 1 : -1;
      for (;;) {
          Index += d;
-         if (Index >= 0 && Index < last - ((Forward && StayOffEnd) ? INDEXSAFETYLIMIT : 0)) {
-            if (index[Index].type == I_FRAME) {
-               if (FileNumber)
-                  *FileNumber = index[Index].number;
-               else
-                  FileNumber = &index[Index].number;
-               if (FileOffset)
-                  *FileOffset = index[Index].offset;
-               else
-                  FileOffset = &index[Index].offset;
+         if (Index >= 0 && Index <= last) {
+            if (index[Index].independent) {
+               uint16_t fn;
+               if (!FileNumber)
+                  FileNumber = &fn;
+               off_t fo;
+               if (!FileOffset)
+                  FileOffset = &fo;
+               *FileNumber = index[Index].number;
+               *FileOffset = index[Index].offset;
                if (Length) {
-                  // all recordings end with a non-I_FRAME, so the following should be safe:
-                  int fn = index[Index + 1].number;
-                  int fo = index[Index + 1].offset;
-                  if (fn == *FileNumber)
-                     *Length = fo - *FileOffset;
-                  else {
-                     esyslog("ERROR: 'I' frame at end of file #%d", *FileNumber);
-                     *Length = -1;
+                  if (Index < last) {
+                     uint16_t fn = index[Index + 1].number;
+                     off_t fo = index[Index + 1].offset;
+                     if (fn == *FileNumber)
+                        *Length = int(fo - *FileOffset);
+                     else
+                        *Length = -1; // this means "everything up to EOF" (the buffer's Read function will act accordingly)
                      }
+                  else
+                     *Length = -1;
                   }
                return Index;
                }
@@ -1386,13 +2084,41 @@ int cIndexFile::GetNextIFrame(int Index, bool Forward, uchar *FileNumber, int *F
   return -1;
 }
 
-int cIndexFile::Get(uchar FileNumber, int FileOffset)
+int cIndexFile::GetClosestIFrame(int Index)
+{
+  if (last > 0) {
+     Index = constrain(Index, 0, last);
+     if (index[Index].independent)
+        return Index;
+     int il = Index - 1;
+     int ih = Index + 1;
+     for (;;) {
+         if (il >= 0) {
+            if (index[il].independent)
+               return il;
+            il--;
+            }
+         else if (ih > last)
+            break;
+         if (ih <= last) {
+            if (index[ih].independent)
+               return ih;
+            ih++;
+            }
+         else if (il < 0)
+            break;
+         }
+     }
+  return 0;
+}
+
+int cIndexFile::Get(uint16_t FileNumber, off_t FileOffset)
 {
   if (CatchUp()) {
      //TODO implement binary search!
      int i;
-     for (i = 0; i < last; i++) {
-         if (index[i].number > FileNumber || (index[i].number == FileNumber) && index[i].offset >= FileOffset)
+     for (i = 0; i <= last; i++) {
+         if (index[i].number > FileNumber || (index[i].number == FileNumber) && off_t(index[i].offset) >= FileOffset)
             break;
          }
      return i;
@@ -1405,18 +2131,69 @@ bool cIndexFile::IsStillRecording()
   return f >= 0;
 }
 
+void cIndexFile::Delete(void)
+{
+  if (*fileName) {
+     dsyslog("deleting index file '%s'", *fileName);
+     if (f >= 0) {
+        close(f);
+        f = -1;
+        }
+     unlink(fileName);
+     }
+}
+
+int cIndexFile::GetLength(const char *FileName, bool IsPesRecording)
+{
+  struct stat buf;
+  cString s = IndexFileName(FileName, IsPesRecording);
+  if (*s && stat(s, &buf) == 0)
+     return buf.st_size / (IsPesRecording ? sizeof(tIndexTs) : sizeof(tIndexPes));
+  return -1;
+}
+
+bool GenerateIndex(const char *FileName)
+{
+  if (DirectoryOk(FileName)) {
+     cRecording Recording(FileName);
+     if (Recording.Name()) {
+        if (!Recording.IsPesRecording()) {
+           cString IndexFileName = AddDirectory(FileName, INDEXFILESUFFIX);
+           unlink(IndexFileName);
+           cIndexFileGenerator *IndexFileGenerator = new cIndexFileGenerator(FileName);
+           while (IndexFileGenerator->Active())
+                 cCondWait::SleepMs(INDEXFILECHECKINTERVAL);
+           if (access(IndexFileName, R_OK) == 0)
+              return true;
+           else
+              fprintf(stderr, "cannot create '%s'\n", *IndexFileName);
+           }
+        else
+           fprintf(stderr, "'%s' is not a TS recording\n", FileName);
+        }
+     else
+        fprintf(stderr, "'%s' is not a recording\n", FileName);
+     }
+  else
+     fprintf(stderr, "'%s' is not a directory\n", FileName);
+  return false;
+}
+
 // --- cFileName -------------------------------------------------------------
 
-#define MAXFILESPERRECORDING 255
-#define RECORDFILESUFFIX    "/%03d.vdr"
+#define MAXFILESPERRECORDINGPES 255
+#define RECORDFILESUFFIXPES     "/%03d.vdr"
+#define MAXFILESPERRECORDINGTS  65535
+#define RECORDFILESUFFIXTS      "/%05d.ts"
 #define RECORDFILESUFFIXLEN 20 // some additional bytes for safety...
 
-cFileName::cFileName(const char *FileName, bool Record, bool Blocking)
+cFileName::cFileName(const char *FileName, bool Record, bool Blocking, bool IsPesRecording)
 {
   file = NULL;
   fileNumber = 0;
   record = Record;
   blocking = Blocking;
+  isPesRecording = IsPesRecording;
   // Prepare the file name:
   fileName = MALLOC(char, strlen(FileName) + RECORDFILESUFFIXLEN);
   if (!fileName) {
@@ -1434,20 +2211,71 @@ cFileName::~cFileName()
   free(fileName);
 }
 
+bool cFileName::GetLastPatPmtVersions(int &PatVersion, int &PmtVersion)
+{
+  if (fileName && !isPesRecording) {
+     // Find the last recording file:
+     int Number = 1;
+     for (; Number <= MAXFILESPERRECORDINGTS + 1; Number++) { // +1 to correctly set Number in case there actually are that many files
+         sprintf(pFileNumber, RECORDFILESUFFIXTS, Number);
+         if (access(fileName, F_OK) != 0) { // file doesn't exist
+            Number--;
+            break;
+            }
+         }
+     for (; Number > 0; Number--) {
+         // Search for a PAT packet from the end of the file:
+         cPatPmtParser PatPmtParser;
+         sprintf(pFileNumber, RECORDFILESUFFIXTS, Number);
+         int fd = open(fileName, O_RDONLY | O_LARGEFILE, DEFFILEMODE);
+         if (fd >= 0) {
+            off_t pos = lseek(fd, -TS_SIZE, SEEK_END);
+            while (pos >= 0) {
+                  // Read and parse the PAT/PMT:
+                  uchar buf[TS_SIZE];
+                  while (read(fd, buf, sizeof(buf)) == sizeof(buf)) {
+                        if (buf[0] == TS_SYNC_BYTE) {
+                           int Pid = TsPid(buf);
+                           if (Pid == PATPID)
+                              PatPmtParser.ParsePat(buf, sizeof(buf));
+                           else if (PatPmtParser.IsPmtPid(Pid)) {
+                              PatPmtParser.ParsePmt(buf, sizeof(buf));
+                              if (PatPmtParser.GetVersions(PatVersion, PmtVersion)) {
+                                 close(fd);
+                                 return true;
+                                 }
+                              }
+                           else
+                              break; // PAT/PMT is always in one sequence
+                           }
+                        else
+                           return false;
+                        }
+                  pos = lseek(fd, pos - TS_SIZE, SEEK_SET);
+                  }
+            close(fd);
+            }
+         else
+            break;
+         }
+     }
+  return false;
+}
+
 cUnbufferedFile *cFileName::Open(void)
 {
   if (!file) {
      int BlockingFlag = blocking ? 0 : O_NONBLOCK;
      if (record) {
         dsyslog("recording to '%s'", fileName);
-        file = OpenVideoFile(fileName, O_RDWR | O_CREAT | BlockingFlag);
+        file = OpenVideoFile(fileName, O_RDWR | O_CREAT | O_LARGEFILE | BlockingFlag);
         if (!file)
            LOG_ERROR_STR(fileName);
         }
      else {
         if (access(fileName, R_OK) == 0) {
            dsyslog("playing '%s'", fileName);
-           file = cUnbufferedFile::Create(fileName, O_RDONLY | BlockingFlag);
+           file = cUnbufferedFile::Create(fileName, O_RDONLY | O_LARGEFILE | BlockingFlag);
            if (!file)
               LOG_ERROR_STR(fileName);
            }
@@ -1467,24 +2295,25 @@ void cFileName::Close(void)
      }
 }
 
-cUnbufferedFile *cFileName::SetOffset(int Number, int Offset)
+cUnbufferedFile *cFileName::SetOffset(int Number, off_t Offset)
 {
   if (fileNumber != Number)
      Close();
-  if (0 < Number && Number <= MAXFILESPERRECORDING) {
-     fileNumber = Number;
-     sprintf(pFileNumber, RECORDFILESUFFIX, fileNumber);
+  int MaxFilesPerRecording = isPesRecording ? MAXFILESPERRECORDINGPES : MAXFILESPERRECORDINGTS;
+  if (0 < Number && Number <= MaxFilesPerRecording) {
+     fileNumber = uint16_t(Number);
+     sprintf(pFileNumber, isPesRecording ? RECORDFILESUFFIXPES : RECORDFILESUFFIXTS, fileNumber);
      if (record) {
         if (access(fileName, F_OK) == 0) {
-           // files exists, check if it has non-zero size
+           // file exists, check if it has non-zero size
            struct stat buf;
            if (stat(fileName, &buf) == 0) {
               if (buf.st_size != 0)
                  return SetOffset(Number + 1); // file exists and has non zero size, let's try next suffix
               else {
                  // zero size file, remove it
-                 dsyslog ("cFileName::SetOffset: removing zero-sized file %s", fileName);
-                 unlink (fileName);
+                 dsyslog("cFileName::SetOffset: removing zero-sized file %s", fileName);
+                 unlink(fileName);
                  }
               }
            else
@@ -1504,7 +2333,7 @@ cUnbufferedFile *cFileName::SetOffset(int Number, int Offset)
         }
      return file;
      }
-  esyslog("ERROR: max number of files (%d) exceeded", MAXFILESPERRECORDING);
+  esyslog("ERROR: max number of files (%d) exceeded", MaxFilesPerRecording);
   return NULL;
 }
 
@@ -1515,29 +2344,36 @@ cUnbufferedFile *cFileName::NextFile(void)
 
 // --- Index stuff -----------------------------------------------------------
 
-cString IndexToHMSF(int Index, bool WithFrame)
+cString IndexToHMSF(int Index, bool WithFrame, double FramesPerSecond)
 {
-  char buffer[16];
-  int f = (Index % FRAMESPERSEC) + 1;
-  int s = (Index / FRAMESPERSEC);
+  const char *Sign = "";
+  if (Index < 0) {
+     Index = -Index;
+     Sign = "-";
+     }
+  double Seconds;
+  int f = int(modf((Index + 0.5) / FramesPerSecond, &Seconds) * FramesPerSecond + 1);
+  int s = int(Seconds);
   int m = s / 60 % 60;
   int h = s / 3600;
   s %= 60;
-  snprintf(buffer, sizeof(buffer), WithFrame ? "%d:%02d:%02d.%02d" : "%d:%02d:%02d", h, m, s, f);
-  return buffer;
+  return cString::sprintf(WithFrame ? "%s%d:%02d:%02d.%02d" : "%s%d:%02d:%02d", Sign, h, m, s, f);
 }
 
-int HMSFToIndex(const char *HMSF)
+int HMSFToIndex(const char *HMSF, double FramesPerSecond)
 {
-  int h, m, s, f = 0;
-  if (3 <= sscanf(HMSF, "%d:%d:%d.%d", &h, &m, &s, &f))
-     return (h * 3600 + m * 60 + s) * FRAMESPERSEC + f - 1;
+  int h, m, s, f = 1;
+  int n = sscanf(HMSF, "%d:%d:%d.%d", &h, &m, &s, &f);
+  if (n == 1)
+     return h - 1; // plain frame number
+  if (n >= 3)
+     return int(round((h * 3600 + m * 60 + s) * FramesPerSecond)) + f - 1;
   return 0;
 }
 
-int SecondsToFrames(int Seconds)
+int SecondsToFrames(int Seconds, double FramesPerSecond)
 {
-  return Seconds * FRAMESPERSEC;
+  return int(round(Seconds * FramesPerSecond));
 }
 
 // --- ReadFrame -------------------------------------------------------------
@@ -1554,4 +2390,40 @@ int ReadFrame(cUnbufferedFile *f, uchar *b, int Length, int Max)
   if (r < 0)
      LOG_ERROR;
   return r;
+}
+
+// --- Recordings Sort Mode --------------------------------------------------
+
+eRecordingsSortMode RecordingsSortMode = rsmName;
+
+bool HasRecordingsSortMode(const char *Directory)
+{
+  return access(AddDirectory(Directory, SORTMODEFILE), R_OK) == 0;
+}
+
+void GetRecordingsSortMode(const char *Directory)
+{
+  if (FILE *f = fopen(AddDirectory(Directory, SORTMODEFILE), "r")) {
+     char buf[8];
+     if (fgets(buf, sizeof(buf), f))
+        RecordingsSortMode = eRecordingsSortMode(constrain(atoi(buf), 0, int(rsmTime)));
+     fclose(f);
+     }
+}
+
+void SetRecordingsSortMode(const char *Directory, eRecordingsSortMode SortMode)
+{
+  if (FILE *f = fopen(AddDirectory(Directory, SORTMODEFILE), "w")) {
+     fputs(cString::sprintf("%d\n", SortMode), f);
+     fclose(f);
+     }
+}
+
+void IncRecordingsSortMode(const char *Directory)
+{
+  GetRecordingsSortMode(Directory);
+  RecordingsSortMode = eRecordingsSortMode(int(RecordingsSortMode) + 1);
+  if (RecordingsSortMode > rsmTime)
+     RecordingsSortMode = eRecordingsSortMode(0);
+  SetRecordingsSortMode(Directory, RecordingsSortMode);
 }

@@ -6,7 +6,7 @@
  *   the Free Software Foundation; either version 2 of the License, or     *
  *   (at your option) any later version.                                   *
  *                                                                         *
- *   $Id: util.h 1.7 2006/02/25 10:13:28 kls Exp $
+ *   $Id: util.h 2.3 2012/02/26 13:58:26 kls Exp $
  *                                                                         *
  ***************************************************************************/
 
@@ -19,6 +19,7 @@
 #include <time.h>
 
 #define HILO(x) (x##_hi << 8 | x##_lo)
+#define HILOHILO(x) (x##_hi_hi << 24 | x##_hi_lo << 16 | x##_lo_hi << 8 | x##_lo_lo)
 #define BCD_TIME_TO_SECONDS(x) ((3600 * ((10*((x##_h & 0xF0)>>4)) + (x##_h & 0xF))) + \
                              (60 * ((10*((x##_m & 0xF0)>>4)) + (x##_m & 0xF))) + \
                              ((10*((x##_s & 0xF0)>>4)) + (x##_s & 0xF)))
@@ -53,10 +54,10 @@ public:
    template <typename T> const T* getData(int offset) const { return (T*)(data_->data+offset+off); }
       //sets p to point to data+offset, increments offset
    template <typename T> void setPointerAndOffset(const T* &p, int &offset) const { p=(T*)getData(offset); offset+=sizeof(T); }
-   unsigned char operator[](const int index) const { return data_->data ? data_->data[off+index] : 0; }
+   unsigned char operator[](const int index) const { return data_->data ? data_->data[off+index] : (unsigned char)0; }
    int getLength() const { return data_->size; }
-   u_int16_t TwoBytes(const int index) const { return data_->data ? data_->TwoBytes(off+index) : 0; }
-   u_int32_t FourBytes(const int index) const { return data_->data ? data_->FourBytes(off+index) : 0; }
+   u_int16_t TwoBytes(const int index) const { return data_->data ? data_->TwoBytes(off+index) : u_int16_t(0); }
+   u_int32_t FourBytes(const int index) const { return data_->data ? data_->FourBytes(off+index) : u_int32_t(0); }
 
    bool isValid() const { return data_->valid; }
    bool checkSize(int offset) { return (data_->valid && (data_->valid=(offset>=0 && off+offset < data_->size))); }
@@ -72,9 +73,9 @@ private:
       virtual void Delete() = 0;
 
       u_int16_t TwoBytes(const int index) const
-         { return (data[index] << 8) | data[index+1]; }
+         { return u_int16_t((data[index] << 8) | data[index+1]); }
       u_int32_t FourBytes(const int index) const
-         { return (data[index] << 24) | (data[index+1] << 16) | (data[index+2] << 8) | data[index+3]; }
+         { return u_int32_t((data[index] << 24) | (data[index+1] << 16) | (data[index+2] << 8) | data[index+3]); }
       /*#ifdef CHARARRAY_THREADSAFE
       void Lock();
       void Unlock();
@@ -139,7 +140,7 @@ private:
 namespace DVBTime {
 time_t getTime(unsigned char date_hi, unsigned char date_lo, unsigned char timehr, unsigned char timemi, unsigned char timese);
 time_t getDuration(unsigned char timehr, unsigned char timemi, unsigned char timese);
-inline unsigned char bcdToDec(unsigned char b) { return ((b >> 4) & 0x0F) * 10 + (b & 0x0F); }
+inline unsigned char bcdToDec(unsigned char b) { return (unsigned char)(((b >> 4) & 0x0F) * 10 + (b & 0x0F)); }
 }
 
 //taken and adapted from libdtv, (c) Rolf Hakenes
@@ -148,9 +149,9 @@ public:
    CRC32(const char *d, int len, u_int32_t CRCvalue=0xFFFFFFFF);
    bool isValid() { return crc32(data, length, value) == 0; }
    static bool isValid(const char *d, int len, u_int32_t CRCvalue=0xFFFFFFFF) { return crc32(d, len, CRCvalue) == 0; }
+   static u_int32_t crc32(const char *d, int len, u_int32_t CRCvalue);
 protected:
    static u_int32_t crc_table[256];
-   static u_int32_t crc32 (const char *d, int len, u_int32_t CRCvalue);
 
    const char *data;
    int length;

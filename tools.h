@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: tools.h 1.113 2008/02/17 13:41:27 kls Exp $
+ * $Id: tools.h 2.24 2013/02/17 13:18:06 kls Exp $
  */
 
 #ifndef __TOOLS_H
@@ -13,8 +13,11 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <float.h>
 #include <iconv.h>
+#include <math.h>
 #include <poll.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -33,16 +36,16 @@ extern int SysLogLevel;
 #define dsyslog(a...) void( (SysLogLevel > 2) ? syslog_with_tid(LOG_ERR, a) : void() )
 
 #define LOG_ERROR         esyslog("ERROR (%s,%d): %m", __FILE__, __LINE__)
-#define LOG_ERROR_STR(s)  esyslog("ERROR: %s: %m", s)
+#define LOG_ERROR_STR(s)  esyslog("ERROR (%s,%d): %s: %m", __FILE__, __LINE__, s)
 
 #define SECSINDAY  86400
 
 #define KILOBYTE(n) ((n) * 1024)
-#define MEGABYTE(n) ((n) * 1024 * 1024)
+#define MEGABYTE(n) ((n) * 1024LL * 1024LL)
 
 #define MALLOC(type, size)  (type *)malloc(sizeof(type) * (size))
 
-#define DELETENULL(p) (delete (p), p = NULL)
+template<class T> inline void DELETENULL(T *&p) { T *q = p; p = NULL; delete q; }
 
 #define CHECK(s) { if ((s) < 0) LOG_ERROR; } // used for 'ioctl()' calls
 #define FATALERRNO (errno && errno != EAGAIN && errno != EINTR)
@@ -54,13 +57,15 @@ template<class T> inline int sgn(T a) { return a < 0 ? -1 : a > 0 ? 1 : 0; }
 template<class T> inline void swap(T &a, T &b) { T t = a; a = b; b = t; }
 #endif
 
+template<class T> inline T constrain(T v, T l, T h) { return v < l ? l : v > h ? h : v; }
+
 void syslog_with_tid(int priority, const char *format, ...) __attribute__ ((format (printf, 2, 3)));
 
 #define BCDCHARTOINT(x) (10 * ((x & 0xF0) >> 4) + (x & 0xF))
 int BCD2INT(int x);
 
 // Unfortunately there are no platform independent macros for unaligned
-// access. so we do it this way:
+// access, so we do it this way:
 
 template<class T> inline T get_unaligned(T *p)
 {
@@ -72,6 +77,14 @@ template<class T> inline void put_unaligned(unsigned int v, T* p)
 {
   struct s { T v; } __attribute__((packed));
   ((s *)p)->v = v;
+}
+
+// Comparing doubles for equality is unsafe, but unfortunately we can't
+// overwrite operator==(double, double), so this will have to do:
+
+inline bool DoubleEqual(double a, double b)
+{
+  return fabs(a - b) <= DBL_EPSILON;
 }
 
 // When handling strings that might contain UTF-8 characters, it may be necessary
@@ -97,7 +110,7 @@ int Utf8StrLen(const char *s);
     ///< Returns the number of UTF-8 symbols formed by the given string of
     ///< character bytes.
 char *Utf8Strn0Cpy(char *Dest, const char *Src, int n);
-    ///< Copies at most n character bytes from Src to Dst, making sure that the
+    ///< Copies at most n character bytes from Src to Dest, making sure that the
     ///< resulting copy ends with a complete UTF-8 symbol. The copy is guaranteed
     ///< to be zero terminated.
     ///< Returns a pointer to Dest.
@@ -132,11 +145,12 @@ private:
 public:
   cCharSetConv(const char *FromCode = NULL, const char *ToCode = NULL);
      ///< Sets up a character set converter to convert from FromCode to ToCode.
-     ///< If FromCode is NULL, the previously set systemCharacterTable is used.
+     ///< If FromCode is NULL, the previously set systemCharacterTable is used
+     ///< (or "UTF-8" if no systemCharacterTable has been set).
      ///< If ToCode is NULL, "UTF-8" is used.
   ~cCharSetConv();
   const char *Convert(const char *From, char *To = NULL, size_t ToLength = 0);
-     ///< Converts the given Text from FromCode to ToCode (as set in the cosntructor).
+     ///< Converts the given Text from FromCode to ToCode (as set in the constructor).
      ///< If To is given, it is used to copy at most ToLength bytes of the result
      ///< (including the terminating 0) into that buffer. If To is not given,
      ///< the result is copied into a dynamically allocated buffer and is valid as
@@ -160,9 +174,10 @@ public:
   operator const char * () const { return s; } // for use in (const char *) context
   const char * operator*() const { return s; } // for use in (const void *) context (printf() etc.)
   cString &operator=(const cString &String);
+  cString &operator=(const char *String);
   cString &Truncate(int Index); ///< Truncate the string at the given Index (if Index is < 0 it is counted from the end of the string).
   static cString sprintf(const char *fmt, ...) __attribute__ ((format (printf, 1, 2)));
-  static cString sprintf(const char *fmt, va_list &ap);
+  static cString vsprintf(const char *fmt, va_list &ap);
   };
 
 ssize_t safe_read(int filedes, void *buffer, size_t size);
@@ -192,6 +207,23 @@ bool endswith(const char *s, const char *p);
 bool isempty(const char *s);
 int numdigits(int n);
 bool isnumber(const char *s);
+int64_t StrToNum(const char *s);
+    ///< Converts the given string to a number.
+    ///< The numerical part of the string may be followed by one of the letters
+    ///< K, M, G or T to abbreviate Kilo-, Mega-, Giga- or Terabyte, respectively
+    ///< (based on 1024). Everything after the first non-numeric character is
+    ///< silently ignored, as are any characters other than the ones mentioned here.
+bool StrInArray(const char *a[], const char *s);
+    ///< Returns true if the string s is equal to one of the strings pointed
+    ///< to by the (NULL terminated) array a.
+double atod(const char *s);
+    ///< Converts the given string, which is a floating point number using a '.' as
+    ///< the decimal point, to a double value, independent of the currently selected
+    ///< locale.
+cString dtoa(double d, const char *Format = "%f");
+    ///< Converts the given double value to a string, making sure it uses a '.' as
+    ///< the decimal point, independent of the currently selected locale.
+    ///< If Format is given, it will be used instead of the default.
 cString itoa(int n);
 cString AddDirectory(const char *DirName, const char *FileName);
 bool EntriesOnSameFileSystem(const char *File1, const char *File2);
@@ -199,20 +231,39 @@ int FreeDiskSpaceMB(const char *Directory, int *UsedMB = NULL);
 bool DirectoryOk(const char *DirName, bool LogErrors = false);
 bool MakeDirs(const char *FileName, bool IsDirectory = false);
 bool RemoveFileOrDir(const char *FileName, bool FollowSymlinks = false);
-bool RemoveEmptyDirectories(const char *DirName, bool RemoveThis = false);
+bool RemoveEmptyDirectories(const char *DirName, bool RemoveThis = false, const char *IgnoreFiles[] = NULL);
+     ///< Removes all empty directories under the given directory DirName.
+     ///< If RemoveThis is true, DirName will also be removed if it is empty.
+     ///< IgnoreFiles can be set to an array of file names that will be ignored when
+     ///< considering whether a directory is empty. If IgnoreFiles is given, the array
+     ///< must end with a NULL pointer.
 int DirSizeMB(const char *DirName); ///< returns the total size of the files in the given directory, or -1 in case of an error
 char *ReadLink(const char *FileName); ///< returns a new string allocated on the heap, which the caller must delete (or NULL in case of an error)
 bool SpinUpDisk(const char *FileName);
 void TouchFile(const char *FileName);
 time_t LastModifiedTime(const char *FileName);
+off_t FileSize(const char *FileName); ///< returns the size of the given file, or -1 in case of an error (e.g. if the file doesn't exist)
 cString WeekDayName(int WeekDay);
+    ///< Converts the given WeekDay (0=Sunday, 1=Monday, ...) to a three letter
+    ///< day name.
 cString WeekDayName(time_t t);
+    ///< Converts the week day of the given time to a three letter day name.
 cString WeekDayNameFull(int WeekDay);
+    ///< Converts the given WeekDay (0=Sunday, 1=Monday, ...) to a full
+    ///< day name.
 cString WeekDayNameFull(time_t t);
+    ///< Converts the week day of the given time to a full day name.
 cString DayDateTime(time_t t = 0);
+    ///< Converts the given time to a string of the form "www dd.mm. hh:mm".
+    ///< If no time is given, the current time is taken.
 cString TimeToString(time_t t);
+    ///< Converts the given time to a string of the form "www mmm dd hh:mm:ss yyyy".
 cString DateString(time_t t);
+    ///< Converts the given time to a string of the form "www dd.mm.yyyy".
+cString ShortDateString(time_t t);
+    ///< Converts the given time to a string of the form "dd.mm.yy".
 cString TimeString(time_t t);
+    ///< Converts the given time to a string of the form "hh:mm".
 uchar *RgbToJpeg(uchar *Mem, int Width, int Height, int &Size, int Quality = 100);
     ///< Converts the given Memory to a JPEG image and returns a pointer
     ///< to the resulting image. Mem must point to a data block of exactly
@@ -247,12 +298,36 @@ public:
       ///< is called, or until the object is destroyed.
   };
 
+class cBitStream {
+private:
+  const uint8_t *data;
+  int length; // in bits
+  int index; // in bits
+public:
+  cBitStream(const uint8_t *Data, int Length) : data(Data), length(Length), index(0) {}
+  ~cBitStream() {}
+  int GetBit(void);
+  uint32_t GetBits(int n);
+  void ByteAlign(void);
+  void WordAlign(void);
+  bool SetLength(int Length);
+  void SkipBits(int n) { index += n; }
+  void SkipBit(void) { SkipBits(1); }
+  bool IsEOF(void) const { return index >= length; }
+  void Reset(void) { index = 0; }
+  int Length(void) const { return length; }
+  int Index(void) const { return (IsEOF() ? length : index); }
+  const uint8_t *GetData(void) const { return (IsEOF() ? NULL : data + (index / 8)); }
+  };
+
 class cTimeMs {
 private:
   uint64_t begin;
 public:
   cTimeMs(int Ms = 0);
       ///< Creates a timer with ms resolution and an initial timeout of Ms.
+      ///< If Ms is negative the timer is not initialized with the current
+      ///< time.
   static uint64_t Now(void);
   void Set(int Ms = 0);
   bool TimedOut(void);
@@ -411,6 +486,7 @@ public:
   };
 
 template<class T> class cVector {
+  ///< cVector may only be used for *simple* types, like int or pointers - not for class objects that allocate additional memory!
 private:
   mutable int allocated;
   mutable int size;
@@ -421,6 +497,10 @@ private:
   {
     if (++Index > allocated) {
        data = (T *)realloc(data, Index * sizeof(T));
+       if (!data) {
+          esyslog("ERROR: out of memory - abort!");
+          abort();
+          }
        for (int i = allocated; i < Index; i++)
            data[i] = T(0);
        allocated = Index;
@@ -465,7 +545,7 @@ public:
   virtual void Append(T Data)
   {
     if (size >= allocated)
-       Realloc(allocated * 4 / 2); // increase size by 50%
+       Realloc(allocated * 3 / 2); // increase size by 50%
     data[size++] = Data;
   }
   virtual void Remove(int Index)
@@ -476,6 +556,8 @@ public:
   }
   virtual void Clear(void)
   {
+    for (int i = 0; i < size; i++)
+        data[i] = T(0);
     size = 0;
   }
   void Sort(__compar_fn_t Compare)
@@ -489,12 +571,23 @@ inline int CompareStrings(const void *a, const void *b)
   return strcmp(*(const char **)a, *(const char **)b);
 }
 
+inline int CompareStringsIgnoreCase(const void *a, const void *b)
+{
+  return strcasecmp(*(const char **)a, *(const char **)b);
+}
+
 class cStringList : public cVector<char *> {
 public:
   cStringList(int Allocated = 10): cVector<char *>(Allocated) {}
   virtual ~cStringList();
   int Find(const char *s) const;
-  void Sort(void) { cVector<char *>::Sort(CompareStrings); }
+  void Sort(bool IgnoreCase = false)
+  {
+    if (IgnoreCase)
+       cVector<char *>::Sort(CompareStringsIgnoreCase);
+    else
+       cVector<char *>::Sort(CompareStrings);
+  }
   virtual void Clear(void);
   };
 

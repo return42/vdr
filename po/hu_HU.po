@@ -1,37 +1,331 @@
 # VDR language source file.
-# Copyright (C) 2008 Klaus Schmidinger <kls@cadsoft.de>
+# Copyright (C) 2013 Klaus Schmidinger <vdr@tvdr.de>
 # This file is distributed under the same license as the VDR package.
 # Istvan Koenigsberger <istvnko@hotmail.com>, 2002, 2003, 2006
 # Guido Josten <guido.josten@t-online.de>, 2002, 2003, 2006
-# Thomas G¸nther <tom@toms-cafe.de>, 2007
-# Istv·n F¸ley <ifuley@tigercomp.ro>, 2007
+# Thomas G√ºnther <tom@toms-cafe.de>, 2007
+# Istv√°n F√ºley <ifuley@tigercomp.ro>, 2007, 2012, 2013
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: VDR 1.6.0\n"
-"Report-Msgid-Bugs-To: <vdr-bugs@cadsoft.de>\n"
-"POT-Creation-Date: 2008-02-10 12:22+0100\n"
-"PO-Revision-Date: 2007-12-01 21:42+0200\n"
-"Last-Translator: Istv·n F¸ley <ifuley@tigercomp.ro>\n"
-"Language-Team: Hungarian\n"
+"Project-Id-Version: VDR 2.0.0\n"
+"Report-Msgid-Bugs-To: <vdr-bugs@tvdr.de>\n"
+"POT-Creation-Date: 2013-03-04 14:46+0100\n"
+"PO-Revision-Date: 2013-03-01 19:22+0200\n"
+"Last-Translator: Istv√°n F√ºley <ifuley@tigercomp.ro>\n"
+"Language-Team: Hungarian <vdr@linuxtv.org>\n"
+"Language: hu\n"
 "MIME-Version: 1.0\n"
-"Content-Type: text/plain; charset=ISO-8859-2\n"
+"Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
+"X-Generator: Poedit 1.5.5\n"
 
 msgid "*** Invalid Channel ***"
-msgstr "*** …rvÈnytelen csatorna ***"
+msgstr "*** √ârv√©nytelen csatorna ***"
 
 msgid "Channel not available!"
-msgstr "Az adÛ nem elÈrhetı"
+msgstr "Az ad√≥ nem el√©rhet≈ë"
 
 msgid "Can't start Transfer Mode!"
-msgstr "Transfer-Mode nem indÌthatÛ!"
+msgstr "Transfer-Mode nem ind√≠that√≥!"
+
+msgid "off"
+msgstr "ki"
+
+msgid "on"
+msgstr "be"
+
+msgid "auto"
+msgstr "auto"
+
+msgid "none"
+msgstr "egyik sem"
+
+msgid "Polarization"
+msgstr "Polariz√°ci√≥"
+
+msgid "System"
+msgstr "Rendszer"
+
+msgid "Srate"
+msgstr "Srate"
+
+msgid "Inversion"
+msgstr "Inversion"
+
+msgid "CoderateH"
+msgstr "CoderateH"
+
+msgid "CoderateL"
+msgstr "CoderateL"
+
+msgid "Modulation"
+msgstr "Modul√°ci√≥"
+
+msgid "Bandwidth"
+msgstr "S√°vsz√©less√©g"
+
+msgid "Transmission"
+msgstr "√Åtvitel"
+
+msgid "Guard"
+msgstr "Guard"
+
+msgid "Hierarchy"
+msgstr "Hierarhia"
+
+msgid "Rolloff"
+msgstr "Rolloff"
+
+msgid "StreamId"
+msgstr "Stream azonos√≠t√≥"
 
 msgid "Starting EPG scan"
-msgstr "EPG adatok aktualiz·l·sa"
+msgstr "EPG adatok aktualiz√°l√°sa"
+
+msgid "Content$Movie/Drama"
+msgstr "Film/Dr√°ma"
+
+msgid "Content$Detective/Thriller"
+msgstr "Nyomoz√≥/Thriller"
+
+msgid "Content$Adventure/Western/War"
+msgstr "Kaland/Western/H√°bor√∫s"
+
+msgid "Content$Science Fiction/Fantasy/Horror"
+msgstr "Sci-fi/Fantasy/Horror"
+
+msgid "Content$Comedy"
+msgstr "Kom√©dia"
+
+msgid "Content$Soap/Melodrama/Folkloric"
+msgstr "Szappanopera/Melodr√°ma/Folkl√≥r"
+
+msgid "Content$Romance"
+msgstr "Romantikus film"
+
+msgid "Content$Serious/Classical/Religious/Historical Movie/Drama"
+msgstr "Komolyzenei/Klasszikus/Vall√°si/T√∂rt√©nelmi film/Dr√°ma"
+
+msgid "Content$Adult Movie/Drama"
+msgstr "Feln≈ëtt tartalom/Dr√°ma"
+
+msgid "Content$News/Current Affairs"
+msgstr "H√≠rek/H√≠rad√≥"
+
+msgid "Content$News/Weather Report"
+msgstr "H√≠rek/Id≈ëj√°r√°s"
+
+msgid "Content$News Magazine"
+msgstr "H√≠rmagazin"
+
+msgid "Content$Documentary"
+msgstr "Dokumentumfilm"
+
+msgid "Content$Discussion/Inverview/Debate"
+msgstr "Besz√©lget√©s/Interj√∫/Vita"
+
+msgid "Content$Show/Game Show"
+msgstr "Show/J√°t√©kshow"
+
+msgid "Content$Game Show/Quiz/Contest"
+msgstr "J√°t√©k/Kv√≠z/Verseny"
+
+msgid "Content$Variety Show"
+msgstr "Variet√©m≈±sor"
+
+msgid "Content$Talk Show"
+msgstr "Talkshow"
+
+msgid "Content$Sports"
+msgstr "Sport"
+
+msgid "Content$Special Event"
+msgstr "K√ºl√∂nleges program"
+
+msgid "Content$Sport Magazine"
+msgstr "Sporth√≠rad√≥"
+
+msgid "Content$Football/Soccer"
+msgstr "Fotball/Labdar√∫g√°s"
+
+msgid "Content$Tennis/Squash"
+msgstr "Tenisz/Squash"
+
+msgid "Content$Team Sports"
+msgstr "Csapatsportok"
+
+msgid "Content$Athletics"
+msgstr "Atl√©tika"
+
+msgid "Content$Motor Sport"
+msgstr "Motorsport"
+
+msgid "Content$Water Sport"
+msgstr "V√≠zisportok"
+
+msgid "Content$Winter Sports"
+msgstr "T√©lisportok"
+
+msgid "Content$Equestrian"
+msgstr "Bili√°rd"
+
+msgid "Content$Martial Sports"
+msgstr "K√∂zd≈ësport"
+
+msgid "Content$Children's/Youth Programme"
+msgstr "Gyerekprogram/Fiataloknak"
+
+msgid "Content$Pre-school Children's Programme"
+msgstr "√ìvod√°skor√∫ gyerekeknek"
+
+msgid "Content$Entertainment Programme for 6 to 14"
+msgstr "Sz√≥rakoztat√≥ m≈±sor 6-14 √©veseknek"
+
+msgid "Content$Entertainment Programme for 10 to 16"
+msgstr "Sz√≥rakoztat√≥ m≈±sor 10-16 √©veseknek"
+
+msgid "Content$Informational/Educational/School Programme"
+msgstr "Inform√°ci√≥s/Oktat√≥/Iskolai program"
+
+msgid "Content$Cartoons/Puppets"
+msgstr "Rajzfilm/B√°bsz√≠nh√°z"
+
+msgid "Content$Music/Ballet/Dance"
+msgstr "Zene/Balett/T√°nc"
+
+msgid "Content$Rock/Pop"
+msgstr "Rock/Pop"
+
+msgid "Content$Serious/Classical Music"
+msgstr "Komolyzene/Klasszikus zene"
+
+msgid "Content$Folk/Tradional Music"
+msgstr "N√©pzene/Hagyom√°nyos zene"
+
+msgid "Content$Jazz"
+msgstr "Jazz"
+
+msgid "Content$Musical/Opera"
+msgstr "Musical/Opera"
+
+msgid "Content$Ballet"
+msgstr "Balett"
+
+msgid "Content$Arts/Culture"
+msgstr "M≈±v√©szet/Kult√∫ra"
+
+msgid "Content$Performing Arts"
+msgstr "El≈ëad√°s"
+
+msgid "Content$Fine Arts"
+msgstr "Belle arte"
+
+msgid "Content$Religion"
+msgstr "Vall√°s"
+
+msgid "Content$Popular Culture/Traditional Arts"
+msgstr "N√©pi kult√∫ra/Hagyom√°nyos m≈±v√©szet"
+
+msgid "Content$Literature"
+msgstr "Irodalom"
+
+msgid "Content$Film/Cinema"
+msgstr "Film/Mozi"
+
+msgid "Content$Experimental Film/Video"
+msgstr "Amat≈ër film/video"
+
+msgid "Content$Broadcasting/Press"
+msgstr "K√∂zvet√≠t√©s/Sajt√≥"
+
+msgid "Content$New Media"
+msgstr "√öj m√©dia"
+
+msgid "Content$Arts/Culture Magazine"
+msgstr "M≈±v√©szet/Kult√∫ra magazin"
+
+msgid "Content$Fashion"
+msgstr "Divat"
+
+msgid "Content$Social/Political/Economics"
+msgstr "T√°rsadalmi/Politikai/Gazdas√°gi"
+
+msgid "Content$Magazine/Report/Documentary"
+msgstr "Magazin/Riport/T√©nyfelt√°r√≥"
+
+msgid "Content$Economics/Social Advisory"
+msgstr "Gazdas√°g/T√°rsadalmi tan√°csad√°s"
+
+msgid "Content$Remarkable People"
+msgstr "√ârdekes emberek"
+
+msgid "Content$Education/Science/Factual"
+msgstr "Oktat√°s/Tudom√°ny/Gyakorlati"
+
+msgid "Content$Nature/Animals/Environment"
+msgstr "Term√©szet/√Ållatok/K√∂rnyezet"
+
+msgid "Content$Technology/Natural Sciences"
+msgstr "Technol√≥gia/Term√©szettudom√°ny"
+
+msgid "Content$Medicine/Physiology/Psychology"
+msgstr "Gy√≥gy√°szat/Pszichol√≥gia/Orvostan"
+
+msgid "Content$Foreign Countries/Expeditions"
+msgstr "Idegen orsz√°gok/Exped√≠ci√≥k"
+
+msgid "Content$Social/Spiritual Sciences"
+msgstr "T√°rsadalmi/L√©lektudom√°ny"
+
+msgid "Content$Further Education"
+msgstr "Tov√°bbk√©pz√©s"
+
+msgid "Content$Languages"
+msgstr "Nyelvek"
+
+msgid "Content$Leisure/Hobbies"
+msgstr "Hobbi"
+
+msgid "Content$Tourism/Travel"
+msgstr "Turizmus/Utaz√°s"
+
+msgid "Content$Handicraft"
+msgstr "K√©zm≈±ves"
+
+msgid "Content$Motoring"
+msgstr "Motor"
+
+msgid "Content$Fitness & Health"
+msgstr "Fitness √©s eg√©szs√©g"
+
+msgid "Content$Cooking"
+msgstr "F≈ëz≈ëm≈±sor"
+
+msgid "Content$Advertisement/Shopping"
+msgstr "Rekl√°m/V√°s√°rl√°s"
+
+msgid "Content$Gardening"
+msgstr "Kert√©szet"
+
+msgid "Content$Original Language"
+msgstr "Eredeti nyelv"
+
+msgid "Content$Black & White"
+msgstr "Fekete-feh√©r"
+
+msgid "Content$Unpublished"
+msgstr "Kor√°bban nem sug√°rzott"
+
+msgid "Content$Live Broadcast"
+msgstr "√âl≈ë k√∂zvet√≠t√©s"
+
+#, c-format
+msgid "ParentalRating$from %d"
+msgstr "%d √©ven fel√ºlieknek"
 
 msgid "No title"
-msgstr "nÈv nÈlk¸l"
+msgstr "c√≠m n√©lk√ºl"
 
 #. TRANSLATORS: The name of the language, as written natively
 msgid "LanguageName$English"
@@ -42,47 +336,47 @@ msgid "LanguageCode$eng"
 msgstr "hun"
 
 msgid "Phase 1: Detecting RC code type"
-msgstr "Elsı lÈpÈs: t·vir·nyÌtÛ kÛdj·nak meghat·roz·sa"
+msgstr "Els≈ë l√©p√©s: t√°vir√°ny√≠t√≥ k√≥dj√°nak meghat√°roz√°sa"
 
 msgid "Press any key on the RC unit"
-msgstr "Nyomjon meg egy gombot a t·vir·nyÌtÛn"
+msgstr "Nyomjon meg egy gombot a t√°vir√°ny√≠t√≥n"
 
 msgid "RC code detected!"
-msgstr "T·vir·nyÌtÛ kÛdja felismerve!"
+msgstr "T√°vir√°ny√≠t√≥ k√≥dja felismerve!"
 
 msgid "Do not press any key..."
 msgstr "Ne nyomjon meg gombot..."
 
 msgid "Phase 2: Learning specific key codes"
-msgstr "M·sodik lÈpÈs: az egyes gombok betanÌt·sa"
+msgstr "M√°sodik l√©p√©s: az egyes gombok betan√≠t√°sa"
 
 #, c-format
 msgid "Press key for '%s'"
-msgstr "'%s' gomb megnyom·sa"
+msgstr "'%s' gomb megnyom√°sa"
 
 msgid "Press 'Up' to confirm"
-msgstr "'Fel' megnyom·sa az elfogad·shoz"
+msgstr "'Fel' megnyom√°sa az elfogad√°shoz"
 
 msgid "Press 'Down' to continue"
-msgstr "'Le' megnyom·sa a folytat·shoz"
+msgstr "'Le' megnyom√°sa a folytat√°shoz"
 
 msgid "(press 'Up' to go back)"
-msgstr "('Fel' megnyom·sa a visszatÈrÈshez)"
+msgstr "('Fel' megnyom√°sa a visszat√©r√©shez)"
 
 msgid "(press 'Down' to end key definition)"
-msgstr "('Le' megnyom·sa a befejezÈshez)"
+msgstr "('Le' megnyom√°sa a befejez√©shez)"
 
 msgid "(press 'Menu' to skip this key)"
-msgstr "A Men¸ gombot nyomni ennek a gombnak a kihagy·s·hoz"
+msgstr "A Men√º gombot nyomni ennek a gombnak a kihagy√°s√°hoz"
 
 msgid "Learning Remote Control Keys"
-msgstr "T·vir·nyÌtÛ betanÌt·sa"
+msgstr "T√°vir√°ny√≠t√≥ betan√≠t√°sa"
 
 msgid "Phase 3: Saving key codes"
-msgstr "Harmadik lÈpÈs: kÛd mentÈse"
+msgstr "Harmadik l√©p√©s: k√≥d ment√©se"
 
 msgid "Press 'Up' to save, 'Down' to cancel"
-msgstr "'Fel' mentÈs, 'Le' mÈgse"
+msgstr "'Fel' ment√©s, 'Le' m√©gse"
 
 msgid "Key$Up"
 msgstr "Fel"
@@ -91,7 +385,7 @@ msgid "Key$Down"
 msgstr "Le"
 
 msgid "Key$Menu"
-msgstr "Men¸"
+msgstr "Men√º"
 
 msgid "Key$Ok"
 msgstr "Ok"
@@ -109,37 +403,40 @@ msgid "Key$Red"
 msgstr "Piros"
 
 msgid "Key$Green"
-msgstr "Zˆld"
+msgstr "Z√∂ld"
 
 msgid "Key$Yellow"
-msgstr "S·rga"
+msgstr "S√°rga"
 
 msgid "Key$Blue"
-msgstr "KÈk"
+msgstr "K√©k"
 
 msgid "Key$Info"
-msgstr "Inform·ciÛ"
+msgstr "Inform√°ci√≥"
+
+msgid "Key$Play/Pause"
+msgstr "Lej√°tsz√°s/Sz√ºnet"
 
 msgid "Key$Play"
-msgstr "Lej·tsz·s"
+msgstr "Lej√°tsz√°s"
 
 msgid "Key$Pause"
-msgstr "Sz¸net"
+msgstr "Sz√ºnet"
 
 msgid "Key$Stop"
 msgstr "Stop"
 
 msgid "Key$Record"
-msgstr "Felvenni"
+msgstr "Felv√©tel"
 
 msgid "Key$FastFwd"
-msgstr "Elıre pˆrgetni"
+msgstr "El≈ëre p√∂rgetni"
 
 msgid "Key$FastRew"
-msgstr "Vissza pˆrgetni"
+msgstr "Vissza p√∂rgetni"
 
 msgid "Key$Next"
-msgstr "Elıre"
+msgstr "El≈ëre"
 
 msgid "Key$Prev"
 msgstr "Vissza"
@@ -154,13 +451,13 @@ msgid "Key$Channel-"
 msgstr "Csatorna-"
 
 msgid "Key$PrevChannel"
-msgstr "Az elızı ad·s"
+msgstr "Az el≈ëz≈ë ad√°s"
 
 msgid "Key$Volume+"
-msgstr "Hangerı+"
+msgstr "Hanger≈ë+"
 
 msgid "Key$Volume-"
-msgstr "Hangerı-"
+msgstr "Hanger≈ë-"
 
 msgid "Key$Mute"
 msgstr "Csend"
@@ -175,70 +472,64 @@ msgid "Key$Schedule"
 msgstr "Program"
 
 msgid "Key$Channels"
-msgstr "Csatorn·k"
+msgstr "Csatorn√°k"
 
 msgid "Key$Timers"
-msgstr "IdızÌtı"
+msgstr "Id≈ëz√≠t≈ë"
 
 msgid "Key$Recordings"
-msgstr "Felvett ad·sok"
+msgstr "Felv√©telek"
 
 msgid "Key$Setup"
-msgstr "Be·llÌt·sok"
+msgstr "Be√°ll√≠t√°sok"
 
 msgid "Key$Commands"
 msgstr "Parancsok"
 
+msgid "Key$User0"
+msgstr "Felhaszn√°l√≥0"
+
 msgid "Key$User1"
-msgstr "Felhaszn·lÛ1"
+msgstr "Felhaszn√°l√≥1"
 
 msgid "Key$User2"
-msgstr "Felhaszn·lÛ2"
+msgstr "Felhaszn√°l√≥2"
 
 msgid "Key$User3"
-msgstr "Felhaszn·lÛ3"
+msgstr "Felhaszn√°l√≥3"
 
 msgid "Key$User4"
-msgstr "Felhaszn·lÛ4"
+msgstr "Felhaszn√°l√≥4"
 
 msgid "Key$User5"
-msgstr "Felhaszn·lÛ5"
+msgstr "Felhaszn√°l√≥5"
 
 msgid "Key$User6"
-msgstr "Felhaszn·lÛ6"
+msgstr "Felhaszn√°l√≥6"
 
 msgid "Key$User7"
-msgstr "Felhaszn·lÛ7"
+msgstr "Felhaszn√°l√≥7"
 
 msgid "Key$User8"
-msgstr "Felhaszn·lÛ8"
+msgstr "Felhaszn√°l√≥8"
 
 msgid "Key$User9"
-msgstr "Felhaszn·lÛ9"
-
-msgid "Disk"
-msgstr "Lemez"
-
-msgid "free"
-msgstr "szabad"
+msgstr "Felhaszn√°l√≥9"
 
 msgid "Free To Air"
-msgstr "KÛdolatlan"
+msgstr "K√≥dolatlan"
 
 msgid "encrypted"
-msgstr "KÛdolt"
-
-msgid "auto"
-msgstr "auto"
+msgstr "K√≥dolt"
 
 msgid "Edit channel"
-msgstr "Csatorn·k be·llÌt·sa"
+msgstr "Csatorn√°k be√°ll√≠t√°sa"
 
 msgid "Name"
-msgstr "NÈv"
+msgstr "N√©v"
 
 msgid "Source"
-msgstr "Forr·s"
+msgstr "Forr√°s"
 
 msgid "Frequency"
 msgstr "Frekvencia"
@@ -276,68 +567,57 @@ msgstr "CA"
 msgid "Sid"
 msgstr "Sid"
 
-msgid "Polarization"
-msgstr "Polariz·ciÛ"
-
-msgid "Srate"
-msgstr "Srate"
-
-msgid "Inversion"
-msgstr "Inversion"
-
-msgid "off"
-msgstr "ki"
-
-msgid "CoderateH"
-msgstr "CoderateH"
-
-msgid "none"
-msgstr "semmi"
-
-msgid "CoderateL"
-msgstr "CoderateL"
-
-msgid "Modulation"
-msgstr "Modul·ciÛ"
-
-msgid "Bandwidth"
-msgstr "S·vszÈlessÈg"
-
-msgid "Transmission"
-msgstr "¡tvitel"
-
-msgid "Guard"
-msgstr "Guard"
-
-msgid "Hierarchy"
-msgstr "Hierarhia"
-
 msgid "Channel settings are not unique!"
-msgstr "Az adÛbe·llÌt·sok nem egyÈrtelm˚ek"
+msgstr "Az ad√≥be√°ll√≠t√°sok nem egy√©rtelm≈±ek"
 
 msgid "Channels"
-msgstr "Csatorn·k"
+msgstr "Csatorn√°k"
 
 msgid "Button$Edit"
-msgstr "Be·llÌtani"
+msgstr "Be√°ll√≠tani"
 
 msgid "Button$New"
-msgstr "⁄j"
+msgstr "√öj"
 
 msgid "Button$Delete"
-msgstr "Tˆrˆlni"
+msgstr "T√∂r√∂lni"
 
 msgid "Button$Mark"
-msgstr "Megjelˆlni"
+msgstr "Megjel√∂lni"
 
 msgid "Channel is being used by a timer!"
-msgstr "Az adÛt az idızÌtı haszn·lja!"
+msgstr "Az ad√≥t az id≈ëz√≠t≈ë haszn√°lja!"
 
 msgid "Delete channel?"
-msgstr "Csatorna tˆrlÈse?"
+msgstr "Csatorna t√∂rl√©se?"
+
+msgid "Edit folder"
+msgstr "K√∂nyvt√°r szerkeszt√©se"
+
+msgid "New folder"
+msgstr "√öj k√∂nyvt√°r"
+
+msgid "Sub folder"
+msgstr "Alk√∂nyvt√°r"
+
+msgid "Folder name already exists!"
+msgstr "Ez a k√∂nyvt√°rn√©v m√°r l√©tezik!"
+
+#, c-format
+msgid "Folder name must not contain '%c'!"
+msgstr "A k√∂nyvt√°r neve nem tartalmazhatja: '%c'!"
+
+msgid "Button$Select"
+msgstr "Kiv√°laszt√°s"
+
+msgid "Delete folder and all sub folders?"
+msgstr "Val√≥ban t√∂r√∂ljem a k√∂nyvt√°rat √©s az alk√∂nyvt√°rait?"
+
+msgid "Delete folder?"
+msgstr "T√∂r√∂ljem a k√∂nyvt√°rat?"
 
 msgid "Edit timer"
-msgstr "IdızÌtı megv·ltoztat·sa"
+msgstr "Id≈ëz√≠t≈ë megv√°ltoztat√°sa"
 
 msgid "Active"
 msgstr "Aktiv"
@@ -352,100 +632,112 @@ msgid "Start"
 msgstr "Kezdet"
 
 msgid "Stop"
-msgstr "VÈge"
+msgstr "V√©g"
 
 msgid "VPS"
 msgstr "VPS"
 
 msgid "Priority"
-msgstr "Priorit·s"
+msgstr "Priorit√°s"
 
 msgid "Lifetime"
-msgstr "…lettartam"
+msgstr "√âlettartam"
 
 msgid "File"
 msgstr "File"
 
+msgid "Button$Folder"
+msgstr "K√∂nyvt√°r"
+
+msgid "Button$Single"
+msgstr "Egyszeri"
+
+msgid "Button$Repeating"
+msgstr "Ism√©tl≈ëd≈ë"
+
 msgid "First day"
-msgstr "Elsı nap"
+msgstr "Els≈ë nap"
+
+msgid "Select folder"
+msgstr "K√∂nyvt√°r kiv√°laszt√°sa"
 
 msgid "Timers"
-msgstr "IdızÌtı"
+msgstr "Id≈ëz√≠t≈ë"
 
 msgid "Button$On/Off"
 msgstr "Be/Ki"
 
 msgid "Button$Info"
-msgstr "Inform·ciÛ"
+msgstr "Inform√°ci√≥"
 
 msgid "Delete timer?"
-msgstr "IdızÌtı tˆrlÈse?"
+msgstr "Id≈ëz√≠t≈ë t√∂rl√©se?"
 
 msgid "Timer still recording - really delete?"
-msgstr "FelvÈtel folyamatban van - mÈgis tˆrˆlni?"
+msgstr "Felv√©tel folyamatban van - biztos t√∂r√∂ljem?"
 
 msgid "Event"
-msgstr "Ad·s"
+msgstr "Esem√©ny"
 
 msgid "Button$Timer"
-msgstr "IdızÌtı"
+msgstr "Id≈ëz√≠t≈ë"
 
 msgid "Button$Record"
-msgstr "Felvenni"
+msgstr "Felv√©tel"
 
 msgid "Button$Switch"
-msgstr "¡tkapcsolni"
+msgstr "√Åtkapcsolni"
 
 msgid "What's on now?"
-msgstr "Mi megy most?"
+msgstr "Most ad√°sban"
 
 msgid "What's on next?"
-msgstr "Mi kˆvetkezik?"
+msgstr "Mi k√∂vetkezik?"
 
 msgid "Button$Next"
-msgstr "Kˆvetkezı"
+msgstr "K√∂vetkez≈ë"
 
 msgid "Button$Now"
 msgstr "Most"
 
 msgid "Button$Schedule"
-msgstr "Program"
+msgstr "M≈±sor√∫js√°g"
 
 msgid "Can't switch channel!"
-msgstr "Az adÛt nem lehet elkapcsolni"
+msgstr "Az ad√≥t nem lehet elkapcsolni"
 
 #, c-format
 msgid "Schedule - %s"
-msgstr "Program - %s"
+msgstr "M≈±sor√∫js√°g - %s"
 
 #, c-format
 msgid "This event - %s"
-msgstr "Ez az ad·s - %s"
+msgstr "Ez az ad√°s - %s"
 
 msgid "This event - all channels"
-msgstr "Ez az ad·s - ˆsszes adÛ"
+msgstr "Ez az ad√°s - √∂sszes ad√≥n"
 
 msgid "All events - all channels"
-msgstr "Az ˆsszes ad·s - az ˆsszes adÛ"
+msgstr "Az √∂sszes ad√°s - az √∂sszes ad√≥n"
 
 #, c-format
 msgid "Please enter %d digits!"
-msgstr "‹ssˆn be %d sz·mot!"
+msgstr "√úss√∂n be %d sz√°mot!"
 
 msgid "CAM not responding!"
-msgstr "A CAM nem v·laszol!"
+msgstr "A CAM nem v√°laszol!"
 
 msgid "Recording info"
-msgstr "FelvÈtel"
+msgstr "Felv√©tel inf√≥"
 
 msgid "Button$Play"
-msgstr "Lej·tszani"
+msgstr "Lej√°tszani"
 
 msgid "Button$Rewind"
-msgstr "Vissza az elejÈre"
+msgstr "Vissza az elej√©re"
 
 msgid "Recordings"
-msgstr "Felvett ad·sok"
+msgstr "Felv√©telek"
 
 msgid "Button$Open"
 msgstr "Kinyitni"
@@ -453,14 +745,14 @@ msgstr "Kinyitni"
 msgid "Commands"
 msgstr "Parancsok"
 
-msgid "Error while accessing recording!"
-msgstr "Hiba a felvÈtel hozz·fÈrÈsÈnÈl"
-
 msgid "Delete recording?"
-msgstr "FelvÈtel tˆrlÈse?"
+msgstr "Felv√©tel t√∂rl√©se?"
+
+msgid "Recording is being edited - really delete?"
+msgstr "A felv√©tel szerkeszt√©s alatt - biztos t√∂r√∂lni?"
 
 msgid "Error while deleting recording!"
-msgstr "Hiba a felvÈtel tˆrlÈsÈnÈl!"
+msgstr "Hiba a felv√©tel t√∂rl√©s√©n√©l!"
 
 msgid "Recording commands"
 msgstr "Parancsok a felvett filmekhez"
@@ -469,7 +761,7 @@ msgid "never"
 msgstr "soha"
 
 msgid "skin dependent"
-msgstr "Men¸ nÈzetÈtıl f¸ggıen"
+msgstr "Men√º n√©zet√©t≈ël f√ºgg≈ëen"
 
 msgid "always"
 msgstr "mindig"
@@ -481,52 +773,52 @@ msgid "Setup.OSD$Language"
 msgstr "Nyelv"
 
 msgid "Setup.OSD$Skin"
-msgstr "Men¸ nÈzet"
+msgstr "Men√º n√©zet"
 
 msgid "Setup.OSD$Theme"
-msgstr "TÈma"
+msgstr "T√©ma"
 
-msgid "Setup.OSD$Left"
-msgstr "Balra"
+msgid "Setup.OSD$Left (%)"
+msgstr "Balra (%)"
 
-msgid "Setup.OSD$Top"
-msgstr "Fent"
+msgid "Setup.OSD$Top (%)"
+msgstr "Fent (%)"
 
-msgid "Setup.OSD$Width"
-msgstr "SzÈlessÈg"
+msgid "Setup.OSD$Width (%)"
+msgstr "Sz√©less√©g (%)"
 
-msgid "Setup.OSD$Height"
-msgstr "Magass·g"
+msgid "Setup.OSD$Height (%)"
+msgstr "Magass√°g (%)"
 
 msgid "Setup.OSD$Message time (s)"
-msgstr "Inform·ciÛ felt˚ntetÈsÈnek idıtartama"
+msgstr "Inform√°ci√≥ felt≈±ntet√©s√©nek id≈ëtartama"
 
 msgid "Setup.OSD$Use small font"
-msgstr "Kisbet˚t haszn·lni"
+msgstr "Kisbet≈±t haszn√°lni"
 
 msgid "Setup.OSD$Anti-alias"
 msgstr "Anti-alias"
 
 msgid "Setup.OSD$Default font"
-msgstr "AlapÈrtelmezett bet˚tipus"
+msgstr "Alap√©rtelmezett bet≈±tipus"
 
 msgid "Setup.OSD$Small font"
-msgstr "Kis bet˚tipus"
+msgstr "Kis bet≈±tipus"
 
 msgid "Setup.OSD$Fixed font"
-msgstr "Kˆtˆtt bet˚tipus"
+msgstr "K√∂t√∂tt bet≈±tipus"
 
-msgid "Setup.OSD$Default font size (pixel)"
-msgstr "AlapÈrtelmezett bet˚tipus mÈret (pixel)"
+msgid "Setup.OSD$Default font size (%)"
+msgstr "Alap√©rtelmezett bet≈±tipus m√©ret (%)"
 
-msgid "Setup.OSD$Small font size (pixel)"
-msgstr "Kis bet˚tipus mÈret (pixel)"
+msgid "Setup.OSD$Small font size (%)"
+msgstr "Kis bet≈±tipus m√©ret (%)"
 
-msgid "Setup.OSD$Fixed font size (pixel)"
-msgstr "Kˆtˆtt bet˚tipus mÈret (pixel)"
+msgid "Setup.OSD$Fixed font size (%)"
+msgstr "K√∂t√∂tt bet≈±tipus m√©ret (%)"
 
 msgid "Setup.OSD$Channel info position"
-msgstr "Ad·sinform·ciÛ poziciÛja"
+msgstr "Ad√°sinform√°ci√≥ pozici√≥ja"
 
 msgid "bottom"
 msgstr "lent"
@@ -535,46 +827,67 @@ msgid "top"
 msgstr "Fent"
 
 msgid "Setup.OSD$Channel info time (s)"
-msgstr "Ad·sinform·ciÛ felt˚ntetÈsÈnek idıtartama (s)"
+msgstr "Ad√°sinform√°ci√≥ felt≈±ntet√©s√©nek id≈ëtartama (s)"
 
 msgid "Setup.OSD$Info on channel switch"
-msgstr "Inform·ciÛ az adÛ v·lt·s·n·l"
+msgstr "Inform√°ci√≥ az ad√≥ v√°lt√°s√°n√°l"
 
 msgid "Setup.OSD$Timeout requested channel info"
-msgstr "A lekÈrdezett ad·sinform·ciÛ bez·r·sa"
+msgstr "A lek√©rdezett ad√°sinform√°ci√≥ bez√°r√°sa"
 
 msgid "Setup.OSD$Scroll pages"
-msgstr "OldalankÈnt lÈptetmi"
+msgstr "Oldalank√©nt l√©ptetni"
 
 msgid "Setup.OSD$Scroll wraps"
-msgstr "Korl·tlan lÈptetÈs"
+msgstr "Korl√°tlan l√©ptet√©s"
 
 msgid "Setup.OSD$Menu key closes"
-msgstr "A men¸ gomb z·r"
+msgstr "A men√º gomb z√°r"
 
 msgid "Setup.OSD$Recording directories"
-msgstr "FelvÈtelek list·ja"
+msgstr "Felv√©telek list√°ja"
+
+msgid "Setup.OSD$Folders in timer menu"
+msgstr "K√∂nyvt√°rv√°laszt√°s az id≈ëz√≠t≈ë men√ºben"
+
+msgid "Setup.OSD$Always sort folders first"
+msgstr "K√∂nyvt√°rakat rendezd el≈ëre"
+
+msgid "Setup.OSD$Number keys for characters"
+msgstr "Sz√°mgombok a bet≈±k√∂n"
+
+msgid "Setup.OSD$Color key 0"
+msgstr "Sz√≠nes gomb 0"
+
+msgid "Setup.OSD$Color key 1"
+msgstr "Sz√≠nes gomb 1"
+
+msgid "Setup.OSD$Color key 2"
+msgstr "Sz√≠nes gomb 2"
+
+msgid "Setup.OSD$Color key 3"
+msgstr "Sz√≠nes gomb 3"
 
 msgid "EPG"
 msgstr "EPG"
 
 msgid "Button$Scan"
-msgstr "Ad·skeresÈs"
+msgstr "EPG keres√©s"
 
 msgid "Setup.EPG$EPG scan timeout (h)"
-msgstr "Fennmaradt idı az EPG-˙jÌt·sig (h)"
+msgstr "Fennmaradt id≈ë az EPG-friss√≠t√©sig (√≥)"
 
 msgid "Setup.EPG$EPG bugfix level"
-msgstr "EPG hibaelh·rÌt·s"
+msgstr "Hibaelh√°r√≠t√°s szintje"
 
 msgid "Setup.EPG$EPG linger time (min)"
-msgstr "RÈgi EPG adatok megmutat·sa (perc)"
+msgstr "Eltelt EPG adatok kijelz√©se (perc)"
 
 msgid "Setup.EPG$Set system time"
-msgstr "Az idı be·llÌt·sa"
+msgstr "√ìra √°ll√≠t√°sa TP id≈ëh√∂z"
 
 msgid "Setup.EPG$Use time from transponder"
-msgstr "Idıhˆz tartozÛ Transponder"
+msgstr "Id≈ëh√∂z tartoz√≥ Transponder"
 
 #. TRANSLATORS: note the plural!
 msgid "Setup.EPG$Preferred languages"
@@ -591,52 +904,61 @@ msgid "letterbox"
 msgstr "letterbox"
 
 msgid "center cut out"
-msgstr "center cut out"
+msgstr "k√©pk√∂z√©p kiv√°g√°s"
 
 msgid "no"
 msgstr "nem"
 
 msgid "names only"
-msgstr "kiz·rÛlag nevek"
+msgstr "kiz√°r√≥lag nevek"
 
 msgid "PIDs only"
-msgstr "kiz·rÛlag PIDek"
+msgstr "kiz√°r√≥lag PIDek"
 
 msgid "names and PIDs"
-msgstr "nevek Ès PIDek"
+msgstr "nevek √©s PIDek"
 
 msgid "add new channels"
-msgstr "˙j adÛk hozz·ad·sa"
+msgstr "√∫j ad√≥k hozz√°ad√°sa"
 
 msgid "add new transponders"
-msgstr "˙j transponder hozz·ad·sa"
+msgstr "√∫j transponderek hozz√°ad√°sa"
 
 msgid "DVB"
 msgstr "DVB"
 
+msgid "Button$Audio"
+msgstr "Hang"
+
+msgid "Button$Subtitles"
+msgstr "Feliratok"
+
 msgid "Setup.DVB$Primary DVB interface"
-msgstr "Elsı DVB interface"
+msgstr "Els≈ë DVB interface"
+
+msgid "Setup.DVB$Standard compliance"
+msgstr "V√©teli norma"
 
 msgid "Setup.DVB$Video format"
-msgstr "Video form·tum"
+msgstr "Video form√°tum"
 
 msgid "Setup.DVB$Video display format"
-msgstr "KÈpernyıform·tum"
+msgstr "K√©perny≈ëform√°tum"
 
 msgid "Setup.DVB$Use Dolby Digital"
-msgstr "Dolby-Digital hangot haszn·lni"
+msgstr "Dolby-Digital hangot haszn√°lni"
 
 msgid "Setup.DVB$Update channels"
-msgstr "AdÛk aktualiz·l·sa"
+msgstr "Ad√≥k aktualiz√°l√°sa"
 
 msgid "Setup.DVB$Audio languages"
-msgstr "Audio nyelvek"
+msgstr "Hangs√°v nyelvek"
 
 msgid "Setup.DVB$Audio language"
-msgstr "Audio nyelv"
+msgstr "Hangs√°v nyelv"
 
 msgid "Setup.DVB$Display subtitles"
-msgstr "Felirat l·thatÛ"
+msgstr "Felirat l√°that√≥"
 
 msgid "Setup.DVB$Subtitle languages"
 msgstr "Felirat nyelvek"
@@ -645,252 +967,294 @@ msgid "Setup.DVB$Subtitle language"
 msgstr "Felirat nyelv"
 
 msgid "Setup.DVB$Subtitle offset"
-msgstr "Felirat eltol·sa"
+msgstr "Felirat eltol√°sa"
 
 msgid "Setup.DVB$Subtitle foreground transparency"
-msgstr "Felirat transzparenci·ja"
+msgstr "Felirat transzparenci√°ja"
 
 msgid "Setup.DVB$Subtitle background transparency"
-msgstr "Felirat h·tterÈnek transzparenci·ja"
+msgstr "Felirat h√°tter√©nek transzparenci√°ja"
 
 msgid "LNB"
 msgstr "LNB"
 
 msgid "Setup.LNB$Use DiSEqC"
-msgstr "DiSEqC haszn·lata"
+msgstr "DiSEqC haszn√°lata"
 
 msgid "Setup.LNB$SLOF (MHz)"
 msgstr "SLOF (MHz)"
 
 msgid "Setup.LNB$Low LNB frequency (MHz)"
-msgstr "AlsÛ LNB-frekvencia (MHZ)"
+msgstr "Als√≥ LNB-frekvencia (MHz)"
 
 msgid "Setup.LNB$High LNB frequency (MHz)"
-msgstr "Felsı LNB-frekvencia (MHZ)"
+msgstr "Fels≈ë LNB-frekvencia (MHz)"
+
+#, c-format
+msgid "Setup.LNB$Device %d connected to sat cable"
+msgstr "Fejk√°bel a %d. tunerhez"
+
+msgid "Setup.LNB$own"
+msgstr "saj√°t"
 
 msgid "CAM reset"
-msgstr "CAM ˙jraindÌt·s"
+msgstr "CAM √∫jraind√≠t√°s"
 
 msgid "CAM present"
 msgstr "CAM jelen"
 
 msgid "CAM ready"
-msgstr "CAM m˚kˆdik"
+msgstr "CAM m≈±k√∂dik"
 
 msgid "CAM"
 msgstr "CAM"
 
 msgid "Button$Menu"
-msgstr "Men¸"
+msgstr "Men√º"
 
 msgid "Button$Reset"
 msgstr "Reset"
 
 msgid "Opening CAM menu..."
-msgstr "A CAM men¸ nyit·s alatt..."
+msgstr "A CAM men√º nyit√°sa..."
 
 msgid "Can't open CAM menu!"
-msgstr "A CAM men¸ nem nyithatÛ"
+msgstr "A CAM men√º nem nyithat√≥"
 
 msgid "CAM is in use - really reset?"
-msgstr "CAM haszn·latban - valÛban ˙jraindÌtjuk?"
+msgstr "CAM haszn√°latban - val√≥ban √∫jraind√≠tjuk?"
 
 msgid "Can't reset CAM!"
-msgstr "A CAM ˙jraindÌt·s nem siker¸lt"
+msgstr "A CAM √∫jraind√≠t√°s nem siker√ºlt"
+
+msgid "do not pause live video"
+msgstr "√©l≈ëk√©p le√°ll√≠t√°sa tiltva"
+
+msgid "confirm pause live video"
+msgstr "√©l≈ëk√©p le√°ll√≠t√°sa meger≈ës√≠t√©ssel"
+
+msgid "pause live video"
+msgstr "√©l≈ëk√©p le√°ll√≠t√°sa"
+
+msgid "confirm"
+msgstr "meger≈ës√≠t√©s"
+
+msgid "yes"
+msgstr "igen"
 
 msgid "Recording"
-msgstr "FelvÈtel"
+msgstr "Felv√©tel"
 
 msgid "Setup.Recording$Margin at start (min)"
-msgstr "IdıeltolÛd·s a kezdÈsnÈl (perc)"
+msgstr "Id≈ëeltol√°s a kezd√©sn√©l (perc)"
 
 msgid "Setup.Recording$Margin at stop (min)"
-msgstr "IdıeltolÛd·s a befejezÈsnÈl (perc)"
-
-msgid "Setup.Recording$Primary limit"
-msgstr "PrimÈr-hat·r"
+msgstr "Id≈ëeltol√°s a befejez√©sn√©l (perc)"
 
 msgid "Setup.Recording$Default priority"
-msgstr "AlapÈrtelmezett priorit·s"
+msgstr "Alap√©rtelmezett priorit√°s"
 
 msgid "Setup.Recording$Default lifetime (d)"
-msgstr "AlapÈrtelmezett Èlettartam"
+msgstr "Alap√©rtelmezett √©lettartam"
+
+msgid "Setup.Recording$Pause key handling"
+msgstr "A sz√ºnet gomb m≈±k√∂d√©se"
 
 msgid "Setup.Recording$Pause priority"
-msgstr "Sz¸net priorit·s"
+msgstr "Id≈ëeltol√°s priorit√°sa"
 
 msgid "Setup.Recording$Pause lifetime (d)"
-msgstr "Sz¸net Èlettartama"
+msgstr "Id≈ëeltol√°s √©lettartama"
 
 msgid "Setup.Recording$Use episode name"
-msgstr "EpizÛdnÈv felhaszn·l·sa"
+msgstr "Epiz√≥dn√©v"
 
 msgid "Setup.Recording$Use VPS"
-msgstr "VPS-t haszn·lni"
+msgstr "VPS"
 
 msgid "Setup.Recording$VPS margin (s)"
-msgstr "IdıeltolÛd·s VPS-nÈl (s)"
+msgstr "Id≈ëeltol√°s VPS-n√©l (mp)"
 
 msgid "Setup.Recording$Mark instant recording"
-msgstr "DirektfelvÈtel megjelˆlÈse"
+msgstr "Direktfelv√©tel megjel√∂l√©se"
 
 msgid "Setup.Recording$Name instant recording"
-msgstr "DirektfelvÈtel megnevezÈse"
+msgstr "Direktfelv√©tel megnevez√©se"
 
 msgid "Setup.Recording$Instant rec. time (min)"
-msgstr "FelvÈtel idıtartama (perc)"
+msgstr "Direktfelv√©tel id≈ëtartama (perc)"
+
+msgid "Setup.Recording$present event"
+msgstr "Most fut√≥ m≈±sor"
 
 msgid "Setup.Recording$Max. video file size (MB)"
-msgstr "Max. video File-terjedelem (MB)"
+msgstr "Max. video file m√©ret (MB)"
 
 msgid "Setup.Recording$Split edited files"
-msgstr "Feldolgozott File-k feloszt·sa"
+msgstr "Feldolgozott file-ok feloszt√°sa"
+
+msgid "Setup.Recording$Delete timeshift recording"
+msgstr "Id≈ëeltol√°sos felv√©tel t√∂rl√©se"
 
 msgid "Replay"
-msgstr "Lej·tsz·s"
+msgstr "Lej√°tsz√°s"
 
 msgid "Setup.Replay$Multi speed mode"
-msgstr "MultiSpeed funkciÛ"
+msgstr "T√∂bsebess√©ges funkci√≥"
 
 msgid "Setup.Replay$Show replay mode"
-msgstr "Lej·tsz·s felt¸ntetÈse"
+msgstr "Lej√°tsz√°s felt√ºntet√©se"
+
+msgid "Setup.Replay$Show remaining time"
+msgstr "H√°tralev≈ë id≈ë kijelz√©se"
+
+msgid "Setup.Replay$Progress display time (s)"
+msgstr "Lej√°tsz√≥s√°v fel√ºntet√©s√©nek ideje (mp)"
+
+msgid "Setup.Replay$Pause replay when setting mark"
+msgstr "A visszaj√°tsz√°s meg√°ll√≠t√°sa v√°g√≥pont kijel√∂l√©sn√©l"
 
 msgid "Setup.Replay$Resume ID"
-msgstr "Lej·tsz·s ID"
+msgstr "Lej√°tsz√°s ID"
 
 msgid "Miscellaneous"
-msgstr "EgyÈb"
+msgstr "Egy√©b"
 
 msgid "Setup.Miscellaneous$Min. event timeout (min)"
-msgstr "IdızitÈsek kˆzˆtti idıtartam (perc)"
+msgstr "VDR le√°ll ha nem k√∂vetkezik felv√©tel (p)"
 
 msgid "Setup.Miscellaneous$Min. user inactivity (min)"
-msgstr "VDR le·ll haszn·lat nÈlk¸l (perc)"
+msgstr "VDR le√°ll haszn√°lat n√©lk√ºl (perc)"
 
 msgid "Setup.Miscellaneous$SVDRP timeout (s)"
-msgstr "SVDRP szÈtkapcsol haszn·lat nÈlk¸l(s)"
+msgstr "SVDRP sz√©tkapcsol haszn√°lat n√©lk√ºl(s)"
 
 msgid "Setup.Miscellaneous$Zap timeout (s)"
-msgstr "Ad·sv·lt·s ideje (s)"
+msgstr "Ad√°sv√°lt√°s ideje (s)"
 
 msgid "Setup.Miscellaneous$Channel entry timeout (ms)"
-msgstr "Csatornav·lt·s timeout (ms)"
+msgstr "Csatornav√°lt√°s timeout (ms)"
+
+msgid "Setup.Miscellaneous$Remote control repeat delay (ms)"
+msgstr "T√°vir√°ny√≠t√≥ ism√©tl√©s k√©sleltet√©se (ms)"
+
+msgid "Setup.Miscellaneous$Remote control repeat delta (ms)"
+msgstr "T√°vir√°ny√≠t√≥ ism√©tl√©s delt√°ja (ms)"
 
 msgid "Setup.Miscellaneous$Initial channel"
-msgstr "Ad·s a bekapcsol·sn·l"
+msgstr "Csatorna indul√°skor"
 
 msgid "Setup.Miscellaneous$as before"
-msgstr "ahogy az elıbb"
+msgstr "ahogy az el≈ëbb"
 
 msgid "Setup.Miscellaneous$Initial volume"
-msgstr "Hangerı a bekapcsol·sn·l"
+msgstr "Hanger≈ë indul√°sn√°l"
 
-#, fuzzy
+msgid "Setup.Miscellaneous$Channels wrap"
+msgstr "Csatornalista g√∂rget√©se"
+
+msgid "Setup.Miscellaneous$Show channel names with source"
+msgstr "Csatornanevek kijelz√©se forr√°ssal egy√ºtt"
+
 msgid "Setup.Miscellaneous$Emergency exit"
-msgstr "ahogy az elıbb"
+msgstr "V√©szle√°ll√≠t√°s"
 
 msgid "Plugins"
 msgstr "Plugins"
 
 msgid "This plugin has no setup parameters!"
-msgstr "Ennek a plugin-nak nincs setup-parametere!"
+msgstr "Ennek a plugin-nak nincs setup-param√©tere!"
 
 msgid "Setup"
-msgstr "Be·llÌt·sok"
+msgstr "Be√°ll√≠t√°sok"
 
 msgid "Restart"
-msgstr "⁄jraindÌt·s"
+msgstr "√öjraind√≠t√°s"
 
 msgid "Really restart?"
-msgstr "TÈnyleg ˙jraindÌtani?"
+msgstr "T√©nyleg √∫jraind√≠tani?"
 
 #. TRANSLATORS: note the leading and trailing blanks!
 msgid " Stop recording "
-msgstr " FelvÈtelt befejezni "
+msgstr " Felv√©telt befejezni "
 
 msgid "Schedule"
-msgstr "Program"
-
-msgid "VDR"
-msgstr "VDR"
+msgstr "M≈±sor√∫js√°g"
 
 #. TRANSLATORS: note the leading blank!
 msgid " Stop replaying"
-msgstr " Lej·tsz·st befejzni"
-
-msgid "Button$Audio"
-msgstr "Hang"
+msgstr " Lej√°tsz√°st befejzni"
 
 msgid "Button$Pause"
-msgstr "Sz¸net"
+msgstr "Sz√ºnet"
 
 msgid "Button$Stop"
 msgstr "Stop"
 
 msgid "Button$Resume"
-msgstr "Tov·bb"
+msgstr "Tov√°bb"
 
 #. TRANSLATORS: note the leading blank!
 msgid " Cancel editing"
-msgstr " V·g·st megszakÌtani"
+msgstr " V√°g√°st megszak√≠tani"
 
 msgid "Stop recording?"
-msgstr "FelvÈtel befejezni?"
+msgstr "Felv√©tel befejezni?"
 
 msgid "Cancel editing?"
-msgstr "V·g·st befejezni?"
+msgstr "V√°g√°st befejezni?"
 
 msgid "No audio available!"
-msgstr "Hang nem lehetsÈges!"
+msgstr "Hang nem lehets√©ges!"
 
 msgid "No subtitles"
 msgstr "Felirat ki"
 
-msgid "Button$Subtitles"
-msgstr "Feliratok"
-
 msgid "No subtitles available!"
-msgstr "A csatorn·n nincs felirat!"
+msgstr "A csatorn√°n nincs felirat!"
 
 msgid "Not enough disk space to start recording!"
-msgstr "Nincs elegendı hely a felvÈtelre"
+msgstr "Nincs elegend≈ë hely a felv√©telre"
 
 msgid "No free DVB device to record!"
-msgstr "Nincs szabad DVB k·rtya a felvÈtelhez!"
+msgstr "Nincs szabad DVB k√°rtya a felv√©telhez!"
 
 msgid "Pausing live video..."
-msgstr "Az Èlı ad·s meg·llÌtva..."
+msgstr "Az √©l≈ë ad√°s meg√°ll√≠tva..."
+
+msgid "Delete timeshift recording?"
+msgstr "T√∂r√∂ljem az id≈ëeltol√°sos felv√©telt?"
 
 #. TRANSLATORS: note the trailing blank!
 msgid "Jump: "
-msgstr "Ugr·s: "
+msgstr "Ugr√°s ide: "
 
 msgid "No editing marks defined!"
-msgstr "A v·gÛpont nincs kijelˆlve"
+msgstr "Nincs v√°g√≥pont kijel√∂lve"
+
+msgid "No editing sequences defined!"
+msgstr "Nincs v√°g√≥r√©sz kijel√∂lve"
 
 msgid "Can't start editing process!"
-msgstr "A v·g·s nem indÌthatÛ!"
+msgstr "A v√°g√°s nem ind√≠that√≥!"
 
 msgid "Editing process started"
-msgstr "V·g·s elindÌtva"
+msgstr "V√°g√°s elind√≠tva"
 
 msgid "Editing process already active!"
-msgstr "A v·g·s m·r aktÌv!"
+msgstr "A v√°g√°s m√°r akt√≠v!"
 
 msgid "FileNameChars$ abcdefghijklmnopqrstuvwxyz0123456789-.,#~\\^$[]|()*+?{}/:%@&"
-msgstr " a·bcdeÈfghiÌjklmnoÛˆıpqrstu˙¸˚vwxyz0123456789-.,#~\\^$[]|()*+?{}/:%@&"
-
-msgid "yes"
-msgstr "igen"
+msgstr " a√°bcde√©fghi√≠jklmno√≥√∂≈ëpqrstu√∫√º≈±vwxyz0123456789-.,#~\\^$[]|()*+?{}/:%@&"
 
 msgid "CharMap$ 0\t-.,1#~\\^$[]|()*+?{}/:%@&\tabc2\tdef3\tghi4\tjkl5\tmno6\tpqrs7\ttuv8\twxyz9"
-msgstr " 0\t-.,1#~\\^$[]|()*+?{}/:%@&\ta·bc2\tdeÈf3\tghiÌ4\tjkl5\tmnoÛˆı6\tpqrs7\ttu˙¸˚v8\twxyz9"
+msgstr " 0\t-.,1#~\\^$[]|()*+?{}/:%@&\ta√°bc2\tde√©f3\tghi√≠4\tjkl5\tmno√≥√∂≈ë6\tpqrs7\ttu√∫√º≈±v8\twxyz9"
 
 msgid "Button$ABC/abc"
 msgstr "ABC/abc"
 
 msgid "Button$Overwrite"
-msgstr "¡tÌrni"
+msgstr "√Åt√≠rni"
 
 msgid "Button$Insert"
 msgstr "Beilleszteni"
@@ -899,49 +1263,76 @@ msgid "Plugin"
 msgstr "Plugin"
 
 msgid "Up/Dn for new location - OK to move"
-msgstr "Fel/Le egy ˙j opciÛÈrt - azt·n OK"
+msgstr "Fel/Le egy √∫j opci√≥√©rt - azt√°n OK"
 
 msgid "Channel locked (recording)!"
-msgstr "Az adÛ blokkolva (felvÈtel)!"
+msgstr "Az ad√≥ blokkolva (felv√©tel)!"
 
 msgid "Low disk space!"
-msgstr "A merev lemez majdnem tele!"
+msgstr "A merevlemez majdnem tele!"
+
+msgid "Regenerating index file"
+msgstr "Az index file √∫jragener√°l√°sa"
+
+msgid "Index file regeneration complete"
+msgstr "Index file √∫jragener√°l√°sa k√©sz."
+
+msgid "Index file regeneration failed!"
+msgstr "Index file √∫jragener√°l√°sa sikertelen!"
 
 msgid "Can't shutdown - option '-s' not given!"
-msgstr "A le·llÌt·s nem lehetsÈges - OpciÛ '-s' hi·nyzik!"
+msgstr "A le√°ll√≠t√°s nem lehets√©ges - Opci√≥ '-s' hi√°nyzik!"
 
 msgid "Editing - shut down anyway?"
-msgstr "SzerkesztÈs folyamatban - valÛban le·llÌtjuk?"
+msgstr "Szerkeszt√©s folyamatban - val√≥ban le√°ll√≠tjuk?"
 
 msgid "Recording - shut down anyway?"
-msgstr "FelvÈtel folyamatban van - mÈgis kikapcsolni?"
+msgstr "Felv√©tel folyamatban van - m√©gis kikapcsolni?"
 
 #, c-format
 msgid "Recording in %ld minutes, shut down anyway?"
-msgstr "FelvÈtel %ld perc mulva kezdıdik - mÈgis kikapcsolni?"
+msgstr "Felv√©tel %ld perc mulva kezd≈ëdik - m√©gis kikapcsolni?"
 
 msgid "shut down anyway?"
-msgstr "mÈgis kikapcsolni?"
+msgstr "m√©gis kikapcsolni?"
 
 #, c-format
 msgid "Plugin %s wakes up in %ld min, continue?"
-msgstr "A(z) %s plugin  Èbreszt %ld perc m˙lva, folytatjuk?"
+msgstr "A(z) %s plugin  √©breszt %ld perc m√∫lva, folytatjuk?"
 
 msgid "Editing - restart anyway?"
-msgstr "SzerkesztÈs folyamatban - valÛban ˙jraindÌtjuk?"
+msgstr "Szerkeszt√©s folyamatban - val√≥ban √∫jraind√≠tjuk?"
 
 msgid "Recording - restart anyway?"
-msgstr "FelvÈtel folyamatban van - mÈgis ˙jraindÌtani?"
+msgstr "Felv√©tel folyamatban van - m√©gis √∫jraind√≠tani?"
 
 msgid "restart anyway?"
-msgstr "mÈgis ˙jraindÌtani?"
+msgstr "m√©gis √∫jraind√≠tani?"
 
 #. TRANSLATORS: note the trailing blank!
 msgid "Volume "
-msgstr "Hangerı "
+msgstr "Hanger≈ë "
 
 msgid "Classic VDR"
 msgstr "Klasszikus VDR"
+
+msgid "DISK"
+msgstr "LEMEZ"
+
+msgid "LOAD"
+msgstr "TERHEL√âS"
+
+msgid "TIMERS"
+msgstr "ID≈êZ√çT≈êK"
+
+msgid "DEVICES"
+msgstr "TUNEREK"
+
+msgid "LIVE"
+msgstr "√âL≈ê"
+
+msgid "PLAY"
+msgstr "LEJ√ÅTSZ√ÅS"
 
 msgid "ST:TNG Panels"
 msgstr "ST:TNG Konzol"
@@ -952,10 +1343,10 @@ msgstr "HKSCPSV"
 
 #. TRANSLATORS: abbreviated weekdays, beginning with monday (must all be 3 letters!)
 msgid "MonTueWedThuFriSatSun"
-msgstr "HÈtKedSzeCs¸PÈnSzoVas"
+msgstr "H√©tKedSzeCs√ºP√©nSzoVas"
 
 msgid "Monday"
-msgstr "HÈtfı"
+msgstr "H√©tf≈ë"
 
 msgid "Tuesday"
 msgstr "Kedd"
@@ -964,41 +1355,50 @@ msgid "Wednesday"
 msgstr "Szerda"
 
 msgid "Thursday"
-msgstr "Cs¸tˆrtˆk"
+msgstr "Cs√ºt√∂rt√∂k"
 
 msgid "Friday"
-msgstr "PÈntek"
+msgstr "P√©ntek"
 
 msgid "Saturday"
 msgstr "Szombat"
 
 msgid "Sunday"
-msgstr "Vas·rnap"
+msgstr "Vas√°rnap"
 
 msgid "Upcoming recording!"
-msgstr "FelvÈtel rˆgtˆn kezdıdik!"
+msgstr "Felv√©tel r√∂gt√∂n indul!"
+
+msgid "Pause live video?"
+msgstr "Meg√°ll√≠tsam az √©l≈ë k√©pet?"
 
 msgid "Recording started"
-msgstr "A felvÈtel elindÌtva"
+msgstr "A felv√©tel elind√≠tva"
 
 msgid "VDR will shut down later - press Power to force"
-msgstr "A VDR kÈsıbb fog le·llni - Kikapcs gombbal kÈnyszerÌtett le·llÌt·s"
+msgstr "A VDR k√©s≈ëbb fog le√°llni - Kikapcs gombbal k√©nyszer√≠tett le√°ll√≠t√°s"
 
 msgid "Press any key to cancel shutdown"
-msgstr "Nyomj egy gombot a le·ll·s megszakÌt·s·hoz"
+msgstr "Nyomj egy gombot a le√°ll√°s megszak√≠t√°s√°hoz"
 
 msgid "Switching primary DVB..."
-msgstr "PrimÈr Interface ·tkapcsolva..."
+msgstr "Els≈ëdleges DVB k√°rtya v√°lt√°sa folyamatban..."
 
 msgid "Editing process failed!"
-msgstr "V·g·s sikertelen!"
+msgstr "V√°g√°s sikertelen!"
 
 msgid "Editing process finished"
-msgstr "V·g·s befejezve"
+msgstr "V√°g√°s befejezve"
 
 msgid "Press any key to cancel restart"
-msgstr "Nyomj egy gombot az ˙jraindÌt·s megszakÌt·s·hoz"
+msgstr "Nyomj egy gombot az √∫jraind√≠t√°s megszak√≠t√°s√°hoz"
 
 #, c-format
 msgid "VDR will shut down in %s minutes"
-msgstr "A VDR le·ll %s perc m˙lva"
+msgstr "A VDR le√°ll %s perc m√∫lva"
+
+msgid "Disk"
+msgstr "Lemez"
+
+msgid "free"
+msgstr "szabad"

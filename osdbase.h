@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: osdbase.h 1.17 2007/11/03 14:50:52 kls Exp $
+ * $Id: osdbase.h 2.5 2012/12/07 09:49:35 kls Exp $
  */
 
 #ifndef __OSDBASE_H
@@ -63,6 +63,7 @@ public:
   void SetFresh(bool Fresh);
   const char *Text(void) const { return text; }
   virtual void Set(void) {}
+  virtual void SetMenuItem(cSkinDisplayMenu *DisplayMenu, int Index, bool Current, bool Selectable);
   virtual eOSState ProcessKey(eKeys Key);
   };
 
@@ -86,15 +87,18 @@ class cOsdMenu : public cOsdObject, public cList<cOsdItem> {
 private:
   static cSkinDisplayMenu *displayMenu;
   static int displayMenuCount;
-  static int displayMenuItems;
+  int displayMenuItems;
   char *title;
   int cols[cSkinDisplayMenu::MaxTabs];
   int first, current, marked;
+  eMenuCategory menuCategory;
   cOsdMenu *subMenu;
   const char *helpRed, *helpGreen, *helpYellow, *helpBlue;
+  bool helpDisplayed;
   char *status;
   int digit;
   bool hasHotkeys;
+  void DisplayHelp(bool Force = false);
 protected:
   void SetDisplayMenu(void);
   cSkinDisplayMenu *DisplayMenu(void) { return displayMenu; }
@@ -102,6 +106,7 @@ protected:
   void SetCols(int c0, int c1 = 0, int c2 = 0, int c3 = 0, int c4 = 0);
   void SetHasHotkeys(bool HasHotkeys = true);
   virtual void Clear(void);
+  const char *Title(void) { return title; }
   bool SelectableItem(int idx);
   void SetCurrent(cOsdItem *Item);
   void RefreshCurrent(void);
@@ -116,6 +121,7 @@ protected:
   eOSState AddSubMenu(cOsdMenu *SubMenu);
   eOSState CloseSubMenu();
   bool HasSubMenu(void) { return subMenu; }
+  cOsdMenu *SubMenu(void) { return subMenu; }
   void SetStatus(const char *s);
   void SetTitle(const char *Title);
   void SetHelp(const char *Red, const char *Green = NULL, const char *Yellow = NULL, const char *Blue = NULL);
@@ -124,6 +130,7 @@ public:
   cOsdMenu(const char *Title, int c0 = 0, int c1 = 0, int c2 = 0, int c3 = 0, int c4 = 0);
   virtual ~cOsdMenu();
   virtual bool NeedsFastResponse(void) { return subMenu ? subMenu->NeedsFastResponse() : cOsdObject::NeedsFastResponse(); }
+  void SetMenuCategory(eMenuCategory MenuCategory);
   int Current(void) const { return current; }
   void Add(cOsdItem *Item, bool Current = false, cOsdItem *After = NULL);
   void Ins(cOsdItem *Item, bool Current = false, cOsdItem *Before = NULL);

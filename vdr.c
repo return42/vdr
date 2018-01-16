@@ -1,7 +1,7 @@
 /*
  * vdr.c: Video Disk Recorder main program
  *
- * Copyright (C) 2000, 2003, 2006, 2008 Klaus Schmidinger
+ * Copyright (C) 2000, 2003, 2006, 2008, 2013 Klaus Schmidinger
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -18,11 +18,11 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  * Or, point your browser to http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
  *
- * The author can be reached at kls@cadsoft.de
+ * The author can be reached at vdr@tvdr.de
  *
- * The project's page is at http://www.cadsoft.de/vdr
+ * The project's page is at http://www.tvdr.de
  *
- * $Id: vdr.c 1.313 2008/03/14 13:22:39 kls Exp $
+ * $Id: vdr.c 2.57 2013/03/15 10:44:54 kls Exp $
  */
 
 #include <getopt.h>
@@ -53,11 +53,12 @@
 #include "menu.h"
 #include "osdbase.h"
 #include "plugin.h"
-#include "rcu.h"
 #include "recording.h"
 #include "shutdown.h"
 #include "skinclassic.h"
+#include "skinlcars.h"
 #include "skinsttng.h"
+#include "sourceparams.h"
 #include "sources.h"
 #include "themes.h"
 #include "timers.h"
@@ -86,7 +87,7 @@
 
 static int LastSignal = 0;
 
-static bool SetUser(const char *UserName, bool UserDump)//XXX name?
+static bool SetUser(const char *UserName, bool UserDump)
 {
   if (UserName) {
      struct passwd *user = getpwnam(UserName);
@@ -108,14 +109,18 @@ static bool SetUser(const char *UserName, bool UserDump)//XXX name?
         }
      if (UserDump && prctl(PR_SET_DUMPABLE, 1, 0, 0, 0) < 0)
         fprintf(stderr, "vdr: warning - cannot set dumpable: %s\n", strerror(errno));
+     setenv("HOME", user->pw_dir, 1);
+     setenv("USER", user->pw_name, 1);
+     setenv("LOGNAME", user->pw_name, 1);
+     setenv("SHELL", user->pw_shell, 1);
      }
   return true;
 }
 
-static bool SetCapSysTime(void)
+static bool DropCaps(void)
 {
-  // drop all capabilities except cap_sys_time
-  cap_t caps = cap_from_text("= cap_sys_time=ep");
+  // drop all capabilities except selected ones
+  cap_t caps = cap_from_text("= cap_sys_nice,cap_sys_time,cap_net_raw=ep");
   if (!caps) {
      fprintf(stderr, "vdr: cap_from_text failed: %s\n", strerror(errno));
      return false;
@@ -141,7 +146,6 @@ static bool SetKeepCaps(bool On)
 
 static void SignalHandler(int signum)
 {
-  isyslog("caught signal %d", signum);
   switch (signum) {
     case SIGPIPE:
          break;
@@ -177,10 +181,15 @@ int main(int argc, char *argv[])
 
   // Command line options:
 
-#define DEFAULTSVDRPPORT 2001
+#define dd(a, b) (*a ? a : b)
+#define DEFAULTSVDRPPORT 6419
 #define DEFAULTWATCHDOG     0 // seconds
-#define DEFAULTCONFDIR CONFDIR
+#define DEFAULTVIDEODIR VIDEODIR
+#define DEFAULTCONFDIR dd(CONFDIR, VideoDirectory)
+#define DEFAULTCACHEDIR dd(CACHEDIR, VideoDirectory)
+#define DEFAULTRESDIR dd(RESDIR, ConfigDirectory)
 #define DEFAULTPLUGINDIR PLUGINDIR
+#define DEFAULTLOCDIR LOCDIR
 #define DEFAULTEPGDATAFILENAME "epg.data"
 
   bool StartedAsRoot = false;
@@ -188,7 +197,11 @@ int main(int argc, char *argv[])
   bool UserDump = false;
   int SVDRPport = DEFAULTSVDRPPORT;
   const char *AudioCommand = NULL;
+  const char *VideoDirectory = DEFAULTVIDEODIR;
   const char *ConfigDirectory = NULL;
+  const char *CacheDirectory = NULL;
+  const char *ResourceDirectory = NULL;
+  const char *LocaleDirectory = DEFAULTLOCDIR;
   const char *EpgDataFileName = DEFAULTEPGDATAFILENAME;
   bool DisplayHelp = false;
   bool DisplayVersion = false;
@@ -197,21 +210,14 @@ int main(int argc, char *argv[])
   bool MuteAudio = false;
   int WatchdogTimeout = DEFAULTWATCHDOG;
   const char *Terminal = NULL;
-  const char *LocaleDir = NULL;
 
   bool UseKbd = true;
   const char *LircDevice = NULL;
-  const char *RcuDevice = NULL;
 #if !defined(REMOTE_KBD)
   UseKbd = false;
 #endif
 #if defined(REMOTE_LIRC)
   LircDevice = LIRC_DEVICE;
-#elif defined(REMOTE_RCU)
-  RcuDevice = RCU_DEVICE;
-#endif
-#if defined(VFAT)
-  VfatFileSystem = true;
 #endif
 #if defined(VDR_USER)
   VdrUser = VDR_USER;
@@ -221,12 +227,18 @@ int main(int argc, char *argv[])
 
   static struct option long_options[] = {
       { "audio",    required_argument, NULL, 'a' },
+      { "cachedir", required_argument, NULL, 'c' | 0x100 },
       { "config",   required_argument, NULL, 'c' },
       { "daemon",   no_argument,       NULL, 'd' },
       { "device",   required_argument, NULL, 'D' },
+      { "dirnames", required_argument, NULL, 'd' | 0x100 },
+      { "edit",     required_argument, NULL, 'e' | 0x100 },
       { "epgfile",  required_argument, NULL, 'E' },
+      { "filesize", required_argument, NULL, 'f' | 0x100 },
+      { "genindex", required_argument, NULL, 'g' | 0x100 },
       { "grab",     required_argument, NULL, 'g' },
       { "help",     no_argument,       NULL, 'h' },
+      { "instance", required_argument, NULL, 'i' },
       { "lib",      required_argument, NULL, 'L' },
       { "lirc",     optional_argument, NULL, 'l' | 0x100 },
       { "localedir",required_argument, NULL, 'l' | 0x200 },
@@ -235,9 +247,10 @@ int main(int argc, char *argv[])
       { "no-kbd",   no_argument,       NULL, 'n' | 0x100 },
       { "plugin",   required_argument, NULL, 'P' },
       { "port",     required_argument, NULL, 'p' },
-      { "rcu",      optional_argument, NULL, 'r' | 0x100 },
       { "record",   required_argument, NULL, 'r' },
+      { "resdir",   required_argument, NULL, 'r' | 0x100 },
       { "shutdown", required_argument, NULL, 's' },
+      { "split",    no_argument,       NULL, 's' | 0x100 },
       { "terminal", required_argument, NULL, 't' },
       { "user",     required_argument, NULL, 'u' },
       { "userdump", no_argument,       NULL, 'u' | 0x100 },
@@ -245,17 +258,21 @@ int main(int argc, char *argv[])
       { "vfat",     no_argument,       NULL, 'v' | 0x100 },
       { "video",    required_argument, NULL, 'v' },
       { "watchdog", required_argument, NULL, 'w' },
-      { NULL }
+      { NULL,       no_argument,       NULL,  0  }
     };
 
   int c;
-  while ((c = getopt_long(argc, argv, "a:c:dD:E:g:hl:L:mp:P:r:s:t:u:v:Vw:", long_options, NULL)) != -1) {
+  while ((c = getopt_long(argc, argv, "a:c:dD:e:E:g:hi:l:L:mp:P:r:s:t:u:v:Vw:", long_options, NULL)) != -1) {
         switch (c) {
           case 'a': AudioCommand = optarg;
                     break;
+          case 'c' | 0x100:
+                    CacheDirectory = optarg;
+                    break;
           case 'c': ConfigDirectory = optarg;
                     break;
-          case 'd': DaemonMode = true; break;
+          case 'd': DaemonMode = true;
+                    break;
           case 'D': if (isnumber(optarg)) {
                        int n = atoi(optarg);
                        if (0 <= n && n < MAXDEVICES) {
@@ -265,39 +282,103 @@ int main(int argc, char *argv[])
                        }
                     fprintf(stderr, "vdr: invalid DVB device number: %s\n", optarg);
                     return 2;
+          case 'd' | 0x100: {
+                    char *s = optarg;
+                    if (*s != ',') {
+                       int n = strtol(s, &s, 10);
+                       if (n <= 0 || n >= PATH_MAX) { // PATH_MAX includes the terminating 0
+                          fprintf(stderr, "vdr: invalid directory path length: %s\n", optarg);
+                          return 2;
+                          }
+                       DirectoryPathMax = n;
+                       if (!*s)
+                          break;
+                       if (*s != ',') {
+                          fprintf(stderr, "vdr: invalid delimiter: %s\n", optarg);
+                          return 2;
+                          }
+                       }
+                    s++;
+                    if (!*s)
+                       break;
+                    if (*s != ',') {
+                       int n = strtol(s, &s, 10);
+                       if (n <= 0 || n > NAME_MAX) { // NAME_MAX excludes the terminating 0
+                          fprintf(stderr, "vdr: invalid directory name length: %s\n", optarg);
+                          return 2;
+                          }
+                       DirectoryNameMax = n;
+                       if (!*s)
+                          break;
+                       if (*s != ',') {
+                          fprintf(stderr, "vdr: invalid delimiter: %s\n", optarg);
+                          return 2;
+                          }
+                       }
+                    s++;
+                    if (!*s)
+                       break;
+                    int n = strtol(s, &s, 10);
+                    if (n != 0 && n != 1) {
+                       fprintf(stderr, "vdr: invalid directory encoding: %s\n", optarg);
+                       return 2;
+                       }
+                    DirectoryEncoding = n;
+                    if (*s) {
+                       fprintf(stderr, "vdr: unexpected data: %s\n", optarg);
+                       return 2;
+                       }
+                    }
                     break;
+          case 'e' | 0x100:
+                    return CutRecording(optarg) ? 0 : 2;
           case 'E': EpgDataFileName = (*optarg != '-' ? optarg : NULL);
                     break;
+          case 'f' | 0x100:
+                    Setup.MaxVideoFileSize = StrToNum(optarg) / MEGABYTE(1);
+                    if (Setup.MaxVideoFileSize < MINVIDEOFILESIZE)
+                       Setup.MaxVideoFileSize = MINVIDEOFILESIZE;
+                    if (Setup.MaxVideoFileSize > MAXVIDEOFILESIZETS)
+                       Setup.MaxVideoFileSize = MAXVIDEOFILESIZETS;
+                    break;
+          case 'g' | 0x100:
+                    return GenerateIndex(optarg) ? 0 : 2;
           case 'g': cSVDRP::SetGrabImageDir(*optarg != '-' ? optarg : NULL);
                     break;
           case 'h': DisplayHelp = true;
                     break;
+          case 'i': if (isnumber(optarg)) {
+                       InstanceId = atoi(optarg);
+                       if (InstanceId >= 0)
+                          break;
+                       }
+                    fprintf(stderr, "vdr: invalid instance id: %s\n", optarg);
+                    return 2;
           case 'l': {
-                      char *p = strchr(optarg, '.');
-                      if (p)
-                         *p = 0;
-                      if (isnumber(optarg)) {
-                         int l = atoi(optarg);
-                         if (0 <= l && l <= 3) {
-                            SysLogLevel = l;
-                            if (!p)
-                               break;
-                            if (isnumber(p + 1)) {
-                               int l = atoi(p + 1);
-                               if (0 <= l && l <= 7) {
-                                  int targets[] = { LOG_LOCAL0, LOG_LOCAL1, LOG_LOCAL2, LOG_LOCAL3, LOG_LOCAL4, LOG_LOCAL5, LOG_LOCAL6, LOG_LOCAL7 };
-                                  SysLogTarget = targets[l];
-                                  break;
-                                  }
-                               }
-                            }
-                         }
+                    char *p = strchr(optarg, '.');
+                    if (p)
+                       *p = 0;
+                    if (isnumber(optarg)) {
+                       int l = atoi(optarg);
+                       if (0 <= l && l <= 3) {
+                          SysLogLevel = l;
+                          if (!p)
+                             break;
+                          if (isnumber(p + 1)) {
+                             int l = atoi(p + 1);
+                             if (0 <= l && l <= 7) {
+                                int targets[] = { LOG_LOCAL0, LOG_LOCAL1, LOG_LOCAL2, LOG_LOCAL3, LOG_LOCAL4, LOG_LOCAL5, LOG_LOCAL6, LOG_LOCAL7 };
+                                SysLogTarget = targets[l];
+                                break;
+                                }
+                             }
+                          }
+                       }
                     if (p)
                        *p = '.';
                     fprintf(stderr, "vdr: invalid log level: %s\n", optarg);
                     return 2;
                     }
-                    break;
           case 'L': if (access(optarg, R_OK | X_OK) == 0)
                        PluginManager.SetDirectory(optarg);
                     else {
@@ -310,7 +391,7 @@ int main(int argc, char *argv[])
                     break;
           case 'l' | 0x200:
                     if (access(optarg, R_OK | X_OK) == 0)
-                       LocaleDir = optarg;
+                       LocaleDirectory = optarg;
                     else {
                        fprintf(stderr, "vdr: can't access locale directory: %s\n", optarg);
                        return 2;
@@ -330,12 +411,15 @@ int main(int argc, char *argv[])
                     break;
           case 'P': PluginManager.AddPlugin(optarg);
                     break;
-          case 'r' | 0x100:
-                    RcuDevice = optarg ? : RCU_DEVICE;
-                    break;
           case 'r': cRecordingUserCommand::SetCommand(optarg);
                     break;
+          case 'r' | 0x100:
+                    ResourceDirectory = optarg;
+                    break;
           case 's': ShutdownHandler.SetShutdownCommand(optarg);
+                    break;
+          case 's' | 0x100:
+                    Setup.SplitEditedFiles = 1;
                     break;
           case 't': Terminal = optarg;
                     if (access(Terminal, R_OK | W_OK) < 0) {
@@ -352,7 +436,9 @@ int main(int argc, char *argv[])
           case 'V': DisplayVersion = true;
                     break;
           case 'v' | 0x100:
-                    VfatFileSystem = true;
+                    DirectoryPathMax = 250;
+                    DirectoryNameMax = 40;
+                    DirectoryEncoding = true;
                     break;
           case 'v': VideoDirectory = optarg;
                     while (optarg && *optarg && optarg[strlen(optarg) - 1] == '/')
@@ -367,7 +453,6 @@ int main(int argc, char *argv[])
                        }
                     fprintf(stderr, "vdr: invalid watchdog timeout: %s\n", optarg);
                     return 2;
-                    break;
           default:  return 2;
           }
         }
@@ -383,7 +468,7 @@ int main(int argc, char *argv[])
            return 2;
         if (!SetKeepCaps(false))
            return 2;
-        if (!SetCapSysTime())
+        if (!DropCaps())
            return 2;
         }
      }
@@ -397,21 +482,36 @@ int main(int argc, char *argv[])
      if (DisplayHelp) {
         printf("Usage: vdr [OPTIONS]\n\n"          // for easier orientation, this is column 80|
                "  -a CMD,   --audio=CMD    send Dolby Digital audio to stdin of command CMD\n"
+               "            --cachedir=DIR save cache files in DIR (default: %s)\n"
                "  -c DIR,   --config=DIR   read config files from DIR (default: %s)\n"
                "  -d,       --daemon       run in daemon mode\n"
                "  -D NUM,   --device=NUM   use only the given DVB device (NUM = 0, 1, 2...)\n"
                "                           there may be several -D options (default: all DVB\n"
                "                           devices will be used)\n"
+               "            --dirnames=PATH[,NAME[,ENC]]\n"
+               "                           set the maximum directory path length to PATH\n"
+               "                           (default: %d); if NAME is also given, it defines\n"
+               "                           the maximum directory name length (default: %d);\n"
+               "                           the optional ENC can be 0 or 1, and controls whether\n"
+               "                           special characters in directory names are encoded as\n"
+               "                           hex values (default: 0); if PATH or NAME are left\n"
+               "                           empty (as in \",,1\" to only set ENC), the defaults\n"
+               "                           apply\n"
+               "            --edit=REC     cut recording REC and exit\n"
                "  -E FILE,  --epgfile=FILE write the EPG data into the given FILE (default is\n"
-               "                           '%s' in the video directory)\n"
+               "                           '%s' in the cache directory)\n"
                "                           '-E-' disables this\n"
                "                           if FILE is a directory, the default EPG file will be\n"
                "                           created in that directory\n"
+               "            --filesize=SIZE limit video files to SIZE bytes (default is %dM)\n"
+               "                           only useful in conjunction with --edit\n"
+               "            --genindex=REC generate index for recording REC and exit\n"
                "  -g DIR,   --grab=DIR     write images from the SVDRP command GRAB into the\n"
                "                           given DIR; DIR must be the full path name of an\n"
                "                           existing directory, without any \"..\", double '/'\n"
                "                           or symlinks (default: none, same as -g-)\n"
                "  -h,       --help         print this help and exit\n"
+               "  -i ID,    --instance=ID  use ID as the id of this VDR instance (default: 0)\n"
                "  -l LEVEL, --log=LEVEL    set log level (default: 3)\n"
                "                           0 = no logging, 1 = errors only,\n"
                "                           2 = errors and info, 3 = errors, info and debug\n"
@@ -427,29 +527,35 @@ int main(int argc, char *argv[])
                "  -p PORT,  --port=PORT    use PORT for SVDRP (default: %d)\n"
                "                           0 turns off SVDRP\n"
                "  -P OPT,   --plugin=OPT   load a plugin defined by the given options\n"
-               "            --rcu[=PATH]   use a remote control device, attached to PATH\n"
-               "                           (default: %s)\n"
-               "  -r CMD,   --record=CMD   call CMD before and after a recording\n"
+               "  -r CMD,   --record=CMD   call CMD before and after a recording, and after\n"
+               "                           a recording has been edited or deleted\n"
+               "            --resdir=DIR   read resource files from DIR (default: %s)\n"
                "  -s CMD,   --shutdown=CMD call CMD to shutdown the computer\n"
+               "            --split        split edited files at the editing marks (only\n"
+               "                           useful in conjunction with --edit)\n"
                "  -t TTY,   --terminal=TTY controlling tty\n"
                "  -u USER,  --user=USER    run as user USER; only applicable if started as\n"
                "                           root\n"
                "            --userdump     allow coredumps if -u is given (debugging)\n"
                "  -v DIR,   --video=DIR    use DIR as video directory (default: %s)\n"
                "  -V,       --version      print version information and exit\n"
-               "            --vfat         encode special characters in recording names to\n"
-               "                           avoid problems with VFAT file systems\n"
+               "            --vfat         for backwards compatibility (same as\n"
+               "                           --dirnames=250,40,1\n"
                "  -w SEC,   --watchdog=SEC activate the watchdog timer with a timeout of SEC\n"
                "                           seconds (default: %d); '0' disables the watchdog\n"
                "\n",
+               DEFAULTCACHEDIR,
                DEFAULTCONFDIR,
+               PATH_MAX - 1,
+               NAME_MAX,
                DEFAULTEPGDATAFILENAME,
+               MAXVIDEOFILESIZEDEFAULT,
                DEFAULTPLUGINDIR,
                LIRC_DEVICE,
-               LOCDIR,
+               DEFAULTLOCDIR,
                DEFAULTSVDRPPORT,
-               RCU_DEVICE,
-               VideoDirectory,
+               DEFAULTRESDIR,
+               DEFAULTVIDEODIR,
                DEFAULTWATCHDOG
                );
         }
@@ -502,6 +608,7 @@ int main(int argc, char *argv[])
      stdout = freopen(Terminal, "w", stdout);
      stderr = freopen(Terminal, "w", stderr);
      HasStdin = true;
+     tcgetattr(STDIN_FILENO, &savedTm);
      }
 
   isyslog("VDR version %s started", VDRVERSION);
@@ -532,10 +639,11 @@ int main(int argc, char *argv[])
 
   // Initialize internationalization:
 
-  I18nInitialize(LocaleDir);
+  I18nInitialize(LocaleDirectory);
 
   // Main program loop variables - need to be here to have them initialized before any EXIT():
 
+  cEpgDataReader EpgDataReader;
   cOsdObject *Menu = NULL;
   int LastChannel = 0;
   int LastTimerChannel = -1;
@@ -546,7 +654,6 @@ int main(int argc, char *argv[])
   int MaxLatencyTime = 0;
   bool InhibitEpgScan = false;
   bool IsInfoMenu = false;
-  bool CheckHasProgramme = false;
   cSkin *CurrentSkin = NULL;
 
   // Load plugins:
@@ -554,26 +661,34 @@ int main(int argc, char *argv[])
   if (!PluginManager.LoadPlugins(true))
      EXIT(2);
 
-  // Configuration data:
+  // Directories:
 
+  SetVideoDirectory(VideoDirectory);
   if (!ConfigDirectory)
      ConfigDirectory = DEFAULTCONFDIR;
-
   cPlugin::SetConfigDirectory(ConfigDirectory);
+  if (!CacheDirectory)
+     CacheDirectory = DEFAULTCACHEDIR;
+  cPlugin::SetCacheDirectory(CacheDirectory);
+  if (!ResourceDirectory)
+     ResourceDirectory = DEFAULTRESDIR;
+  cPlugin::SetResourceDirectory(ResourceDirectory);
   cThemes::SetThemesDirectory(AddDirectory(ConfigDirectory, "themes"));
 
+  // Configuration data:
+
   Setup.Load(AddDirectory(ConfigDirectory, "setup.conf"));
-  if (!(Sources.Load(AddDirectory(ConfigDirectory, "sources.conf"), true, true) &&
-        Diseqcs.Load(AddDirectory(ConfigDirectory, "diseqc.conf"), true, Setup.DiSEqC) &&
-        Channels.Load(AddDirectory(ConfigDirectory, "channels.conf"), false, true) &&
-        Timers.Load(AddDirectory(ConfigDirectory, "timers.conf")) &&
-        Commands.Load(AddDirectory(ConfigDirectory, "commands.conf"), true) &&
-        RecordingCommands.Load(AddDirectory(ConfigDirectory, "reccmds.conf"), true) &&
-        SVDRPhosts.Load(AddDirectory(ConfigDirectory, "svdrphosts.conf"), true) &&
-        Keys.Load(AddDirectory(ConfigDirectory, "remote.conf")) &&
-        KeyMacros.Load(AddDirectory(ConfigDirectory, "keymacros.conf"), true)
-        ))
-     EXIT(2);
+  Sources.Load(AddDirectory(ConfigDirectory, "sources.conf"), true, true);
+  Diseqcs.Load(AddDirectory(ConfigDirectory, "diseqc.conf"), true, Setup.DiSEqC);
+  Scrs.Load(AddDirectory(ConfigDirectory, "scr.conf"), true);
+  Channels.Load(AddDirectory(ConfigDirectory, "channels.conf"), false, true);
+  Timers.Load(AddDirectory(ConfigDirectory, "timers.conf"));
+  Commands.Load(AddDirectory(ConfigDirectory, "commands.conf"));
+  RecordingCommands.Load(AddDirectory(ConfigDirectory, "reccmds.conf"));
+  SVDRPhosts.Load(AddDirectory(ConfigDirectory, "svdrphosts.conf"), true);
+  Keys.Load(AddDirectory(ConfigDirectory, "remote.conf"));
+  KeyMacros.Load(AddDirectory(ConfigDirectory, "keymacros.conf"), true);
+  Folders.Load(AddDirectory(ConfigDirectory, "folders.conf"));
 
   if (!*cFont::GetFontFileName(Setup.FontOsd)) {
      const char *msg = "no fonts available - OSD will not show any text!";
@@ -595,17 +710,18 @@ int main(int argc, char *argv[])
         EpgDataFileName = DEFAULTEPGDATAFILENAME;
         }
      else if (*EpgDataFileName != '/' && *EpgDataFileName != '.')
-        EpgDirectory = VideoDirectory;
+        EpgDirectory = CacheDirectory;
      if (EpgDirectory)
         cSchedules::SetEpgDataFileName(AddDirectory(EpgDirectory, EpgDataFileName));
      else
         cSchedules::SetEpgDataFileName(EpgDataFileName);
-     cSchedules::Read();
+     EpgDataReader.Start();
      }
 
   // DVB interfaces:
 
   cDvbDevice::Initialize();
+  cDvbDevice::BondDevices(Setup.DeviceBondings);
 
   // Initialize plugins:
 
@@ -653,8 +769,9 @@ int main(int argc, char *argv[])
 
   // Default skins:
 
-  new cSkinClassic;
+  new cSkinLCARS;
   new cSkinSTTNG;
+  new cSkinClassic;
   Skins.SetCurrent(Setup.OSDSkin);
   cThemes::Load(Skins.Current()->Name(), Setup.OSDTheme, Skins.Current()->Theme());
   CurrentSkin = Skins.Current();
@@ -672,8 +789,6 @@ int main(int argc, char *argv[])
      }
 
   // Remote Controls:
-  if (RcuDevice)
-     new cRcuRemote(RcuDevice);
   if (LircDevice)
      new cLircRemote(LircDevice);
   if (!DaemonMode && HasStdin && UseKbd)
@@ -689,8 +804,14 @@ int main(int argc, char *argv[])
 
   if (!cDevice::WaitForAllDevicesReady(DEVICEREADYTIMEOUT))
      dsyslog("not all devices ready after %d seconds", DEVICEREADYTIMEOUT);
-  if (Setup.InitialChannel > 0)
-     Setup.CurrentChannel = Setup.InitialChannel;
+  if (*Setup.InitialChannel) {
+     if (isnumber(Setup.InitialChannel)) { // for compatibility with old setup.conf files
+        if (cChannel *Channel = Channels.GetByNumber(atoi(Setup.InitialChannel)))
+           Setup.InitialChannel = Channel->GetChannelID().ToString();
+        }
+     if (cChannel *Channel = Channels.GetByChannelID(tChannelID::FromString(Setup.InitialChannel)))
+        Setup.CurrentChannel = Channel->Number();
+     }
   if (Setup.InitialVolume >= 0)
      Setup.CurrentVolume = Setup.InitialVolume;
   Channels.SwitchTo(Setup.CurrentChannel);
@@ -729,20 +850,35 @@ int main(int argc, char *argv[])
         time_t Now = time(NULL);
 
         // Make sure we have a visible programme in case device usage has changed:
-        if (!EITScanner.Active() && cDevice::PrimaryDevice()->HasDecoder() && !cDevice::PrimaryDevice()->HasProgramme()) {
+        if (!EITScanner.Active() && cDevice::PrimaryDevice()->HasDecoder()) {
            static time_t lastTime = 0;
-           if ((!Menu || CheckHasProgramme) && Now - lastTime > MINCHANNELWAIT) { // !Menu to avoid interfering with the CAM if a CAM menu is open
-              cChannel *Channel = Channels.GetByNumber(cDevice::CurrentChannel());
-              if (Channel && (Channel->Vpid() || Channel->Apid(0))) {
-                 if (!Channels.SwitchTo(cDevice::CurrentChannel()) // try to switch to the original channel...
-                     && !(LastTimerChannel > 0 && Channels.SwitchTo(LastTimerChannel))) // ...or the one used by the last timer...
-                    ;
+           if (!cDevice::PrimaryDevice()->HasProgramme()) {
+              if (!CamMenuActive() && Now - lastTime > MINCHANNELWAIT) { // !CamMenuActive() to avoid interfering with the CAM if a CAM menu is open
+                 cChannel *Channel = Channels.GetByNumber(cDevice::CurrentChannel());
+                 if (Channel && (Channel->Vpid() || Channel->Apid(0) || Channel->Dpid(0))) {
+                    if (cDevice::GetDeviceForTransponder(Channel, LIVEPRIORITY) && Channels.SwitchTo(Channel->Number())) // try to switch to the original channel...
+                       ;
+                    else if (LastTimerChannel > 0) {
+                       Channel = Channels.GetByNumber(LastTimerChannel);
+                       if (Channel && cDevice::GetDeviceForTransponder(Channel, LIVEPRIORITY) && Channels.SwitchTo(LastTimerChannel)) // ...or the one used by the last timer
+                          ;
+                       }
+                    }
+                 lastTime = Now; // don't do this too often
+                 LastTimerChannel = -1;
                  }
-              lastTime = Now; // don't do this too often
-              LastTimerChannel = -1;
-              CheckHasProgramme = false;
               }
+           else
+              lastTime = 0; // makes sure we immediately try again next time
            }
+        // Update the OSD size:
+        {
+          static time_t lastOsdSizeUpdate = 0;
+          if (Now != lastOsdSizeUpdate) { // once per second
+             cOsdProvider::UpdateOsdSize();
+             lastOsdSizeUpdate = Now;
+             }
+        }
         // Restart the Watchdog timer:
         if (WatchdogTimeout > 0) {
            int LatencyTime = WatchdogTimeout - alarm(WatchdogTimeout);
@@ -813,7 +949,6 @@ int main(int argc, char *argv[])
            static time_t LastTimerCheck = 0;
            if (Now - LastTimerCheck > TIMERCHECKDELTA) { // don't do this too often
               InhibitEpgScan = false;
-              static time_t DeviceUsed[MAXDEVICES] = { 0 };
               for (cTimer *Timer = Timers.First(); Timer; Timer = Timers.Next(Timer)) {
                   bool InVpsMargin = false;
                   bool NeedsTransponder = false;
@@ -824,7 +959,7 @@ int main(int argc, char *argv[])
                            Timer->SetInVpsMargin(InVpsMargin);
                            }
                         else if (Timer->Event()) {
-                           InVpsMargin = Timer->Event()->StartTime() <= Now && Timer->Event()->RunningStatus() == SI::RunningStatusUndefined;
+                           InVpsMargin = Timer->Event()->StartTime() <= Now && Now < Timer->Event()->EndTime();
                            NeedsTransponder = Timer->Event()->StartTime() - Now < VPSLOOKAHEADTIME * 3600 && !Timer->Event()->SeenWithin(VPSUPTODATETIME);
                            }
                         else {
@@ -843,47 +978,21 @@ int main(int argc, char *argv[])
                      }
                   if (NeedsTransponder || InVpsMargin) {
                      // Find a device that provides the required transponder:
-                     cDevice *Device = NULL;
-                     bool DeviceAvailable = false;
-                     for (int i = 0; i < cDevice::NumDevices(); i++) {
-                         cDevice *d = cDevice::GetDevice(i);
-                         if (d && d->ProvidesTransponder(Timer->Channel())) {
-                            if (d->IsTunedToTransponder(Timer->Channel())) {
-                               // if any device is tuned to the transponder, we're done
-                               Device = d;
-                               break;
-                               }
-                            bool timeout = Now - DeviceUsed[d->DeviceNumber()] > TIMERDEVICETIMEOUT; // only check other devices if they have been left alone for a while
-                            if (d->MaySwitchTransponder()) {
-                               DeviceAvailable = true; // avoids using the actual device below
-                               if (timeout)
-                                  Device = d; // only check other devices if they have been left alone for a while
-                               }
-                            else if (timeout && !Device && InVpsMargin && !d->Receiving() && d->ProvidesTransponderExclusively(Timer->Channel()))
-                               Device = d; // use this one only if no other with less impact can be found
-                            }
-                         }
-                     if (!Device && InVpsMargin && !DeviceAvailable) {
-                        cDevice *d = cDevice::ActualDevice();
-                        if (!d->Receiving() && d->ProvidesTransponder(Timer->Channel()) && Now - DeviceUsed[d->DeviceNumber()] > TIMERDEVICETIMEOUT)
-                           Device = d; // use the actual device as a last resort
-                        }
+                     cDevice *Device = cDevice::GetDeviceForTransponder(Timer->Channel(), MINPRIORITY);
+                     if (!Device && InVpsMargin)
+                        Device = cDevice::GetDeviceForTransponder(Timer->Channel(), LIVEPRIORITY);
                      // Switch the device to the transponder:
                      if (Device) {
+                        bool HadProgramme = cDevice::PrimaryDevice()->HasProgramme();
                         if (!Device->IsTunedToTransponder(Timer->Channel())) {
                            if (Device == cDevice::ActualDevice() && !Device->IsPrimaryDevice())
                               cDevice::PrimaryDevice()->StopReplay(); // stop transfer mode
                            dsyslog("switching device %d to channel %d", Device->DeviceNumber() + 1, Timer->Channel()->Number());
-                           Device->SwitchChannel(Timer->Channel(), false);
-                           DeviceUsed[Device->DeviceNumber()] = Now;
+                           if (Device->SwitchChannel(Timer->Channel(), false))
+                              Device->SetOccupied(TIMERDEVICETIMEOUT);
                            }
-                        if (cDevice::PrimaryDevice()->HasDecoder() && !cDevice::PrimaryDevice()->HasProgramme()) {
-                           // the previous SwitchChannel() has switched away the current live channel
-                           cDevice::SetAvoidDevice(Device);
-                           if (!Channels.SwitchTo(cDevice::CurrentChannel())) // try to switch to the original channel on a different device...
-                              Channels.SwitchTo(Timer->Channel()->Number()); // ...or avoid toggling between old channel and black screen
-                           Skins.Message(mtInfo, tr("Upcoming recording!"));
-                           }
+                        if (cDevice::PrimaryDevice()->HasDecoder() && HadProgramme && !cDevice::PrimaryDevice()->HasProgramme())
+                           Skins.QueueMessage(mtInfo, tr("Upcoming recording!")); // the previous SwitchChannel() has switched away the current live channel
                         }
                      }
                   }
@@ -914,7 +1023,7 @@ int main(int argc, char *argv[])
            ShutdownHandler.SetUserInactiveTimeout();
            }
         // Keys that must work independent of any interactive mode:
-        switch (key) {
+        switch (int(key)) {
           // Menu control:
           case kMenu: {
                key = kNone; // nobody else needs to see this key
@@ -958,18 +1067,18 @@ int main(int argc, char *argv[])
                break;
           // Direct main menu functions:
           #define DirectMainFunction(function)\
-            DELETE_MENU;\
+            { DELETE_MENU;\
             if (cControl::Control())\
                cControl::Control()->Hide();\
             Menu = new cMenuMain(function);\
-            key = kNone; // nobody else needs to see this key
+            key = kNone; } // nobody else needs to see this key
           case kSchedule:   DirectMainFunction(osSchedule); break;
           case kChannels:   DirectMainFunction(osChannels); break;
           case kTimers:     DirectMainFunction(osTimers); break;
           case kRecordings: DirectMainFunction(osRecordings); break;
           case kSetup:      DirectMainFunction(osSetup); break;
           case kCommands:   DirectMainFunction(osCommands); break;
-          case kUser1 ... kUser9: cRemote::PutMacro(key); key = kNone; break;
+          case kUser0 ... kUser9: cRemote::PutMacro(key); key = kNone; break;
           case k_Plugin: {
                const char *PluginName = cRemote::GetPlugin();
                if (PluginName) {
@@ -1047,11 +1156,16 @@ int main(int argc, char *argv[])
                key = kNone;
                break;
           // Pausing live video:
+          case kPlayPause:
           case kPause:
                if (!cControl::Control()) {
                   DELETE_MENU;
-                  if (!cRecordControls::PauseLiveVideo())
-                     Skins.Message(mtError, tr("No free DVB device to record!"));
+                  if (Setup.PauseKeyHandling) {
+                     if (Setup.PauseKeyHandling > 1 || Interface->Confirm(tr("Pause live video?"))) {
+                        if (!cRecordControls::PauseLiveVideo())
+                           Skins.QueueMessage(mtError, tr("No free DVB device to record!"));
+                        }
+                     }
                   key = kNone; // nobody else needs to see this key
                   }
                break;
@@ -1059,7 +1173,7 @@ int main(int argc, char *argv[])
           case kRecord:
                if (!cControl::Control()) {
                   if (cRecordControls::Start())
-                     Skins.Message(mtInfo, tr("Recording started"));
+                     Skins.QueueMessage(mtInfo, tr("Recording started"));
                   key = kNone; // nobody else needs to see this key
                   }
                break;
@@ -1110,19 +1224,17 @@ int main(int argc, char *argv[])
               }
            switch (state) {
              case osPause:  DELETE_MENU;
-                            cControl::Shutdown(); // just in case
                             if (!cRecordControls::PauseLiveVideo())
-                               Skins.Message(mtError, tr("No free DVB device to record!"));
+                               Skins.QueueMessage(mtError, tr("No free DVB device to record!"));
                             break;
              case osRecord: DELETE_MENU;
                             if (cRecordControls::Start())
-                               Skins.Message(mtInfo, tr("Recording started"));
+                               Skins.QueueMessage(mtInfo, tr("Recording started"));
                             break;
              case osRecordings:
                             DELETE_MENU;
                             cControl::Shutdown();
                             Menu = new cMenuMain(osRecordings);
-                            CheckHasProgramme = true; // to have live tv after stopping replay with 'Back'
                             break;
              case osReplay: DELETE_MENU;
                             cControl::Shutdown();
@@ -1135,7 +1247,7 @@ int main(int argc, char *argv[])
              case osSwitchDvb:
                             DELETE_MENU;
                             cControl::Shutdown();
-                            Skins.Message(mtInfo, tr("Switching primary DVB..."));
+                            Skins.QueueMessage(mtInfo, tr("Switching primary DVB..."));
                             cDevice::SetPrimaryDevice(Setup.PrimaryDVB);
                             break;
              case osPlugin: DELETE_MENU;
@@ -1158,7 +1270,7 @@ int main(int argc, char *argv[])
               cRemote::PutMacro(key);
               key = kNone;
               }
-           switch (key) {
+           switch (int(key)) {
              // Toggle channels:
              case kChanPrev:
              case k0: {
@@ -1194,6 +1306,8 @@ int main(int argc, char *argv[])
                      cControl::Shutdown();
                      cControl::Launch(new cReplayControl);
                      }
+                  else
+                     DirectMainFunction(osRecordings); // no last viewed recording, so enter the Recordings menu
                   break;
              default:    break;
              }
@@ -1251,6 +1365,8 @@ int main(int argc, char *argv[])
            PluginManager.Housekeeping();
            }
 
+        ReportEpgBugFixStats();
+
         // Main thread hooks of plugins:
         PluginManager.MainThreadHook();
         }
@@ -1277,20 +1393,24 @@ Exit:
   Remotes.Clear();
   Audios.Clear();
   Skins.Clear();
+  SourceParams.Clear();
   if (ShutdownHandler.GetExitCode() != 2) {
      Setup.CurrentChannel = cDevice::CurrentChannel();
      Setup.CurrentVolume  = cDevice::CurrentVolume();
      Setup.Save();
      }
   cDevice::Shutdown();
+  EpgHandlers.Clear();
   PluginManager.Shutdown(true);
   cSchedules::Cleanup(true);
-  ReportEpgBugFixStats();
+  ReportEpgBugFixStats(true);
   if (WatchdogTimeout > 0)
      dsyslog("max. latency time %d seconds", MaxLatencyTime);
-  isyslog("exiting, exit code %d", ShutdownHandler.GetExitCode());
+  if (LastSignal)
+     isyslog("caught signal %d", LastSignal);
   if (ShutdownHandler.EmergencyExitRequested())
      esyslog("emergency exit!");
+  isyslog("exiting, exit code %d", ShutdownHandler.GetExitCode());
   if (SysLogLevel > 0)
      closelog();
   if (HasStdin)

@@ -79,3 +79,42 @@ VDR Plugin 'skincurses' Revision History
 2008-03-14: Version 0.1.7
 
 - Added Russian translations (thanks to Alexander Gross).
+
+2010-01-03: Version 0.1.8
+
+- Displaying "genre" in event descriptions.
+- Displaying "parental rating" in event descriptions.
+
+2010-02-28: Version 0.1.9
+
+- Added Lithuanian language translations (thanks to Valdemaras Pipiras).
+
+2011-05-15: Version 0.1.10
+
+- Avoiding a gcc 4.6 compiler error (thanks to Tobias Grimm).
+
+2012-03-11: Version 0.1.11
+
+- Adapted menu column widths of 'skincurses' to the wider HD OSD sizes.
+
+2012-04-23: Version 0.1.12
+
+- Now displaying disk usage in the title of the main and "Recordings" menu,
+  which is no longer done by the VDR core.
+
+2012-12-27: Version 0.1.13
+
+- Adapted Makefile to changes introduced in recent VDR versions.
+
+2013-01-12: Version 0.1.14
+
+- Adapted Makefile to changes introduced in recent VDR versions.
+
+2013-03-03: Version 0.1.15
+
+- The "Recording info" page now displays the name of the channel (if available)
+  from which this recording was taken.
+
+2013-03-31: Version 2.0.0
+
+- Official release.

@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: plugin.c 1.28 2008/02/17 13:32:12 kls Exp $
+ * $Id: plugin.c 2.4 2012/09/01 13:10:27 kls Exp $
  */
 
 #include "plugin.h"
@@ -25,7 +25,9 @@
 
 // --- cPlugin ---------------------------------------------------------------
 
-char *cPlugin::configDirectory = NULL;
+cString cPlugin::configDirectory;
+cString cPlugin::cacheDirectory;
+cString cPlugin::resourceDirectory;
 
 cPlugin::cPlugin(void)
 {
@@ -130,14 +132,9 @@ cString cPlugin::SVDRPCommand(const char *Command, const char *Option, int &Repl
   return NULL;
 }
 
-void cPlugin::RegisterI18n(const void *)
-{
-  dsyslog("plugin '%s' called obsolete function RegisterI18n()", Name());
-}
-
 void cPlugin::SetConfigDirectory(const char *Dir)
 {
-  configDirectory = strdup(Dir);
+  configDirectory = Dir;
 }
 
 const char *cPlugin::ConfigDirectory(const char *PluginName)
@@ -145,7 +142,35 @@ const char *cPlugin::ConfigDirectory(const char *PluginName)
   static cString buffer;
   if (!cThread::IsMainThread())
      esyslog("ERROR: plugin '%s' called cPlugin::ConfigDirectory(), which is not thread safe!", PluginName ? PluginName : "<no name given>");
-  buffer = cString::sprintf("%s/plugins%s%s", configDirectory, PluginName ? "/" : "", PluginName ? PluginName : "");
+  buffer = cString::sprintf("%s/plugins%s%s", *configDirectory, PluginName ? "/" : "", PluginName ? PluginName : "");
+  return MakeDirs(buffer, true) ? *buffer : NULL;
+}
+
+void cPlugin::SetCacheDirectory(const char *Dir)
+{
+  cacheDirectory = Dir;
+}
+
+const char *cPlugin::CacheDirectory(const char *PluginName)
+{
+  static cString buffer;
+  if (!cThread::IsMainThread())
+     esyslog("ERROR: plugin '%s' called cPlugin::CacheDirectory(), which is not thread safe!", PluginName ? PluginName : "<no name given>");
+  buffer = cString::sprintf("%s/plugins%s%s", *cacheDirectory, PluginName ? "/" : "", PluginName ? PluginName : "");
+  return MakeDirs(buffer, true) ? *buffer : NULL;
+}
+
+void cPlugin::SetResourceDirectory(const char *Dir)
+{
+  resourceDirectory = Dir;
+}
+
+const char *cPlugin::ResourceDirectory(const char *PluginName)
+{
+  static cString buffer;
+  if (!cThread::IsMainThread())
+     esyslog("ERROR: plugin '%s' called cPlugin::ResourceDirectory(), which is not thread safe!", PluginName ? PluginName : "<no name given>");
+  buffer = cString::sprintf("%s/plugins%s%s", *resourceDirectory, PluginName ? "/" : "", PluginName ? PluginName : "");
   return MakeDirs(buffer, true) ? *buffer : NULL;
 }
 
@@ -171,15 +196,15 @@ cDll::~cDll()
 static char *SkipQuote(char *s)
 {
   char c = *s;
-  strcpy(s, s + 1);
+  memmove(s, s + 1, strlen(s));
   while (*s && *s != c) {
         if (*s == '\\')
-           strcpy(s, s + 1);
+           memmove(s, s + 1, strlen(s));
         if (*s)
            s++;
         }
   if (*s) {
-     strcpy(s, s + 1);
+     memmove(s, s + 1, strlen(s));
      return s;
      }
   esyslog("ERROR: missing closing %c", c);
@@ -214,7 +239,7 @@ bool cDll::Load(bool Log)
               if (!q)
                  q = p;
               switch (*p) {
-                case '\\': strcpy(p, p + 1);
+                case '\\': memmove(p, p + 1, strlen(p));
                            if (*p)
                               p++;
                            else {

@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: ringbuffer.h 1.18 2007/11/17 13:49:34 kls Exp $
+ * $Id: ringbuffer.h 2.5 2013/02/16 15:20:37 kls Exp $
  */
 
 #ifndef __RINGBUFFER_H
@@ -22,6 +22,7 @@ private:
   time_t lastOverflowReport;
   int overflowCount;
   int overflowBytes;
+  cIoThrottle *ioThrottle;
 protected:
   tThreadId getThreadTid;
   int maxFill;//XXX
@@ -40,6 +41,7 @@ public:
   cRingBuffer(int Size, bool Statistics = false);
   virtual ~cRingBuffer();
   void SetTimeouts(int PutTimeout, int GetTimeout);
+  void SetIoThrottle(void);
   void ReportOverflow(int Bytes);
   };
 
@@ -82,15 +84,17 @@ public:
     ///< Reads at most Max bytes from FileHandle and stores them in the
     ///< ring buffer. If Max is 0, reads as many bytes as possible.
     ///< Only one actual read() call is done.
-    ///< \return Returns the number of bytes actually read and stored, or
+    ///< Returns the number of bytes actually read and stored, or
     ///< an error value from the actual read() call.
+  int Read(cUnbufferedFile *File, int Max = 0);
+    ///< Like Read(int FileHandle, int Max), but reads from a cUnbufferedFile).
   int Put(const uchar *Data, int Count);
     ///< Puts at most Count bytes of Data into the ring buffer.
-    ///< \return Returns the number of bytes actually stored.
+    ///< Returns the number of bytes actually stored.
   uchar *Get(int &Count);
     ///< Gets data from the ring buffer.
     ///< The data will remain in the buffer until a call to Del() deletes it.
-    ///< \return Returns a pointer to the data, and stores the number of bytes
+    ///< Returns a pointer to the data, and stores the number of bytes
     ///< actually available in Count. If the returned pointer is NULL, Count has no meaning.
   void Del(int Count);
     ///< Deletes at most Count bytes from the ring buffer.
@@ -108,8 +112,9 @@ private:
   int count;
   eFrameType type;
   int index;
+  uint32_t pts;
 public:
-  cFrame(const uchar *Data, int Count, eFrameType = ftUnknown, int Index = -1);
+  cFrame(const uchar *Data, int Count, eFrameType = ftUnknown, int Index = -1, uint32_t Pts = 0);
     ///< Creates a new cFrame object.
     ///< If Count is negative, the cFrame object will take ownership of the given
     ///< Data. Otherwise it will allocate Count bytes of memory and copy Data.
@@ -118,6 +123,7 @@ public:
   int Count(void) const { return count; }
   eFrameType Type(void) const { return type; }
   int Index(void) const { return index; }
+  uint32_t Pts(void) const { return pts; }
   };
 
 class cRingBufferFrame : public cRingBuffer {

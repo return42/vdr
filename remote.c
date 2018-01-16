@@ -4,11 +4,13 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: remote.c 1.59 2008/02/23 14:14:46 kls Exp $
+ * $Id: remote.c 2.8 2013/02/03 15:44:55 kls Exp $
  */
 
 #include "remote.h"
 #include <fcntl.h>
+#define __STDC_FORMAT_MACROS // Required for format specifiers
+#include <inttypes.h>
 #include <netinet/in.h>
 #include <string.h>
 #include <sys/types.h>
@@ -24,7 +26,7 @@
 eKeys cRemote::keys[MaxKeys];
 int cRemote::in = 0;
 int cRemote::out = 0;
-cTimeMs cRemote::repeatTimeout;
+cTimeMs cRemote::repeatTimeout(-1);
 cRemote *cRemote::learning = NULL;
 char *cRemote::unknownCode = NULL;
 cMutex cRemote::mutex;
@@ -42,6 +44,7 @@ cRemote::cRemote(const char *Name)
 
 cRemote::~cRemote()
 {
+  Remotes.Del(this, false);
   free(name);
 }
 
@@ -121,7 +124,7 @@ bool cRemote::PutMacro(eKeys Key)
 bool cRemote::Put(uint64_t Code, bool Repeat, bool Release)
 {
   char buffer[32];
-  snprintf(buffer, sizeof(buffer), "%016llX", Code);
+  snprintf(buffer, sizeof(buffer), "%016"PRIX64, Code);
   return Put(buffer, Repeat, Release);
 }
 
@@ -287,7 +290,17 @@ int cKbdRemote::MapCodeToFunc(uint64_t Code)
       if (p->code == Code)
          return p->func;
       }
-  return (Code <= 0xFF) ? Code : kfNone;
+  if (Code <= 0xFF)
+     return Code;
+  return kfNone;
+}
+
+void cKbdRemote::PutKey(uint64_t Code, bool Repeat, bool Release)
+{
+  if (rawMode || !Put(Code, Repeat, Release)) {
+     if (int func = MapCodeToFunc(Code))
+        Put(KBDKEY(func), Repeat, Release);
+     }
 }
 
 int cKbdRemote::ReadKey(void)
@@ -312,36 +325,38 @@ uint64_t cKbdRemote::ReadKeySequence(void)
   if ((key1 = ReadKey()) >= 0) {
      k = key1;
      if (key1 == 0x1B) {
-         // Start of escape sequence
-         if ((key1 = ReadKey()) >= 0) {
-            k <<= 8;
-            k |= key1 & 0xFF;
-            switch (key1) {
-              case 0x4F: // 3-byte sequence
-                   if ((key1 = ReadKey()) >= 0) {
-                      k <<= 8;
-                      k |= key1 & 0xFF;
-                      }
-                   break;
-              case 0x5B: // 3- or more-byte sequence
-                   if ((key1 = ReadKey()) >= 0) {
-                      k <<= 8;
-                      k |= key1 & 0xFF;
-                      switch (key1) {
-                        case 0x31 ... 0x3F: // more-byte sequence
-                        case 0x5B: // strange, may apparently occur
-                             do {
-                                if ((key1 = ReadKey()) < 0)
-                                   break; // Sequence ends here
-                                k <<= 8;
-                                k |= key1 & 0xFF;
-                                } while (key1 != 0x7E);
-                             break;
-                        }
-                      }
-                   break;
-              }
-            }
+        // Start of escape sequence
+        if ((key1 = ReadKey()) >= 0) {
+           k <<= 8;
+           k |= key1 & 0xFF;
+           switch (key1) {
+             case 0x4F: // 3-byte sequence
+                  if ((key1 = ReadKey()) >= 0) {
+                     k <<= 8;
+                     k |= key1 & 0xFF;
+                     }
+                  break;
+             case 0x5B: // 3- or more-byte sequence
+                  if ((key1 = ReadKey()) >= 0) {
+                     k <<= 8;
+                     k |= key1 & 0xFF;
+                     switch (key1) {
+                       case 0x31 ... 0x3F: // more-byte sequence
+                       case 0x5B: // strange, may apparently occur
+                            do {
+                               if ((key1 = ReadKey()) < 0)
+                                  break; // Sequence ends here
+                               k <<= 8;
+                               k |= key1 & 0xFF;
+                               } while (key1 != 0x7E);
+                            break;
+                       default: ;
+                       }
+                     }
+                  break;
+             default: ;
+             }
+           }
         }
      }
   return k;
@@ -349,14 +364,56 @@ uint64_t cKbdRemote::ReadKeySequence(void)
 
 void cKbdRemote::Action(void)
 {
+  cTimeMs FirstTime;
+  cTimeMs LastTime;
+  uint64_t FirstCommand = 0;
+  uint64_t LastCommand = 0;
+  bool Delayed = false;
+  bool Repeat = false;
+
   while (Running()) {
         uint64_t Command = ReadKeySequence();
         if (Command) {
-           if (rawMode || !Put(Command)) {
-              int func = MapCodeToFunc(Command);
-              if (func)
-                 Put(KBDKEY(func));
+           if (Command == LastCommand) {
+              // If two keyboard events with the same command come in without an intermediate
+              // timeout, this is a long key press that caused the repeat function to kick in:
+              Delayed = false;
+              FirstCommand = 0;
+              if (FirstTime.Elapsed() < (uint)Setup.RcRepeatDelay)
+                 continue; // repeat function kicks in after a short delay
+              if (LastTime.Elapsed() < (uint)Setup.RcRepeatDelta)
+                 continue; // skip same keys coming in too fast
+              PutKey(Command, true);
+              Repeat = true;
+              LastTime.Set();
+              }
+           else if (Command == FirstCommand) {
+              // If the same command comes in twice with an intermediate timeout, we
+              // need to delay the second command to see whether it is going to be
+              // a repeat function or a separate key press:
+              Delayed = true;
+              }
+           else {
+              // This is a totally new key press, so we accept it immediately:
+              PutKey(Command);
+              Delayed = false;
+              FirstCommand = Command;
+              FirstTime.Set();
               }
            }
+        else if (Repeat) {
+           // Timeout after a repeat function, so we generate a 'release':
+           PutKey(LastCommand, false, true);
+           Repeat = false;
+           }
+        else if (Delayed && FirstCommand) {
+           // Timeout after two normal key presses of the same key, so accept the
+           // delayed key:
+           PutKey(FirstCommand);
+           Delayed = false;
+           FirstCommand = 0;
+           FirstTime.Set();
+           }
+        LastCommand = Command;
         }
 }

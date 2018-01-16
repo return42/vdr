@@ -6,7 +6,7 @@
  *   the Free Software Foundation; either version 2 of the License, or     *
  *   (at your option) any later version.                                   *
  *                                                                         *
- *   $Id: descriptor.h 1.16 2007/02/03 11:45:58 kls Exp $
+ *   $Id: descriptor.h 2.4 2012/01/11 11:35:17 kls Exp $
  *                                                                         *
  ***************************************************************************/
 
@@ -361,6 +361,31 @@ protected:
    virtual void Parse();
 };
 
+class ContentIdentifierDescriptor : public Descriptor {
+public:
+   class Identifier : public LoopElement {
+   public:
+      String identifier;
+      int getCridType() const;
+      int getCridLocation() const;
+      virtual int getLength() { return sizeof(content_identifier_entry)+identifier.getLength(); }
+   protected:
+      virtual void Parse();
+   private:
+      const content_identifier_entry *s;
+   };
+   StructureLoop<Identifier> identifierLoop;
+protected:
+   virtual void Parse();
+};
+
+class DefaultAuthorityDescriptor : public Descriptor {
+public:
+   String DefaultAuthority; //ID
+protected:
+   virtual void Parse();
+};
+
 //abstract base class
 class MultilingualNameDescriptor : public Descriptor {
 public:
@@ -513,6 +538,25 @@ private:
    const descr_extension *s;
 };
 
+class T2DeliverySystemDescriptor : public Descriptor {
+public:
+   int getExtendedDataFlag() const;
+   int getExtensionDescriptorTag() const;
+   int getPlpId() const;
+   int getT2SystemId() const;
+   int getSisoMiso() const;
+   int getBandwidth() const;
+   int getGuardInterval() const;
+   int getTransmissionMode() const;
+   int getOtherFrequencyFlag() const;
+   int getTfsFlag() const;
+protected:
+   virtual void Parse();
+private:
+   const descr_t2_delivery_system *s;
+   int extended_data_flag;
+};
+
 // Private DVB Descriptor  Premiere.de
 // 0xF2  Content Transmission Descriptor
 // http://dvbsnoop.sourceforge.net/examples/example-private-section.html
@@ -614,17 +658,29 @@ protected:
 
 class MHP_TransportProtocolDescriptor : public Descriptor {
 public:
+   class UrlExtensionEntry : public LoopElement {
+   public:
+      virtual int getLength() { return sizeof(descr_url_extension_entry)+UrlExtension.getLength(); }
+      String UrlExtension;
+   protected:
+      virtual void Parse();
+   };
+
    enum Protocol { ObjectCarousel = 0x01, IPviaDVB = 0x02, HTTPoverInteractionChannel = 0x03 };
    int getProtocolId() const;
    int getProtocolLabel() const;
    bool isRemote() const;
    int getComponentTag() const;
+   char *getUrlBase(char *buffer, int size);
+   StructureLoop<UrlExtensionEntry> UrlExtensionLoop;
+
 protected:
    virtual void Parse();
 private:
    const descr_transport_protocol *s;
    bool remote;
    int componentTag;
+   String UrlBase;
 };
 
 class MHP_DVBJApplicationDescriptor : public Descriptor {
@@ -658,6 +714,25 @@ protected:
    virtual void Parse();
 private:
    const descr_application_icons_descriptor_end *s;
+};
+
+class MHP_SimpleApplicationLocationDescriptor : public Descriptor {
+public:
+   char *getLocation(char *buffer, int size);
+protected:
+   virtual void Parse();
+private:
+   String location;
+};
+
+class RegistrationDescriptor : public Descriptor {
+public:
+   int getFormatIdentifier() const;
+   CharArray privateData;
+protected:
+   virtual void Parse();
+private:
+   const descr_registration *s;
 };
 
 } //end of namespace

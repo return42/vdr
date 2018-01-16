@@ -3,15 +3,16 @@
  *
  * See the README file for copyright information and how to reach the author.
  *
- * $Id: skincurses.c 1.23 2008/03/14 12:57:14 kls Exp $
+ * $Id: skincurses.c 2.13 2013/03/31 09:30:18 kls Exp $
  */
 
 #include <ncurses.h>
 #include <vdr/osd.h>
 #include <vdr/plugin.h>
 #include <vdr/skins.h>
+#include <vdr/videodir.h>
 
-static const char *VERSION        = "0.1.7";
+static const char *VERSION        = "2.0.0";
 static const char *DESCRIPTION    = trNOOP("A text only skin");
 static const char *MAINMENUENTRY  = NULL;
 
@@ -23,9 +24,10 @@ public:
   virtual int Width(const char *s) const { return s ? Utf8StrLen(s) : 0; }
   virtual int Height(void) const { return 1; }
   virtual void DrawText(cBitmap *Bitmap, int x, int y, const char *s, tColor ColorFg, tColor ColorBg, int Width) const {}
+  virtual void DrawText(cPixmap *Pixmap, int x, int y, const char *s, tColor ColorFg, tColor ColorBg, int Width) const {}
   };
 
-static const cCursesFont Font;
+static const cCursesFont Font = cCursesFont(); // w/o the '= cCursesFont()' gcc 4.6 complains - can anybody explain why this is necessary?
 
 // --- cCursesOsd ------------------------------------------------------------
 
@@ -261,6 +263,9 @@ void cSkinCursesDisplayChannel::Flush(void)
 class cSkinCursesDisplayMenu : public cSkinDisplayMenu {
 private:
   cOsd *osd;
+  cString title;
+  int lastDiskUsageState;
+  void DrawTitle(void);
   void DrawScrollbar(int Total, int Offset, int Shown, int Top, int Height, bool CanScrollUp, bool CanScrollDown);
   void SetTextScrollbar(void);
 public:
@@ -284,6 +289,7 @@ public:
 cSkinCursesDisplayMenu::cSkinCursesDisplayMenu(void)
 {
   osd = new cCursesOsd(0, 0);
+  lastDiskUsageState = -1;
   osd->DrawRectangle(0, 0, ScOsdWidth - 1, ScOsdHeight - 1, clrBackground);
 }
 
@@ -331,9 +337,16 @@ void cSkinCursesDisplayMenu::Clear(void)
   textScroller.Reset();
 }
 
+void cSkinCursesDisplayMenu::DrawTitle(void)
+{
+  bool WithDisk = MenuCategory() == mcMain || MenuCategory() == mcRecording;
+  osd->DrawText(0, 0, WithDisk ? cString::sprintf("%s  -  %s", *title, *cVideoDiskUsage::String()) : title, clrBlack, clrCyan, &Font, ScOsdWidth);
+}
+
 void cSkinCursesDisplayMenu::SetTitle(const char *Title)
 {
-  osd->DrawText(0, 0, Title, clrBlack, clrCyan, &Font, ScOsdWidth);
+  title = Title;
+  DrawTitle();
 }
 
 void cSkinCursesDisplayMenu::SetButtons(const char *Red, const char *Green, const char *Yellow, const char *Blue)
@@ -374,13 +387,13 @@ void cSkinCursesDisplayMenu::SetItem(const char *Text, int Index, bool Current, 
   for (int i = 0; i < MaxTabs; i++) {
       const char *s = GetTabbedText(Text, i);
       if (s) {
-         int xt = Tab(i) / 12;// Tab() is in "pixel" - see also skins.c!!!
+         int xt = Tab(i) / AvgCharWidth();// Tab() is in "pixel" - see also skins.c!!!
          osd->DrawText(xt, y, s, ColorFg, ColorBg, &Font, ScOsdWidth - 2 - xt);
          }
       if (!Tab(i + 1))
          break;
       }
-  SetEditableWidth(ScOsdWidth - 2 - Tab(1) / 12); // Tab() is in "pixel" - see also skins.c!!!
+  SetEditableWidth(ScOsdWidth - 2 - Tab(1) / AvgCharWidth()); // Tab() is in "pixel" - see also skins.c!!!
 }
 
 void cSkinCursesDisplayMenu::SetScrollbar(int Total, int Offset)
@@ -402,6 +415,10 @@ void cSkinCursesDisplayMenu::SetEvent(const cEvent *Event)
      osd->DrawText(ScOsdWidth - Utf8StrLen(buffer), y, buffer, clrBlack, clrYellow, &Font);
      }
   y += ts.Height();
+  if (Event->ParentalRating()) {
+     cString buffer = cString::sprintf(" %s ", *Event->GetParentalRatingString());
+     osd->DrawText(ScOsdWidth - Utf8StrLen(buffer), y, buffer, clrBlack, clrYellow, &Font);
+     }
   y += 1;
   ts.Set(osd, 0, y, ScOsdWidth, ScOsdHeight - y - 2, Event->Title(), &Font, clrCyan, clrBackground);
   y += ts.Height();
@@ -409,6 +426,13 @@ void cSkinCursesDisplayMenu::SetEvent(const cEvent *Event)
      ts.Set(osd, 0, y, ScOsdWidth, ScOsdHeight - y - 2, Event->ShortText(), &Font, clrYellow, clrBackground);
      y += ts.Height();
      }
+  for (int i = 0; Event->Contents(i); i++) {
+      const char *s = Event->ContentToString(Event->Contents(i));
+      if (!isempty(s)) {
+         ts.Set(osd, 0, y, ScOsdWidth, ScOsdHeight - y - 2, s, &Font, clrYellow, clrBackground);
+         y += 1;
+         }
+      }
   y += 1;
   if (!isempty(Event->Description())) {
      textScroller.Set(osd, 0, y, ScOsdWidth - 2, ScOsdHeight - y - 2, Event->Description(), &Font, clrCyan, clrBackground);
@@ -423,10 +447,13 @@ void cSkinCursesDisplayMenu::SetRecording(const cRecording *Recording)
   const cRecordingInfo *Info = Recording->Info();
   int y = 2;
   cTextScroller ts;
-  char t[32];
-  snprintf(t, sizeof(t), "%s  %s", *DateString(Recording->start), *TimeString(Recording->start));
+  cString t = cString::sprintf("%s  %s  %s", *DateString(Recording->Start()), *TimeString(Recording->Start()), Info->ChannelName() ? Info->ChannelName() : "");
   ts.Set(osd, 0, y, ScOsdWidth, ScOsdHeight - y - 2, t, &Font, clrYellow, clrBackground);
   y += ts.Height();
+  if (Info->GetEvent()->ParentalRating()) {
+     cString buffer = cString::sprintf(" %s ", *Info->GetEvent()->GetParentalRatingString());
+     osd->DrawText(ScOsdWidth - Utf8StrLen(buffer), y, buffer, clrBlack, clrYellow, &Font);
+     }
   y += 1;
   const char *Title = Info->Title();
   if (isempty(Title))
@@ -437,6 +464,13 @@ void cSkinCursesDisplayMenu::SetRecording(const cRecording *Recording)
      ts.Set(osd, 0, y, ScOsdWidth, ScOsdHeight - y - 2, Info->ShortText(), &Font, clrYellow, clrBackground);
      y += ts.Height();
      }
+  for (int i = 0; Info->GetEvent()->Contents(i); i++) {
+      const char *s = Info->GetEvent()->ContentToString(Info->GetEvent()->Contents(i));
+      if (!isempty(s)) {
+         ts.Set(osd, 0, y, ScOsdWidth, ScOsdHeight - y - 2, s, &Font, clrYellow, clrBackground);
+         y += 1;
+         }
+      }
   y += 1;
   if (!isempty(Info->Description())) {
      textScroller.Set(osd, 0, y, ScOsdWidth - 2, ScOsdHeight - y - 2, Info->Description(), &Font, clrCyan, clrBackground);
@@ -452,6 +486,8 @@ void cSkinCursesDisplayMenu::SetText(const char *Text, bool FixedFont)
 
 void cSkinCursesDisplayMenu::Flush(void)
 {
+  if (cVideoDiskUsage::HasChanged(lastDiskUsageState))
+     DrawTitle();
   cString date = DayDateTime();
   osd->DrawText(ScOsdWidth - Utf8StrLen(date) - 2, 0, date, clrBlack, clrCyan, &Font);
   osd->Flush();

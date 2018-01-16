@@ -7,7 +7,7 @@
  * Original version (as used in VDR before 1.3.0) written by
  * Robert Schneider <Robert.Schneider@web.de> and Rolf Hakenes <hakenes@hippomi.de>.
  *
- * $Id: epg.c 1.83 2008/02/16 16:09:12 kls Exp $
+ * $Id: epg.c 2.23 2013/02/17 14:12:07 kls Exp $
  */
 
 #include "epg.h"
@@ -18,6 +18,7 @@
 #include "timers.h"
 
 #define RUNNINGSTATUSTIMEOUT 30 // seconds before the running status is considered unknown
+#define EPGDATAWRITEDELTA   600 // seconds between writing the epg.data file
 
 // --- tComponent ------------------------------------------------------------
 
@@ -56,25 +57,34 @@ cComponents::~cComponents(void)
   free(components);
 }
 
-void cComponents::Realloc(int Index)
+bool cComponents::Realloc(int Index)
 {
   if (Index >= numComponents) {
-     int n = numComponents;
-     numComponents = Index + 1;
-     components = (tComponent *)realloc(components, numComponents * sizeof(tComponent));
-     memset(&components[n], 0, sizeof(tComponent) * (numComponents - n));
+     Index++;
+     if (tComponent *NewBuffer = (tComponent *)realloc(components, Index * sizeof(tComponent))) {
+        int n = numComponents;
+        numComponents = Index;
+        components = NewBuffer;
+        memset(&components[n], 0, sizeof(tComponent) * (numComponents - n));
+        }
+     else {
+        esyslog("ERROR: out of memory");
+        return false;
+        }
      }
+  return true;
 }
 
 void cComponents::SetComponent(int Index, const char *s)
 {
-  Realloc(Index);
-  components[Index].FromString(s);
+  if (Realloc(Index))
+     components[Index].FromString(s);
 }
 
 void cComponents::SetComponent(int Index, uchar Stream, uchar Type, const char *Language, const char *Description)
 {
-  Realloc(Index);
+  if (!Realloc(Index))
+     return;
   tComponent *p = &components[Index];
   p->stream = Stream;
   p->type = Type;
@@ -88,8 +98,10 @@ void cComponents::SetComponent(int Index, uchar Stream, uchar Type, const char *
 tComponent *cComponents::GetComponent(int Index, uchar Stream, uchar Type)
 {
   for (int i = 0; i < numComponents; i++) {
-      // In case of an audio stream the 'type' check actually just distinguishes between "normal" and "Dolby Digital":
-      if (components[i].stream == Stream && (Stream != 2 || (components[i].type < 5) == (Type < 5))) {
+      if (components[i].stream == Stream && (
+          Type == 0 || // don't care about the actual Type
+          Stream == 2 && (components[i].type < 5) == (Type < 5) // fallback "Dolby" component according to the "Premiere pseudo standard"
+         )) {
          if (!Index--)
             return &components[i];
          }
@@ -103,13 +115,15 @@ cEvent::cEvent(tEventID EventID)
 {
   schedule = NULL;
   eventID = EventID;
-  tableID = 0;
+  tableID = 0xFF; // actual table ids are 0x4E..0x60
   version = 0xFF; // actual version numbers are 0..31
   runningStatus = SI::RunningStatusUndefined;
   title = NULL;
   shortText = NULL;
   description = NULL;
   components = NULL;
+  memset(contents, 0, sizeof(contents));
+  parentalRating = 0;
   startTime = 0;
   duration = 0;
   vps = 0;
@@ -184,6 +198,17 @@ void cEvent::SetComponents(cComponents *Components)
   components = Components;
 }
 
+void cEvent::SetContents(uchar *Contents)
+{
+  for (int i = 0; i < MaxEventContents; i++)
+      contents[i] = Contents[i];
+}
+
+void cEvent::SetParentalRating(int ParentalRating)
+{
+  parentalRating = ParentalRating;
+}
+
 void cEvent::SetStartTime(time_t StartTime)
 {
   if (startTime != StartTime) {
@@ -232,6 +257,155 @@ bool cEvent::IsRunning(bool OrAboutToStart) const
   return runningStatus >= (OrAboutToStart ? SI::RunningStatusStartsInAFewSeconds : SI::RunningStatusPausing);
 }
 
+const char *cEvent::ContentToString(uchar Content)
+{
+  switch (Content & 0xF0) {
+    case ecgMovieDrama:
+         switch (Content & 0x0F) {
+           default:
+           case 0x00: return tr("Content$Movie/Drama");
+           case 0x01: return tr("Content$Detective/Thriller");
+           case 0x02: return tr("Content$Adventure/Western/War");
+           case 0x03: return tr("Content$Science Fiction/Fantasy/Horror");
+           case 0x04: return tr("Content$Comedy");
+           case 0x05: return tr("Content$Soap/Melodrama/Folkloric");
+           case 0x06: return tr("Content$Romance");
+           case 0x07: return tr("Content$Serious/Classical/Religious/Historical Movie/Drama");
+           case 0x08: return tr("Content$Adult Movie/Drama");
+           }
+         break;
+    case ecgNewsCurrentAffairs:
+         switch (Content & 0x0F) {
+           default:
+           case 0x00: return tr("Content$News/Current Affairs");
+           case 0x01: return tr("Content$News/Weather Report");
+           case 0x02: return tr("Content$News Magazine");
+           case 0x03: return tr("Content$Documentary");
+           case 0x04: return tr("Content$Discussion/Inverview/Debate");
+           }
+         break;
+    case ecgShow:
+         switch (Content & 0x0F) {
+           default:
+           case 0x00: return tr("Content$Show/Game Show");
+           case 0x01: return tr("Content$Game Show/Quiz/Contest");
+           case 0x02: return tr("Content$Variety Show");
+           case 0x03: return tr("Content$Talk Show");
+           }
+         break;
+    case ecgSports:
+         switch (Content & 0x0F) {
+           default:
+           case 0x00: return tr("Content$Sports");
+           case 0x01: return tr("Content$Special Event");
+           case 0x02: return tr("Content$Sport Magazine");
+           case 0x03: return tr("Content$Football/Soccer");
+           case 0x04: return tr("Content$Tennis/Squash");
+           case 0x05: return tr("Content$Team Sports");
+           case 0x06: return tr("Content$Athletics");
+           case 0x07: return tr("Content$Motor Sport");
+           case 0x08: return tr("Content$Water Sport");
+           case 0x09: return tr("Content$Winter Sports");
+           case 0x0A: return tr("Content$Equestrian");
+           case 0x0B: return tr("Content$Martial Sports");
+           }
+         break;
+    case ecgChildrenYouth:
+         switch (Content & 0x0F) {
+           default:
+           case 0x00: return tr("Content$Children's/Youth Programme");
+           case 0x01: return tr("Content$Pre-school Children's Programme");
+           case 0x02: return tr("Content$Entertainment Programme for 6 to 14");
+           case 0x03: return tr("Content$Entertainment Programme for 10 to 16");
+           case 0x04: return tr("Content$Informational/Educational/School Programme");
+           case 0x05: return tr("Content$Cartoons/Puppets");
+           }
+         break;
+    case ecgMusicBalletDance:
+         switch (Content & 0x0F) {
+           default:
+           case 0x00: return tr("Content$Music/Ballet/Dance");
+           case 0x01: return tr("Content$Rock/Pop");
+           case 0x02: return tr("Content$Serious/Classical Music");
+           case 0x03: return tr("Content$Folk/Tradional Music");
+           case 0x04: return tr("Content$Jazz");
+           case 0x05: return tr("Content$Musical/Opera");
+           case 0x06: return tr("Content$Ballet");
+           }
+         break;
+    case ecgArtsCulture:
+         switch (Content & 0x0F) {
+           default:
+           case 0x00: return tr("Content$Arts/Culture");
+           case 0x01: return tr("Content$Performing Arts");
+           case 0x02: return tr("Content$Fine Arts");
+           case 0x03: return tr("Content$Religion");
+           case 0x04: return tr("Content$Popular Culture/Traditional Arts");
+           case 0x05: return tr("Content$Literature");
+           case 0x06: return tr("Content$Film/Cinema");
+           case 0x07: return tr("Content$Experimental Film/Video");
+           case 0x08: return tr("Content$Broadcasting/Press");
+           case 0x09: return tr("Content$New Media");
+           case 0x0A: return tr("Content$Arts/Culture Magazine");
+           case 0x0B: return tr("Content$Fashion");
+           }
+         break;
+    case ecgSocialPoliticalEconomics:
+         switch (Content & 0x0F) {
+           default:
+           case 0x00: return tr("Content$Social/Political/Economics");
+           case 0x01: return tr("Content$Magazine/Report/Documentary");
+           case 0x02: return tr("Content$Economics/Social Advisory");
+           case 0x03: return tr("Content$Remarkable People");
+           }
+         break;
+    case ecgEducationalScience:
+         switch (Content & 0x0F) {
+           default:
+           case 0x00: return tr("Content$Education/Science/Factual");
+           case 0x01: return tr("Content$Nature/Animals/Environment");
+           case 0x02: return tr("Content$Technology/Natural Sciences");
+           case 0x03: return tr("Content$Medicine/Physiology/Psychology");
+           case 0x04: return tr("Content$Foreign Countries/Expeditions");
+           case 0x05: return tr("Content$Social/Spiritual Sciences");
+           case 0x06: return tr("Content$Further Education");
+           case 0x07: return tr("Content$Languages");
+           }
+         break;
+    case ecgLeisureHobbies:
+         switch (Content & 0x0F) {
+           default:
+           case 0x00: return tr("Content$Leisure/Hobbies");
+           case 0x01: return tr("Content$Tourism/Travel");
+           case 0x02: return tr("Content$Handicraft");
+           case 0x03: return tr("Content$Motoring");
+           case 0x04: return tr("Content$Fitness & Health");
+           case 0x05: return tr("Content$Cooking");
+           case 0x06: return tr("Content$Advertisement/Shopping");
+           case 0x07: return tr("Content$Gardening");
+           }
+         break;
+    case ecgSpecial:
+         switch (Content & 0x0F) {
+           case 0x00: return tr("Content$Original Language");
+           case 0x01: return tr("Content$Black & White");
+           case 0x02: return tr("Content$Unpublished");
+           case 0x03: return tr("Content$Live Broadcast");
+           default: ;
+           }
+         break;
+    default: ;
+    }
+  return "";
+}
+
+cString cEvent::GetParentalRatingString(void) const
+{
+  if (parentalRating)
+     return cString::sprintf(tr("ParentalRating$from %d"), parentalRating);
+  return NULL;
+}
+
 cString cEvent::GetDateString(void) const
 {
   return DateString(startTime);
@@ -251,7 +425,7 @@ cString cEvent::GetVpsString(void) const
 {
   char buf[25];
   struct tm tm_r;
-  strftime(buf, sizeof(buf), "%d.%m %R", localtime_r(&vps, &tm_r));
+  strftime(buf, sizeof(buf), "%d.%m. %R", localtime_r(&vps, &tm_r));
   return buf;
 }
 
@@ -268,11 +442,17 @@ void cEvent::Dump(FILE *f, const char *Prefix, bool InfoOnly) const
         fprintf(f, "%sD %s\n", Prefix, description);
         strreplace(description, '|', '\n');
         }
+     if (contents[0]) {
+        fprintf(f, "%sG", Prefix);
+        for (int i = 0; Contents(i); i++)
+            fprintf(f, " %02X", Contents(i));
+        fprintf(f, "\n");
+        }
+     if (parentalRating)
+        fprintf(f, "%sR %d\n", Prefix, parentalRating);
      if (components) {
         for (int i = 0; i < components->NumComponents(); i++) {
             tComponent *p = components->Component(i);
-            if (!Setup.UseDolbyDigital && p->stream == 0x02 && p->type == 0x05)
-               continue;
             fprintf(f, "%sX %s\n", Prefix, *p->ToString());
             }
         }
@@ -293,6 +473,22 @@ bool cEvent::Parse(char *s)
               break;
     case 'D': strreplace(t, '|', '\n');
               SetDescription(t);
+              break;
+    case 'G': {
+                memset(contents, 0, sizeof(contents));
+                for (int i = 0; i < MaxEventContents; i++) {
+                    char *tail = NULL;
+                    int c = strtol(t, &tail, 16);
+                    if (0x00 < c && c <= 0xFF) {
+                       contents[i] = c;
+                       t = tail;
+                       }
+                    else
+                       break;
+                    }
+              }
+              break;
+    case 'R': SetParentalRating(atoi(t));
               break;
     case 'X': if (!components)
                  components = new cComponents;
@@ -386,13 +582,24 @@ static void EpgBugFixStat(int Number, tChannelID ChannelID)
      }
 }
 
-void ReportEpgBugFixStats(bool Reset)
+void ReportEpgBugFixStats(bool Force)
 {
   if (Setup.EPGBugfixLevel > 0) {
+     static time_t LastReport = 0;
+     time_t now = time(NULL);
+     if (now - LastReport > 3600 || Force) {
+        LastReport = now;
+        struct tm tm_r;
+        struct tm *ptm = localtime_r(&now, &tm_r);
+        if (ptm->tm_hour != 5)
+           return;
+        }
+     else
+        return;
      bool GotHits = false;
      char buffer[1024];
      for (int i = 0; i < MAXEPGBUGFIXSTATS; i++) {
-         const char *delim = "\t";
+         const char *delim = " ";
          tEpgBugFixStats *p = &EpgBugFixStats[i];
          if (p->hits) {
             bool PrintedStats = false;
@@ -409,11 +616,11 @@ void ReportEpgBugFixStats(bool Reset)
                       dsyslog("CHANNELS READS THIS: PLEASE TAKE A LOOK AT THE FUNCTION cEvent::FixEpgBugs()");
                       dsyslog("IN VDR/epg.c TO LEARN WHAT'S WRONG WITH YOUR DATA, AND FIX IT!");
                       dsyslog("=====================");
-                      dsyslog("Fix\tHits\tChannels");
+                      dsyslog("Fix Hits Channels");
                       GotHits = true;
                       }
                    if (!PrintedStats) {
-                      q += snprintf(q, sizeof(buffer) - (q - buffer), "%d\t%d", i, p->hits);
+                      q += snprintf(q, sizeof(buffer) - (q - buffer), "%-3d %-4d", i, p->hits);
                       PrintedStats = true;
                       }
                    q += snprintf(q, sizeof(buffer) - (q - buffer), "%s%s", delim, channel->Name());
@@ -427,11 +634,30 @@ void ReportEpgBugFixStats(bool Reset)
             if (*buffer)
                dsyslog("%s", buffer);
             }
-         if (Reset)
-            p->hits = p->n = 0;
+         p->hits = p->n = 0;
          }
      if (GotHits)
         dsyslog("=====================");
+     }
+}
+
+static void StripControlCharacters(char *s)
+{
+  if (s) {
+     int len = strlen(s);
+     while (len > 0) {
+           int l = Utf8CharLen(s);
+           uchar *p = (uchar *)s;
+           if (l == 2 && *p == 0xC2) // UTF-8 sequence
+              p++;
+           if (*p == 0x86 || *p == 0x87) {
+              memmove(s, p + 1, len - l + 1); // we also copy the terminating 0!
+              len -= l;
+              l = 0;
+              }
+           s += l;
+           len -= l;
+           }
      }
 }
 
@@ -601,6 +827,7 @@ void cEvent::FixEpgBugs(void)
                      case 0x0F: p->description = strdup("HD 16:9"); break;
                      case 0x0C:
                      case 0x10: p->description = strdup("HD >16:9"); break;
+                     default: ;
                      }
                    EpgBugFixStat(9, ChannelID());
                    }
@@ -619,31 +846,34 @@ void cEvent::FixEpgBugs(void)
                 if (!p->description) {
                    switch (p->type) {
                      case 0x05: p->description = strdup("Dolby Digital"); break;
-                     // all others will just display the language
+                     default: ; // all others will just display the language
                      }
                    EpgBugFixStat(11, ChannelID());
                    }
                 }
                 break;
+           default: ;
            }
          }
      }
 
 Final:
 
-  // VDR can't usefully handle newline characters in the title and shortText of EPG
+  // VDR can't usefully handle newline characters in the title, shortText or component description of EPG
   // data, so let's always convert them to blanks (independent of the setting of EPGBugfixLevel):
   strreplace(title, '\n', ' ');
   strreplace(shortText, '\n', ' ');
-  /* TODO adapt to UTF-8
+  if (components) {
+     for (int i = 0; i < components->NumComponents(); i++) {
+         tComponent *p = components->Component(i);
+         if (p->description)
+            strreplace(p->description, '\n', ' ');
+         }
+     }
   // Same for control characters:
-  strreplace(title, '\x86', ' ');
-  strreplace(title, '\x87', ' ');
-  strreplace(shortText, '\x86', ' ');
-  strreplace(shortText, '\x87', ' ');
-  strreplace(description, '\x86', ' ');
-  strreplace(description, '\x87', ' ');
-  XXX*/
+  StripControlCharacters(title);
+  StripControlCharacters(shortText);
+  StripControlCharacters(description);
 }
 
 // --- cSchedule -------------------------------------------------------------
@@ -861,6 +1091,7 @@ void cSchedule::Dump(FILE *f, const char *Prefix, eDumpMode DumpMode, time_t AtT
                p->Dump(f, Prefix);
             }
             break;
+       default: esyslog("ERROR: unknown DumpMode %d (%s %d)", DumpMode, __FUNCTION__, __LINE__);
        }
      fprintf(f, "%sc\n", Prefix);
      }
@@ -904,6 +1135,45 @@ bool cSchedule::Read(FILE *f, cSchedules *Schedules)
   return false;
 }
 
+// --- cEpgDataWriter --------------------------------------------------------
+
+class cEpgDataWriter : public cThread {
+private:
+  cMutex mutex;
+protected:
+  virtual void Action(void);
+public:
+  cEpgDataWriter(void);
+  void Perform(void);
+  };
+
+cEpgDataWriter::cEpgDataWriter(void)
+:cThread("epg data writer", true)
+{
+}
+
+void cEpgDataWriter::Action(void)
+{
+  Perform();
+}
+
+void cEpgDataWriter::Perform(void)
+{
+  cMutexLock MutexLock(&mutex); // to make sure fore- and background calls don't cause parellel dumps!
+  {
+    cSchedulesLock SchedulesLock(true, 1000);
+    cSchedules *s = (cSchedules *)cSchedules::Schedules(SchedulesLock);
+    if (s) {
+       time_t now = time(NULL);
+       for (cSchedule *p = s->First(); p; p = s->Next(p))
+           p->Cleanup(now);
+       }
+  }
+  cSchedules::Dump();
+}
+
+static cEpgDataWriter EpgDataWriter;
+
 // --- cSchedulesLock --------------------------------------------------------
 
 cSchedulesLock::cSchedulesLock(bool WriteLock, int TimeoutMs)
@@ -920,8 +1190,7 @@ cSchedulesLock::~cSchedulesLock()
 // --- cSchedules ------------------------------------------------------------
 
 cSchedules cSchedules::schedules;
-const char *cSchedules::epgDataFileName = NULL;
-time_t cSchedules::lastCleanup = time(NULL);
+char *cSchedules::epgDataFileName = NULL;
 time_t cSchedules::lastDump = time(NULL);
 time_t cSchedules::modified = 0;
 
@@ -932,7 +1201,7 @@ const cSchedules *cSchedules::Schedules(cSchedulesLock &SchedulesLock)
 
 void cSchedules::SetEpgDataFileName(const char *FileName)
 {
-  delete epgDataFileName;
+  free(epgDataFileName);
   epgDataFileName = FileName ? strdup(FileName) : NULL;
 }
 
@@ -947,28 +1216,13 @@ void cSchedules::Cleanup(bool Force)
   if (Force)
      lastDump = 0;
   time_t now = time(NULL);
-  struct tm tm_r;
-  struct tm *ptm = localtime_r(&now, &tm_r);
-  if (now - lastCleanup > 3600) {
-     isyslog("cleaning up schedules data");
-     cSchedulesLock SchedulesLock(true, 1000);
-     cSchedules *s = (cSchedules *)Schedules(SchedulesLock);
-     if (s) {
-        for (cSchedule *p = s->First(); p; p = s->Next(p))
-            p->Cleanup(now);
+  if (now - lastDump > EPGDATAWRITEDELTA) {
+     if (epgDataFileName) {
+        if (Force)
+           EpgDataWriter.Perform();
+        else if (!EpgDataWriter.Active())
+           EpgDataWriter.Start();
         }
-     lastCleanup = now;
-     if (ptm->tm_hour == 5)
-        ReportEpgBugFixStats(true);
-     }
-  if (epgDataFileName && now - lastDump > 600) {
-     cSafeFile f(epgDataFileName);
-     if (f.Open()) {
-        Dump(f);
-        f.Close();
-        }
-     else
-        LOG_ERROR;
      lastDump = now;
      }
 }
@@ -1002,8 +1256,23 @@ bool cSchedules::Dump(FILE *f, const char *Prefix, eDumpMode DumpMode, time_t At
   cSchedulesLock SchedulesLock;
   cSchedules *s = (cSchedules *)Schedules(SchedulesLock);
   if (s) {
+     cSafeFile *sf = NULL;
+     if (!f) {
+        sf = new cSafeFile(epgDataFileName);
+        if (sf->Open())
+           f = *sf;
+        else {
+           LOG_ERROR;
+           delete sf;
+           return false;
+           }
+        }
      for (cSchedule *p = s->First(); p; p = s->Next(p))
          p->Dump(f, Prefix, DumpMode, AtTime);
+     if (sf) {
+        sf->Close();
+        delete sf;
+        }
      return true;
      }
   return false;
@@ -1078,4 +1347,193 @@ const cSchedule *cSchedules::GetSchedule(const cChannel *Channel, bool AddIfMiss
      Channel->schedule = Schedule;
      }
   return Channel->schedule != &DummySchedule? Channel->schedule : NULL;
+}
+
+// --- cEpgDataReader --------------------------------------------------------
+
+cEpgDataReader::cEpgDataReader(void)
+:cThread("epg data reader")
+{
+}
+
+void cEpgDataReader::Action(void)
+{
+  cSchedules::Read();
+}
+
+// --- cEpgHandler -----------------------------------------------------------
+
+cEpgHandler::cEpgHandler(void)
+{
+  EpgHandlers.Add(this);
+}
+
+cEpgHandler::~cEpgHandler()
+{
+  EpgHandlers.Del(this, false);
+}
+
+// --- cEpgHandlers ----------------------------------------------------------
+
+cEpgHandlers EpgHandlers;
+
+bool cEpgHandlers::IgnoreChannel(const cChannel *Channel)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->IgnoreChannel(Channel))
+         return true;
+      }
+  return false;
+}
+
+bool cEpgHandlers::HandleEitEvent(cSchedule *Schedule, const SI::EIT::Event *EitEvent, uchar TableID, uchar Version)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->HandleEitEvent(Schedule, EitEvent, TableID, Version))
+         return true;
+      }
+  return false;
+}
+
+bool cEpgHandlers::HandledExternally(const cChannel *Channel)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->HandledExternally(Channel))
+         return true;
+      }
+  return false;
+}
+
+bool cEpgHandlers::IsUpdate(tEventID EventID, time_t StartTime, uchar TableID, uchar Version)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->IsUpdate(EventID, StartTime, TableID, Version))
+         return true;
+      }
+  return false;
+}
+
+void cEpgHandlers::SetEventID(cEvent *Event, tEventID EventID)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->SetEventID(Event, EventID))
+         return;
+      }
+  Event->SetEventID(EventID);
+}
+
+void cEpgHandlers::SetTitle(cEvent *Event, const char *Title)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->SetTitle(Event, Title))
+         return;
+      }
+  Event->SetTitle(Title);
+}
+
+void cEpgHandlers::SetShortText(cEvent *Event, const char *ShortText)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->SetShortText(Event, ShortText))
+         return;
+      }
+  Event->SetShortText(ShortText);
+}
+
+void cEpgHandlers::SetDescription(cEvent *Event, const char *Description)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->SetDescription(Event, Description))
+         return;
+      }
+  Event->SetDescription(Description);
+}
+
+void cEpgHandlers::SetContents(cEvent *Event, uchar *Contents)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->SetContents(Event, Contents))
+         return;
+      }
+  Event->SetContents(Contents);
+}
+
+void cEpgHandlers::SetParentalRating(cEvent *Event, int ParentalRating)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->SetParentalRating(Event, ParentalRating))
+         return;
+      }
+  Event->SetParentalRating(ParentalRating);
+}
+
+void cEpgHandlers::SetStartTime(cEvent *Event, time_t StartTime)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->SetStartTime(Event, StartTime))
+         return;
+      }
+  Event->SetStartTime(StartTime);
+}
+
+void cEpgHandlers::SetDuration(cEvent *Event, int Duration)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->SetDuration(Event, Duration))
+         return;
+      }
+  Event->SetDuration(Duration);
+}
+
+void cEpgHandlers::SetVps(cEvent *Event, time_t Vps)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->SetVps(Event, Vps))
+         return;
+      }
+  Event->SetVps(Vps);
+}
+
+void cEpgHandlers::SetComponents(cEvent *Event, cComponents *Components)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->SetComponents(Event, Components))
+         return;
+      }
+  Event->SetComponents(Components);
+}
+
+void cEpgHandlers::FixEpgBugs(cEvent *Event)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->FixEpgBugs(Event))
+         return;
+      }
+  Event->FixEpgBugs();
+}
+
+void cEpgHandlers::HandleEvent(cEvent *Event)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->HandleEvent(Event))
+         break;
+      }
+}
+
+void cEpgHandlers::SortSchedule(cSchedule *Schedule)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->SortSchedule(Schedule))
+         return;
+      }
+  Schedule->Sort();
+}
+
+void cEpgHandlers::DropOutdated(cSchedule *Schedule, time_t SegmentStart, time_t SegmentEnd, uchar TableID, uchar Version)
+{
+  for (cEpgHandler *eh = First(); eh; eh = Next(eh)) {
+      if (eh->DropOutdated(Schedule, SegmentStart, SegmentEnd, TableID, Version))
+         return;
+      }
+  Schedule->DropOutdated(SegmentStart, SegmentEnd, TableID, Version);
 }

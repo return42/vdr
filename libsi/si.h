@@ -6,7 +6,7 @@
  *   the Free Software Foundation; either version 2 of the License, or     *
  *   (at your option) any later version.                                   *
  *                                                                         *
- *   $Id: si.h 1.17 2007/04/22 13:32:09 kls Exp $
+ *   $Id: si.h 2.6 2012/10/15 11:56:06 kls Exp $
  *                                                                         *
  ***************************************************************************/
 
@@ -28,7 +28,7 @@ enum TableId { TableIdPAT = 0x00, //program association section
                TableIdNIT_other  = 0x41, //network information section, other network
                TableIdSDT = 0x42, //service description section
                TableIdSDT_other  = 0x46,
-               TableIdBAT = 0x46, //bouquet association section
+               TableIdBAT = 0x4A, //bouquet association section
                TableIdEIT_presentFollowing = 0x4E, //event information section
                TableIdEIT_presentFollowing_other = 0x4F,
                //range from 0x50 to 0x5F
@@ -134,6 +134,19 @@ enum DescriptorTag {
                DTSDescriptorTag = 0x7B,
                AACDescriptorTag = 0x7C,
                ExtensionDescriptorTag = 0x7F,
+ // Extension descriptors
+               ImageIconDescriptorTag = 0x00,
+               CpcmDeliverySignallingDescriptor = 0x01,
+               CPDescriptorTag = 0x02,
+               CPIdentifierDescriptorTag = 0x03,
+               T2DeliverySystemDescriptorTag = 0x04,
+               SHDeliverySystemDescriptorTag = 0x05,
+               SupplementaryAudioDescriptorTag = 0x06,
+               NetworkChangeNotifyDescriptorTag = 0x07,
+               MessageDescriptorTag = 0x08,
+               TargetRegionDescriptorTag = 0x09,
+               TargetRegionNameDescriptorTag = 0x0A,
+               ServiceRelocatedDescriptorTag = 0x0B,
 
  // Defined by ETSI TS 102 812 (MHP)
                // They once again start with 0x00 (see page 234, MHP specification)
@@ -153,6 +166,8 @@ enum DescriptorTag {
                MHP_PrefetchDescriptorTag = 0x0C,
                MHP_DelegatedApplicationDescriptorTag = 0x0E,
                MHP_ApplicationStorageDescriptorTag = 0x10,
+               MHP_SimpleApplicationLocationDescriptorTag = 0x15,
+               MHP_SimpleApplicationBoundaryDescriptorTag = 0x17,
   // Premiere private Descriptor Tags
                PremiereContentTransmissionDescriptorTag = 0xF2,
 
@@ -332,8 +347,10 @@ public:
          T *ret=new T();
          ret->setData(d);
          ret->CheckParse();
-         if (!checkSize(ret->getLength()))
+         if (!checkSize(ret->getLength())) {
+            delete ret;
             return 0;
+         }
          it.i+=ret->getLength();
          return ret;
       }
@@ -411,6 +428,8 @@ public:
             return data.FourBytes(index);
          case 8:
             return (SixtyFourBit(data.FourBytes(index)) << 32) | data.FourBytes(index+4);
+         default:
+            return 0; // just to avoid a compiler warning
          }
          return 0; // just to avoid a compiler warning
       }
@@ -490,6 +509,13 @@ protected:
 // like "iso8859-15" or "utf-8" (case insensitive).
 // Returns true if the character table was recognized.
 bool SetSystemCharacterTable(const char *CharacterTable);
+// Determines the character table used in the given buffer and returns
+// a string indicating that table. If no table can be determined, the
+// default ISO6937 is returned. If a table can be determined, the buffer
+// and length are adjusted accordingly.
+const char *getCharacterTable(const unsigned char *&buffer, int &length, bool *isSingleByte = NULL);
+bool convertCharacterTable(const char *from, size_t fromLength, char *to, size_t toLength, const char *fromCode);
+bool systemCharacterTableIsSingleByte(void);
 
 } //end of namespace
 

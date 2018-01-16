@@ -4,13 +4,14 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: menuitems.h 1.25 2008/02/16 16:09:58 kls Exp $
+ * $Id: menuitems.h 2.8 2012/03/13 11:19:11 kls Exp $
  */
 
 #ifndef __MENUITEMS_H
 #define __MENUITEMS_H
 
 #include <limits.h>
+#include "dvbdevice.h"
 #include "osdbase.h"
 
 extern const char *FileNameChars;
@@ -18,10 +19,15 @@ extern const char *FileNameChars;
 class cMenuEditItem : public cOsdItem {
 private:
   char *name;
+  const char *helpRed, *helpGreen, *helpYellow, *helpBlue;
+  bool helpDisplayed;
+protected:
+  void SetHelp(const char *Red, const char *Green = NULL, const char *Yellow = NULL, const char *Blue = NULL);
 public:
   cMenuEditItem(const char *Name);
   ~cMenuEditItem();
   void SetValue(const char *Value);
+  bool DisplayHelp(void);
   };
 
 class cMenuEditIntItem : public cMenuEditItem {
@@ -64,6 +70,18 @@ public:
   virtual eOSState ProcessKey(eKeys Key);
   };
 
+class cMenuEditPrcItem : public cMenuEditItem {
+protected:
+  double *value;
+  double min, max;
+  int decimals;
+  int factor;
+  virtual void Set(void);
+public:
+  cMenuEditPrcItem(const char *Name, double *Value, double Min = 0.0, double Max = 1.0, int Decimals = 0);
+  virtual eOSState ProcessKey(eKeys Key);
+  };
+
 class cMenuEditChrItem : public cMenuEditItem {
 private:
   char *value;
@@ -95,6 +113,7 @@ private:
   void AdvancePos(void);
   virtual void Set(void);
   uint Inc(uint c, bool Up);
+  void Type(uint c);
   void Insert(void);
   void Delete(void);
 protected:
@@ -119,9 +138,12 @@ public:
 class cMenuEditChanItem : public cMenuEditIntItem {
 protected:
   const char *noneString;
+  int dummyValue;
+  cString *channelID;
   virtual void Set(void);
 public:
   cMenuEditChanItem(const char *Name, int *Value, const char *NoneString = NULL);
+  cMenuEditChanItem(const char *Name, cString *ChannelID, const char *NoneString = NULL);
   virtual eOSState ProcessKey(eKeys Key);
   };
 
@@ -141,11 +163,13 @@ private:
   time_t *value;
   int *weekdays;
   time_t oldvalue;
+  int oldweekdays;
   int dayindex;
   int FindDayIndex(int WeekDays);
   virtual void Set(void);
 public:
   cMenuEditDateItem(const char *Name, time_t *Value, int *WeekDays = NULL);
+  void ToggleRepeating(void);
   virtual eOSState ProcessKey(eKeys Key);
   };
 
@@ -157,6 +181,17 @@ protected:
   virtual void Set(void);
 public:
   cMenuEditTimeItem(const char *Name, int *Value);
+  virtual eOSState ProcessKey(eKeys Key);
+  };
+
+class cMenuEditMapItem : public cMenuEditItem {
+protected:
+  int *value;
+  const tDvbParameterMap *map;
+  const char *zeroString;
+  virtual void Set(void);
+public:
+  cMenuEditMapItem(const char *Name, int *Value, const tDvbParameterMap *Map, const char *ZeroString = NULL);
   virtual eOSState ProcessKey(eKeys Key);
   };
 

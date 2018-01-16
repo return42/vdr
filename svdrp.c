@@ -10,7 +10,7 @@
  * and interact with the Video Disk Recorder - or write a full featured
  * graphical interface that sits on top of an SVDRP connection.
  *
- * $Id: svdrp.c 1.109 2008/02/17 13:36:01 kls Exp $
+ * $Id: svdrp.c 2.24 2013/02/17 13:18:01 kls Exp $
  */
 
 #include "svdrp.h"
@@ -79,7 +79,7 @@ bool cSocket::Open(void)
      struct sockaddr_in name;
      name.sin_family = AF_INET;
      name.sin_port = htons(port);
-     name.sin_addr.s_addr = htonl(INADDR_ANY);
+     name.sin_addr.s_addr = SVDRPhosts.LocalhostOnly() ? htonl(INADDR_LOOPBACK) : htonl(INADDR_ANY);
      if (bind(sock, (struct sockaddr *)&name, sizeof(name)) < 0) {
         LOG_ERROR;
         Close();
@@ -179,6 +179,8 @@ bool cPUTEhandler::Process(const char *s)
 // --- cSVDRP ----------------------------------------------------------------
 
 #define MAXHELPTOPIC 10
+#define EITDISABLETIME 10 // seconds until EIT processing is enabled again after a CLRE command
+                          // adjust the help for CLRE accordingly if changing this!
 
 const char *HelpPages[] = {
   "CHAN [ + | - | <number> | <name> | <id> ]\n"
@@ -187,7 +189,10 @@ const char *HelpPages[] = {
   "    it returns the current channel number and name.",
   "CLRE [ <number> | <name> | <id> ]\n"
   "    Clear the EPG list of the given channel number, name or id.\n"
-  "    Without option it clears the entire EPG list.",
+  "    Without option it clears the entire EPG list.\n"
+  "    After a CLRE command, no further EPG processing is done for 10\n"
+  "    seconds, so that data sent with subsequent PUTE commands doesn't\n"
+  "    interfere with data from the broadcasters.",
   "DELC <number>\n"
   "    Delete channel.",
   "DELR <number>\n"
@@ -214,10 +219,12 @@ const char *HelpPages[] = {
   "    image format defaults to JPEG.",
   "HELP [ <topic> ]\n"
   "    The HELP command gives help info.",
-  "HITK [ <key> ]\n"
+  "HITK [ <key> ... ]\n"
   "    Hit the given remote control key. Without option a list of all\n"
-  "    valid key names is given.",
-  "LSTC [ :groups | <number> | <name> ]\n"
+  "    valid key names is given. If more than one key is given, they are\n"
+  "    entered into the remote control queue in the given sequence. There\n"
+  "    can be up to 31 keys.",
+  "LSTC [ :groups | <number> | <name> | <id> ]\n"
   "    List channels. Without option, all channels are listed. Otherwise\n"
   "    only the given channel is listed. If a name is given, all channels\n"
   "    containing the given string as part of their name are listed.\n"
@@ -229,9 +236,11 @@ const char *HelpPages[] = {
   "    only data for that channel is listed. 'now', 'next', or 'at <time>'\n"
   "    restricts the returned data to present events, following events, or\n"
   "    events at the given time (which must be in time_t form).",
-  "LSTR [ <number> ]\n"
+  "LSTR [ <number> [ path ] ]\n"
   "    List recordings. Without option, all recordings are listed. Otherwise\n"
-  "    the information for the given recording is listed.",
+  "    the information for the given recording is listed. If a recording\n"
+  "    number and the keyword 'path' is given, the actual file name of that\n"
+  "    recording's directory is listed.",
   "LSTT [ <number> ] [ id ]\n"
   "    List timers. Without option, all timers are listed. Otherwise\n"
   "    only the given timer is listed. If the keyword 'id' is given, the\n"
@@ -249,15 +258,12 @@ const char *HelpPages[] = {
   "    used to easily activate or deactivate a timer.",
   "MOVC <number> <to>\n"
   "    Move a channel to a new position.",
-  "MOVT <number> <to>\n"
-  "    Move a timer to a new position.",
   "NEWC <settings>\n"
   "    Create a new channel. Settings must be in the same format as returned\n"
   "    by the LSTC command.",
   "NEWT <settings>\n"
   "    Create a new timer. Settings must be in the same format as returned\n"
-  "    by the LSTT command. It is an error if a timer with the same channel,\n"
-  "    day, start and stop time already exists.",
+  "    by the LSTT command.",
   "NEXT [ abs | rel ]\n"
   "    Show the next timer event. If no option is given, the output will be\n"
   "    in human readable form. With option 'abs' the absolute time of the next\n"
@@ -288,11 +294,14 @@ const char *HelpPages[] = {
   "    If 'help' is followed by a command, the detailed help for that command is\n"
   "    given. The keyword 'main' initiates a call to the main menu function of the\n"
   "    given plugin.\n",
-  "PUTE\n"
+  "PUTE [ file ]\n"
   "    Put data into the EPG list. The data entered has to strictly follow the\n"
   "    format defined in vdr(5) for the 'epg.data' file.  A '.' on a line\n"
   "    by itself terminates the input and starts processing of the data (all\n"
-  "    entered data is buffered until the terminating '.' is seen).",
+  "    entered data is buffered until the terminating '.' is seen).\n"
+  "    If a file name is given, epg data will be read from this file (which\n"
+  "    must be accessible under the given name from the machine VDR is running\n"
+  "    on). In case of file input, no terminating '.' shall be given.\n",
   "REMO [ on | off ]\n"
   "    Turns the remote control on or off. Without a parameter, the current\n"
   "    status of the remote control is reported.",
@@ -305,6 +314,9 @@ const char *HelpPages[] = {
   "    Updates a timer. Settings must be in the same format as returned\n"
   "    by the LSTT command. If a timer with the same channel, day, start\n"
   "    and stop time does not yet exists, it will be created.",
+  "UPDR\n"
+  "    Initiates a re-read of the recordings directory, which is the SVDRP\n"
+  "    equivalent to 'touch .update'.",
   "VOLU [ <number> | + | - | mute ]\n"
   "    Set the audio volume to the given number (which is limited to the range\n"
   "    0...255). If the special options '+' or '-' are given, the volume will\n"
@@ -421,7 +433,7 @@ void cSVDRP::Reply(int Code, const char *fmt, ...)
      if (Code != 0) {
         va_list ap;
         va_start(ap, fmt);
-        cString buffer = cString::sprintf(fmt, ap);
+        cString buffer = cString::vsprintf(fmt, ap);
         va_end(ap);
         const char *s = buffer;
         while (s && *s) {
@@ -570,7 +582,12 @@ void cSVDRP::CmdCLRE(const char *Option)
                   }
                }
            if (Schedule) {
+              for (cTimer *Timer = Timers.First(); Timer; Timer = Timers.Next(Timer)) {
+                  if (ChannelID == Timer->Channel()->GetChannelID().ClrRid())
+                     Timer->SetEvent(NULL);
+                  }
               Schedule->Cleanup(INT_MAX);
+              cEitFilter::SetDisableUntil(time(NULL) + EITDISABLETIME);
               Reply(250, "EPG data of channel \"%s\" cleared", Option);
               }
            else {
@@ -585,8 +602,13 @@ void cSVDRP::CmdCLRE(const char *Option)
         Reply(501, "Undefined channel \"%s\"", Option);
      }
   else {
-     cSchedules::ClearAll();
-     Reply(250, "EPG data cleared");
+     cEitFilter::SetDisableUntil(time(NULL) + EITDISABLETIME);
+     if (cSchedules::ClearAll()) {
+        Reply(250, "EPG data cleared");
+        cEitFilter::SetDisableUntil(time(NULL) + EITDISABLETIME);
+        }
+     else
+        Reply(451, "Error while clearing EPG data");
      }
 }
 
@@ -641,22 +663,26 @@ void cSVDRP::CmdDELR(const char *Option)
 {
   if (*Option) {
      if (isnumber(Option)) {
-        cRecording *recording = Recordings.Get(strtol(Option, NULL, 10) - 1);
+        cRecording *recording = recordings.Get(strtol(Option, NULL, 10) - 1);
         if (recording) {
            cRecordControl *rc = cRecordControls::GetRecordControl(recording->FileName());
            if (!rc) {
-              if (recording->Delete()) {
-                 Reply(250, "Recording \"%s\" deleted", Option);
-                 ::Recordings.DelByName(recording->FileName());
+              if (!cCutter::Active(recording->FileName())) {
+                 if (recording->Delete()) {
+                    Reply(250, "Recording \"%s\" deleted", Option);
+                    Recordings.DelByName(recording->FileName());
+                    }
+                 else
+                    Reply(554, "Error while deleting recording!");
                  }
               else
-                 Reply(554, "Error while deleting recording!");
+                 Reply(550, "Recording \"%s\" is being edited", Option);
               }
            else
               Reply(550, "Recording \"%s\" is in use by timer %d", Option, rc->Timer()->Index() + 1);
            }
         else
-           Reply(550, "Recording \"%s\" not found%s", Option, Recordings.Count() ? "" : " (use LSTR before deleting)");
+           Reply(550, "Recording \"%s\" not found%s", Option, recordings.Count() ? "" : " (use LSTR before deleting)");
         }
      else
         Reply(501, "Error in recording number \"%s\"", Option);
@@ -698,10 +724,10 @@ void cSVDRP::CmdEDIT(const char *Option)
 {
   if (*Option) {
      if (isnumber(Option)) {
-        cRecording *recording = Recordings.Get(strtol(Option, NULL, 10) - 1);
+        cRecording *recording = recordings.Get(strtol(Option, NULL, 10) - 1);
         if (recording) {
            cMarks Marks;
-           if (Marks.Load(recording->FileName()) && Marks.Count()) {
+           if (Marks.Load(recording->FileName(), recording->FramesPerSecond(), recording->IsPesRecording()) && Marks.Count()) {
               if (!cCutter::Active()) {
                  if (cCutter::Start(recording->FileName()))
                     Reply(250, "Editing recording \"%s\" [%s]", Option, recording->Title());
@@ -715,7 +741,7 @@ void cSVDRP::CmdEDIT(const char *Option)
               Reply(554, "No editing marks defined");
            }
         else
-           Reply(550, "Recording \"%s\" not found%s", Option, Recordings.Count() ? "" : " (use LSTR before editing)");
+           Reply(550, "Recording \"%s\" not found%s", Option, recordings.Count() ? "" : " (use LSTR before editing)");
         }
      else
         Reply(501, "Error in recording number \"%s\"", Option);
@@ -736,7 +762,7 @@ void cSVDRP::CmdGRAB(const char *Option)
      char *strtok_next;
      FileName = strtok_r(p, delim, &strtok_next);
      // image type:
-     char *Extension = strrchr(FileName, '.');
+     const char *Extension = strrchr(FileName, '.');
      if (Extension) {
         if (strcasecmp(Extension, ".jpg") == 0 || strcasecmp(Extension, ".jpeg") == 0)
            Jpeg = true;
@@ -795,16 +821,17 @@ void cSVDRP::CmdGRAB(const char *Option)
      char RealFileName[PATH_MAX];
      if (FileName) {
         if (grabImageDir) {
-           cString s;
-           char *slash = strrchr(FileName, '/');
+           cString s(FileName);
+           FileName = s;
+           const char *slash = strrchr(FileName, '/');
            if (!slash) {
               s = AddDirectory(grabImageDir, FileName);
               FileName = s;
               }
            slash = strrchr(FileName, '/'); // there definitely is one
-           *slash = 0;
-           char *r = realpath(FileName, RealFileName);
-           *slash = '/';
+           cString t(s);
+           t.Truncate(slash - FileName);
+           char *r = realpath(t, RealFileName);
            if (!r) {
               LOG_ERROR_STR(FileName);
               Reply(501, "Invalid file name \"%s\"", FileName);
@@ -883,7 +910,7 @@ void cSVDRP::CmdHELP(const char *Option)
          PrintHelpTopics(hp);
          }
      Reply(-214, "To report bugs in the implementation send email to");
-     Reply(-214, "    vdr-bugs@cadsoft.de");
+     Reply(-214, "    vdr-bugs@tvdr.de");
      }
   Reply(214, "End of HELP info");
 }
@@ -891,13 +918,32 @@ void cSVDRP::CmdHELP(const char *Option)
 void cSVDRP::CmdHITK(const char *Option)
 {
   if (*Option) {
-     eKeys k = cKey::FromString(Option);
-     if (k != kNone) {
-        cRemote::Put(k);
-        Reply(250, "Key \"%s\" accepted", Option);
+     if (!cRemote::Enabled()) {
+        Reply(550, "Remote control currently disabled (key \"%s\" discarded)", Option);
+        return;
         }
-     else
-        Reply(504, "Unknown key: \"%s\"", Option);
+     char buf[strlen(Option) + 1];
+     strcpy(buf, Option);
+     const char *delim = " \t";
+     char *strtok_next;
+     char *p = strtok_r(buf, delim, &strtok_next);
+     int NumKeys = 0;
+     while (p) {
+           eKeys k = cKey::FromString(p);
+           if (k != kNone) {
+              if (!cRemote::Put(k)) {
+                 Reply(451, "Too many keys in \"%s\" (only %d accepted)", Option, NumKeys);
+                 return;
+                 }
+              }
+           else {
+              Reply(504, "Unknown key: \"%s\"", p);
+              return;
+              }
+           NumKeys++;
+           p = strtok_r(NULL, delim, &strtok_next);
+           }
+     Reply(250, "Key%s \"%s\" accepted", NumKeys > 1 ? "s" : "", Option);
      }
   else {
      Reply(-214, "Valid <key> names for the HITK command:");
@@ -920,16 +966,18 @@ void cSVDRP::CmdLSTC(const char *Option)
            Reply(501, "Channel \"%s\" not defined", Option);
         }
      else {
-        cChannel *next = NULL;
-        for (cChannel *channel = Channels.First(); channel; channel = Channels.Next(channel)) {
-            if (!channel->GroupSep()) {
-               if (strcasestr(channel->Name(), Option)) {
-                  if (next)
-                     Reply(-250, "%d %s", next->Number(), *next->ToText());
-                  next = channel;
-                  }
-               }
-            }
+        cChannel *next = Channels.GetByChannelID(tChannelID::FromString(Option));
+        if (!next) {
+           for (cChannel *channel = Channels.First(); channel; channel = Channels.Next(channel)) {
+              if (!channel->GroupSep()) {
+                 if (strcasestr(channel->Name(), Option)) {
+                    if (next)
+                       Reply(-250, "%d %s", next->Number(), *next->ToText());
+                    next = channel;
+                    }
+                 }
+              }
+           }
         if (next)
            Reply(250, "%d %s", next->Number(), *next->ToText());
         else
@@ -1033,16 +1081,44 @@ void cSVDRP::CmdLSTE(const char *Option)
 
 void cSVDRP::CmdLSTR(const char *Option)
 {
-  bool recordings = Recordings.Update(true);
+  int Number = 0;
+  bool Path = false;
+  recordings.Update(true);
   if (*Option) {
-     if (isnumber(Option)) {
-        cRecording *recording = Recordings.Get(strtol(Option, NULL, 10) - 1);
+     char buf[strlen(Option) + 1];
+     strcpy(buf, Option);
+     const char *delim = " \t";
+     char *strtok_next;
+     char *p = strtok_r(buf, delim, &strtok_next);
+     while (p) {
+           if (!Number) {
+              if (isnumber(p))
+                 Number = strtol(p, NULL, 10);
+              else {
+                 Reply(501, "Error in recording number \"%s\"", Option);
+                 return;
+                 }
+              }
+           else if (strcasecmp(p, "PATH") == 0)
+              Path = true;
+           else {
+              Reply(501, "Unknown option: \"%s\"", p);
+              return;
+              }
+           p = strtok_r(NULL, delim, &strtok_next);
+           }
+     if (Number) {
+        cRecording *recording = recordings.Get(strtol(Option, NULL, 10) - 1);
         if (recording) {
            FILE *f = fdopen(file, "w");
            if (f) {
-              recording->Info()->Write(f, "215-");
-              fflush(f);
-              Reply(215, "End of recording information");
+              if (Path)
+                 Reply(250, "%s", recording->FileName());
+              else {
+                 recording->Info()->Write(f, "215-");
+                 fflush(f);
+                 Reply(215, "End of recording information");
+                 }
               // don't 'fclose(f)' here!
               }
            else
@@ -1051,14 +1127,12 @@ void cSVDRP::CmdLSTR(const char *Option)
         else
            Reply(550, "Recording \"%s\" not found", Option);
         }
-     else
-        Reply(501, "Error in recording number \"%s\"", Option);
      }
-  else if (recordings) {
-     cRecording *recording = Recordings.First();
+  else if (recordings.Count()) {
+     cRecording *recording = recordings.First();
      while (recording) {
-           Reply(recording == Recordings.Last() ? 250 : -250, "%d %s", recording->Index() + 1, recording->Title(' ', true));
-           recording = Recordings.Next(recording);
+           Reply(recording == recordings.Last() ? 250 : -250, "%d %s", recording->Index() + 1, recording->Title(' ', true));
+           recording = recordings.Next(recording);
            }
      }
   else
@@ -1225,7 +1299,7 @@ void cSVDRP::CmdMOVC(const char *Option)
                        Reply(250,"Channel \"%d\" moved to \"%d\"", From, To);
                        }
                     else
-                       Reply(501, "Can't move channel to same postion");
+                       Reply(501, "Can't move channel to same position");
                     }
                  else
                     Reply(501, "Channel \"%d\" not defined", To);
@@ -1244,12 +1318,6 @@ void cSVDRP::CmdMOVC(const char *Option)
      }
   else
      Reply(501, "Missing channel number");
-}
-
-void cSVDRP::CmdMOVT(const char *Option)
-{
-  //TODO combine this with menu action
-  Reply(502, "MOVT not yet implemented");
 }
 
 void cSVDRP::CmdNEWC(const char *Option)
@@ -1281,16 +1349,11 @@ void cSVDRP::CmdNEWT(const char *Option)
   if (*Option) {
      cTimer *timer = new cTimer;
      if (timer->Parse(Option)) {
-        cTimer *t = Timers.GetTimer(timer);
-        if (!t) {
-           Timers.Add(timer);
-           Timers.SetModified();
-           isyslog("timer %s added", *timer->ToDescr());
-           Reply(250, "%d %s", timer->Index() + 1, *timer->ToText());
-           return;
-           }
-        else
-           Reply(550, "Timer already defined: %d %s", t->Index() + 1, *t->ToText());
+        Timers.Add(timer);
+        Timers.SetModified();
+        isyslog("timer %s added", *timer->ToDescr());
+        Reply(250, "%d %s", timer->Index() + 1, *timer->ToText());
+        return;
         }
      else
         Reply(501, "Error in timer settings");
@@ -1330,35 +1393,29 @@ void cSVDRP::CmdPLAY(const char *Option)
      char c = *option;
      *option = 0;
      if (isnumber(num)) {
-        cRecording *recording = Recordings.Get(strtol(num, NULL, 10) - 1);
+        cRecording *recording = recordings.Get(strtol(num, NULL, 10) - 1);
         if (recording) {
            if (c)
               option = skipspace(++option);
-           cReplayControl::SetRecording(NULL, NULL);
+           cReplayControl::SetRecording(NULL);
            cControl::Shutdown();
            if (*option) {
               int pos = 0;
-              if (strcasecmp(option, "BEGIN") != 0) {
-                 int h, m = 0, s = 0, f = 1;
-                 int x = sscanf(option, "%d:%d:%d.%d", &h, &m, &s, &f);
-                 if (x == 1)
-                    pos = h;
-                 else if (x >= 3)
-                    pos = (h * 3600 + m * 60 + s) * FRAMESPERSEC + f - 1;
-                 }
-              cResumeFile resume(recording->FileName());
+              if (strcasecmp(option, "BEGIN") != 0)
+                 pos = HMSFToIndex(option, recording->FramesPerSecond());
+              cResumeFile resume(recording->FileName(), recording->IsPesRecording());
               if (pos <= 0)
                  resume.Delete();
               else
                  resume.Save(pos);
               }
-           cReplayControl::SetRecording(recording->FileName(), recording->Title());
+           cReplayControl::SetRecording(recording->FileName());
            cControl::Launch(new cReplayControl);
            cControl::Attach();
            Reply(250, "Playing recording \"%s\" [%s]", num, recording->Title());
            }
         else
-           Reply(550, "Recording \"%s\" not found%s", num, Recordings.Count() ? "" : " (use LSTR before playing)");
+           Reply(550, "Recording \"%s\" not found%s", num, recordings.Count() ? "" : " (use LSTR before playing)");
         }
      else
         Reply(501, "Error in recording number \"%s\"", num);
@@ -1441,11 +1498,27 @@ void cSVDRP::CmdPLUG(const char *Option)
 
 void cSVDRP::CmdPUTE(const char *Option)
 {
-  delete PUTEhandler;
-  PUTEhandler = new cPUTEhandler;
-  Reply(PUTEhandler->Status(), "%s", PUTEhandler->Message());
-  if (PUTEhandler->Status() != 354)
-     DELETENULL(PUTEhandler);
+  if (*Option) {
+     FILE *f = fopen(Option, "r");
+     if (f) {
+        if (cSchedules::Read(f)) {
+           cSchedules::Cleanup(true);
+           Reply(250, "EPG data processed from \"%s\"", Option);
+           }
+        else
+           Reply(451, "Error while processing EPG from \"%s\"", Option);
+        fclose(f);
+        }
+     else
+        Reply(501, "Cannot open file \"%s\"", Option);
+     }
+  else {
+     delete PUTEhandler;
+     PUTEhandler = new cPUTEhandler;
+     Reply(PUTEhandler->Status(), "%s", PUTEhandler->Message());
+     if (PUTEhandler->Status() != 354)
+        DELETENULL(PUTEhandler);
+     }
 }
 
 void cSVDRP::CmdREMO(const char *Option)
@@ -1519,6 +1592,12 @@ void cSVDRP::CmdUPDT(const char *Option)
      Reply(501, "Missing timer settings");
 }
 
+void cSVDRP::CmdUPDR(const char *Option)
+{
+  Recordings.Update(false);
+  Reply(250, "Re-read of recordings directory triggered");
+}
+
 void cSVDRP::CmdVOLU(const char *Option)
 {
   if (*Option) {
@@ -1551,6 +1630,7 @@ void cSVDRP::Execute(char *Cmd)
         Reply(PUTEhandler->Status(), "%s", PUTEhandler->Message());
         DELETENULL(PUTEhandler);
         }
+     cEitFilter::SetDisableUntil(time(NULL) + EITDISABLETIME); // re-trigger the timeout, in case there is very much EPG data
      return;
      }
   // skip leading whitespace:
@@ -1579,7 +1659,6 @@ void cSVDRP::Execute(char *Cmd)
   else if (CMD("MODC"))  CmdMODC(s);
   else if (CMD("MODT"))  CmdMODT(s);
   else if (CMD("MOVC"))  CmdMOVC(s);
-  else if (CMD("MOVT"))  CmdMOVT(s);
   else if (CMD("NEWC"))  CmdNEWC(s);
   else if (CMD("NEWT"))  CmdNEWT(s);
   else if (CMD("NEXT"))  CmdNEXT(s);
@@ -1589,6 +1668,7 @@ void cSVDRP::Execute(char *Cmd)
   else if (CMD("REMO"))  CmdREMO(s);
   else if (CMD("SCAN"))  CmdSCAN(s);
   else if (CMD("STAT"))  CmdSTAT(s);
+  else if (CMD("UPDR"))  CmdUPDR(s);
   else if (CMD("UPDT"))  CmdUPDT(s);
   else if (CMD("VOLU"))  CmdVOLU(s);
   else if (CMD("QUIT"))  Close(true);
@@ -1606,7 +1686,7 @@ bool cSVDRP::Process(void)
         char buffer[BUFSIZ];
         gethostname(buffer, sizeof(buffer));
         time_t now = time(NULL);
-        Reply(220, "%s SVDRP VideoDiskRecorder %s; %s", buffer, VDRVERSION, *TimeToString(now));
+        Reply(220, "%s SVDRP VideoDiskRecorder %s; %s; %s", buffer, VDRVERSION, *TimeToString(now), cCharSetConv::SystemCharacterTable() ? cCharSetConv::SystemCharacterTable() : "UTF-8");
         }
      if (NewConnection)
         lastActivity = time(NULL);
@@ -1643,8 +1723,16 @@ bool cSVDRP::Process(void)
                  }
               else {
                  if (numChars >= length - 1) {
-                    length += BUFSIZ;
-                    cmdLine = (char *)realloc(cmdLine, length);
+                    int NewLength = length + BUFSIZ;
+                    if (char *NewBuffer = (char *)realloc(cmdLine, NewLength)) {
+                       length = NewLength;
+                       cmdLine = NewBuffer;
+                       }
+                    else {
+                       esyslog("ERROR: out of memory");
+                       Close();
+                       break;
+                       }
                     }
                  cmdLine[numChars++] = c;
                  cmdLine[numChars] = 0;

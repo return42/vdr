@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: eitscan.c 1.30 2006/01/07 14:10:17 kls Exp $
+ * $Id: eitscan.c 2.7 2012/04/07 14:39:28 kls Exp $
  */
 
 #include "eitscan.h"
@@ -92,7 +92,6 @@ cEITScanner EITScanner;
 cEITScanner::cEITScanner(void)
 {
   lastScan = lastActivity = time(NULL);
-  currentDevice = NULL;
   currentChannel = 0;
   scanList = NULL;
   transponderList = NULL;
@@ -127,30 +126,30 @@ void cEITScanner::Activity(void)
 
 void cEITScanner::Process(void)
 {
-  if ((Setup.EPGScanTimeout || !lastActivity) && Channels.MaxNumber() > 1) { // !lastActivity means a scan was forced
+  if (Setup.EPGScanTimeout || !lastActivity) { // !lastActivity means a scan was forced
      time_t now = time(NULL);
      if (now - lastScan > ScanTimeout && now - lastActivity > ActivityTimeout) {
         if (Channels.Lock(false, 10)) {
            if (!scanList) {
               scanList = new cScanList;
-              scanList->AddTransponders(&Channels);
               if (transponderList) {
                  scanList->AddTransponders(transponderList);
                  delete transponderList;
                  transponderList = NULL;
                  }
+              scanList->AddTransponders(&Channels);
               }
            bool AnyDeviceSwitched = false;
            for (int i = 0; i < cDevice::NumDevices(); i++) {
                cDevice *Device = cDevice::GetDevice(i);
-               if (Device) {
+               if (Device && Device->ProvidesEIT()) {
                   for (cScanData *ScanData = scanList->First(); ScanData; ScanData = scanList->Next(ScanData)) {
                       const cChannel *Channel = ScanData->GetChannel();
                       if (Channel) {
                          if (!Channel->Ca() || Channel->Ca() == Device->DeviceNumber() + 1 || Channel->Ca() >= CA_ENCRYPTED_MIN) {
                             if (Device->ProvidesTransponder(Channel)) {
-                               if (!Device->Receiving()) {
-                                  bool MaySwitchTransponder = Device->MaySwitchTransponder();
+                               if (Device->Priority() < 0) {
+                                  bool MaySwitchTransponder = Device->MaySwitchTransponder(Channel);
                                   if (MaySwitchTransponder || Device->ProvidesTransponderExclusively(Channel) && now - lastActivity > Setup.EPGScanTimeout * 3600) {
                                      if (!MaySwitchTransponder) {
                                         if (Device == cDevice::ActualDevice() && !currentChannel) {
@@ -159,10 +158,8 @@ void cEITScanner::Process(void)
                                            Skins.Message(mtInfo, tr("Starting EPG scan"));
                                            }
                                         }
-                                     currentDevice = Device;//XXX see also dvbdevice.c!!!
                                      //dsyslog("EIT scan: device %d  source  %-8s tp %5d", Device->DeviceNumber() + 1, *cSource::ToString(Channel->Source()), Channel->Transponder());
                                      Device->SwitchChannel(Channel, false);
-                                     currentDevice = NULL;
                                      scanList->Del(ScanData);
                                      AnyDeviceSwitched = true;
                                      break;
