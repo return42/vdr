@@ -3,13 +3,13 @@
  *
  * See the README file for copyright information and how to reach the author.
  *
- * $Id: status.c 2.4 2013/03/31 09:30:18 kls Exp $
+ * $Id: status.c 3.2 2015/02/17 13:13:21 kls Exp $
  */
 
 #include <vdr/plugin.h>
 #include <vdr/status.h>
 
-static const char *VERSION        = "2.0.0";
+static const char *VERSION        = "2.2.0";
 static const char *DESCRIPTION    = "Status monitor test";
 static const char *MAINMENUENTRY  = NULL;
 

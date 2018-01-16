@@ -6,7 +6,7 @@
 # See the main source file 'vdr.c' for copyright information and
 # how to reach the author.
 #
-# $Id: Make.config.template 2.19 2013/02/18 10:55:39 kls Exp $
+# $Id: Make.config.template 3.4 2015/02/09 09:58:45 kls Exp $
 
 ### The C compiler and options:
 
@@ -38,6 +38,7 @@ endif
 
 #VIDEODIR  = /srv/vdr/video
 #CONFDIR   = /var/lib/vdr
+#ARGSDIR   = /etc/vdr/conf.d
 #CACHEDIR  = /var/cache/vdr
 
 # Overrides for preset/legacy configurations:
@@ -57,6 +58,7 @@ ifdef ONEDIR
 VIDEODIR     = /video
 CACHEDIR     = $(VIDEODIR)
 CONFDIR      = $(VIDEODIR)
+ARGSDIR      = $(VIDEODIR)/conf.d
 RESDIR       = $(VIDEODIR)
 endif
 
@@ -65,11 +67,22 @@ endif
 #PLGCFG = $(CONFDIR)/plugins.mk
 
 ### The remote control:
-
 LIRC_DEVICE = /var/run/lirc/lircd
+
+### Define if you always want to use LIRC, independent of the --lirc option:
+#REMOTE=LIRC
+
+### Define if you don't want keyboard remote control:
+#NO_KBD = 1
 
 ### Define if you want vdr to not run as root:
 #VDR_USER = vdr
+
+### Define if you want to compile in 'bidi' support:
+#BIDI = 1
+
+### Define if you want 'systemd' notification:
+#SDNOTIFY = 1
 
 ### Fallback for plugins with old makefiles:
 ifdef PLUGIN

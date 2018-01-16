@@ -4,13 +4,14 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: dvbplayer.h 2.1 2012/02/19 11:40:36 kls Exp $
+ * $Id: dvbplayer.h 3.2 2015/02/06 12:27:39 kls Exp $
  */
 
 #ifndef __DVBPLAYER_H
 #define __DVBPLAYER_H
 
 #include "player.h"
+#include "recording.h"
 #include "thread.h"
 
 class cDvbPlayer;
@@ -25,6 +26,7 @@ public:
        // file of the recording is long enough to allow the player to display
        // the first frame in still picture mode.
   virtual ~cDvbPlayerControl();
+  void SetMarks(cMarks *Marks);
   bool Active(void);
   void Stop(void);
        // Stops the current replay session (if any).
@@ -56,7 +58,7 @@ public:
        // and >0 if this is multi speed mode.
   void Goto(int Index, bool Still = false);
        // Positions to the given index and displays that frame as a still picture
-       // if Still is true.
+       // if Still is true. If Still is false, Play() will be called.
   };
 
 #endif //__DVBPLAYER_H

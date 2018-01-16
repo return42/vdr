@@ -1,17 +1,18 @@
 # VDR language source file.
-# Copyright (C) 2013 Klaus Schmidinger <vdr@tvdr.de>
+# Copyright (C) 2015 Klaus Schmidinger <vdr@tvdr.de>
 # This file is distributed under the same license as the VDR package.
 # Michael Rakowski <mrak@gmx.de>, 2002, 2003, 2008
 # Jaroslaw Swierczynski <swiergot@gmail.com>, 2006
 # Marek Nazarko <mnazarko@gmail.com>, 2013
+# Tomasz Maciej Nowak <tmn505@gmail.com>, 2015
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: VDR 2.0.0\n"
+"Project-Id-Version: VDR 2.2.0\n"
 "Report-Msgid-Bugs-To: <vdr-bugs@tvdr.de>\n"
-"POT-Creation-Date: 2013-03-04 14:46+0100\n"
-"PO-Revision-Date: 2008-03-09 12:59+0100\n"
-"Last-Translator: Marek Nazarko <mnazarko@gmail.com>\n"
+"POT-Creation-Date: 2015-02-10 13:40+0100\n"
+"PO-Revision-Date: 2015-02-12 00:59+0100\n"
+"Last-Translator: Tomasz Maciej Nowak <tmn505@gmail.com>\n"
 "Language-Team: Polish <vdr@linuxtv.org>\n"
 "Language: pl\n"
 "MIME-Version: 1.0\n"
@@ -20,6 +21,9 @@ msgstr ""
 
 msgid "*** Invalid Channel ***"
 msgstr "*** Niepoprawny kana³ ***"
+
+msgid "CAM activated!"
+msgstr "CAM aktywowany!"
 
 msgid "Channel not available!"
 msgstr "Kana³ nie jest dostêpny!"
@@ -77,6 +81,15 @@ msgstr "Rolloff"
 
 msgid "StreamId"
 msgstr "StreamId"
+
+msgid "Pilot"
+msgstr "Pilot"
+
+msgid "T2SystemId"
+msgstr "T2SystemId"
+
+msgid "SISO/MISO"
+msgstr "SISO/MISO"
 
 msgid "Starting EPG scan"
 msgstr "Rozpoczynam skanowanie EPG"
@@ -565,6 +578,12 @@ msgstr "CA"
 msgid "Sid"
 msgstr "Sid"
 
+msgid "Nid"
+msgstr "Nid"
+
+msgid "Tid"
+msgstr "Tid"
+
 msgid "Channel settings are not unique!"
 msgstr "Ustawienia kana³u nie s± unikalne!"
 
@@ -605,8 +624,8 @@ msgstr "Taka nazwa katalogu juz istnieje"
 msgid "Folder name must not contain '%c'!"
 msgstr "Folder nie mo¿e zawieraæ '%c'!"
 
-msgid "Button$Select"
-msgstr "Wybierz"
+msgid "Button$Open"
+msgstr "Otwórz"
 
 msgid "Delete folder and all sub folders?"
 msgstr "Czy skasowaæ katalog i wszystkie podkatalogi?"
@@ -725,6 +744,76 @@ msgstr "Proszê podaæ %d cyfr!"
 msgid "CAM not responding!"
 msgstr "CAM nie reaguje!"
 
+msgid "Edit path"
+msgstr "Edytuj ¶cie¿kê"
+
+msgid "Folder"
+msgstr "Katalog"
+
+msgid "This folder is currently in use - no changes are possible!"
+msgstr "Ten katalog jest w u¿yciu - zmiany nie s± mo¿liwe!"
+
+#, c-format
+msgid "Move entire folder containing %d recordings?"
+msgstr "Przenie¶æ ca³y katalog zawiraj±cy %d nagrañ?"
+
+msgid "Error while moving folder!"
+msgstr "B³±d podczas przenoszenia katalogu!"
+
+msgid "Edit recording"
+msgstr "Edytuj nagranie"
+
+msgid "This recording is currently in use - no changes are possible!"
+msgstr "To nagranie jest w u¿yciu - zmiany nie s± mo¿liwe!"
+
+msgid "Button$Cancel cutting"
+msgstr "Anuluj przycinanie"
+
+msgid "Button$Stop cutting"
+msgstr "Zatrzymaj przycinanie"
+
+msgid "Button$Cancel moving"
+msgstr "Anuluj przenoszenie"
+
+msgid "Button$Stop moving"
+msgstr "Zatrzymaj przenoszenie"
+
+msgid "Button$Cancel copying"
+msgstr "Anuluj kopiowanie"
+
+msgid "Button$Stop copying"
+msgstr "Zatrzymaj kopiowanie"
+
+msgid "Button$Cut"
+msgstr "Wytnij"
+
+msgid "Button$Delete marks"
+msgstr "Usuñ zaznaczone"
+
+msgid "Recording vanished!"
+msgstr "Nagranie zniknê³o!"
+
+msgid "Edited version already exists - overwrite?"
+msgstr "Edytowana wersja ju¿ istnieje - nadpisaæ?"
+
+msgid "Error while queueing recording for cutting!"
+msgstr "B³±d podczas zakolejkowania nagrania do przycinania!"
+
+msgid "Rename recording to folder name?"
+msgstr "Zmieniæ nazwê nagrania na nazwê katalogu?"
+
+msgid "Delete editing marks for this recording?"
+msgstr "Usun±æ zaznaczenia z edycji dla tego nagrania?"
+
+msgid "Error while deleting editing marks!"
+msgstr "B³±d podczas usuwania zaznaczeñ edycji!"
+
+msgid "Error while changing priority/lifetime!"
+msgstr "B³±d podczas zmiany priorytetu/czasu ¿ycia!"
+
+msgid "Error while changing folder/name!"
+msgstr "B³±d podczas zmiany katalogu/nazwy!"
+
 msgid "Recording info"
 msgstr "Informacje o nagraniu"
 
@@ -736,9 +825,6 @@ msgstr "Pocz±tek"
 
 msgid "Recordings"
 msgstr "Nagrania"
-
-msgid "Button$Open"
-msgstr "Otwórz"
 
 msgid "Commands"
 msgstr "Polecenia"
@@ -798,7 +884,7 @@ msgid "Setup.OSD$Anti-alias"
 msgstr "Wyg³adzanie"
 
 msgid "Setup.OSD$Default font"
-msgstr "Standardowa  czcionka"
+msgstr "Standardowa czcionka"
 
 msgid "Setup.OSD$Small font"
 msgstr "Ma³a czcionka"
@@ -995,6 +1081,33 @@ msgstr "Urz±dzenie %d pod³±czone do kabla satelitarnego"
 msgid "Setup.LNB$own"
 msgstr "W³asny"
 
+msgid "Setup.LNB$Use dish positioner"
+msgstr "U¿ywaj obrotnicy"
+
+msgid "Setup.LNB$Site latitude (degrees)"
+msgstr "Szeroko¶æ geograficzna stopnie"
+
+msgid "South"
+msgstr "Po³udnie"
+
+msgid "North"
+msgstr "Pó³noc"
+
+msgid "Setup.LNB$Site longitude (degrees)"
+msgstr "D³ugo¶æ geograficzna (stopnie)"
+
+msgid "West"
+msgstr "Zachód"
+
+msgid "East"
+msgstr "Wschód"
+
+msgid "Setup.LNB$Max. positioner swing (degrees)"
+msgstr "Max. obrót pozycjonera (stopnie)"
+
+msgid "Setup.LNB$Positioner speed (degrees/s)"
+msgstr "Prêdko¶æ pozycjonera (stopnie/s)"
+
 msgid "CAM reset"
 msgstr "CAM zresetowany"
 
@@ -1004,8 +1117,18 @@ msgstr "CAM obecny"
 msgid "CAM ready"
 msgstr "CAM gotowy"
 
+#. TRANSLATORS: note the leading blank!
+msgid " (activating)"
+msgstr " (aktywujê)"
+
 msgid "CAM"
 msgstr "CAM"
+
+msgid "Button$Cancel activation"
+msgstr "Anuluj aktywacjê"
+
+msgid "Button$Activate"
+msgstr "Aktywuj"
 
 msgid "Button$Menu"
 msgstr "Menu"
@@ -1018,6 +1141,9 @@ msgstr "Otwieram menu CAM..."
 
 msgid "Can't open CAM menu!"
 msgstr "Nie mo¿na otworzyæ menu CAM!"
+
+msgid "Can't activate CAM!"
+msgstr "Nie mo¿na aktywowaæ CAM!"
 
 msgid "CAM is in use - really reset?"
 msgstr "CAM jest w u¿yciu - naprawdê zresetowaæ?"
@@ -1112,6 +1238,33 @@ msgstr "Wy¶wietl czas odtwarzania (s)"
 msgid "Setup.Replay$Pause replay when setting mark"
 msgstr "Wstrzymaj odtwarzanie podczas ustawiania zaznaczania"
 
+msgid "Setup.Replay$Pause replay when jumping to a mark"
+msgstr "Wstrzymaj odtwarzanie przy przeskoku do zaznaczenia"
+
+msgid "Setup.Replay$Skip edited parts"
+msgstr "Przeskocz edytowan± czê¶æ"
+
+msgid "Setup.Replay$Pause replay at last mark"
+msgstr "Wstrzymaj odtwarzanie przy ostatnim zaznaczeniu"
+
+msgid "Setup.Replay$Initial duration for adaptive skipping (s)"
+msgstr "Pocz±tkowy czas trwania dla przeskoku adaptacyjnego (s)"
+
+msgid "Setup.Replay$Reset timeout for adaptive skipping (s)"
+msgstr "Czas oczekiwania na wyzerowanie dla przeskoku adaptacyjnego (s)"
+
+msgid "Setup.Replay$Alternate behavior for adaptive skipping"
+msgstr "Zmieñ zachowanie dla przeskoku adaptacyjnego"
+
+msgid "Setup.Replay$Use Prev/Next keys for adaptive skipping"
+msgstr "U¿yj klawiszy Poprzedni/Nastêpny dla przeskoku adaptacyjnego"
+
+msgid "Setup.Replay$Skip distance with Green/Yellow keys (s)"
+msgstr "Pomiñ dystans klawiszami Zielony/¯ó³ty (s)"
+
+msgid "Setup.Replay$Skip distance with Green/Yellow keys in repeat (s)"
+msgstr "Pomiñ dystans klawiszami Zielony/¯ó³ty w powtórce (s)"
+
 msgid "Setup.Replay$Resume ID"
 msgstr "ID wznowienia"
 
@@ -1147,6 +1300,12 @@ msgstr "jak ostatnio"
 
 msgid "Setup.Miscellaneous$Initial volume"
 msgstr "Pocz±tkowa g³o¶no¶æ"
+
+msgid "Setup.Miscellaneous$Volume steps"
+msgstr "Przeskok g³o¶no¶ci"
+
+msgid "Setup.Miscellaneous$Volume linearize"
+msgstr "Linearyzacja g³o¶no¶ci"
 
 msgid "Setup.Miscellaneous$Channels wrap"
 msgstr "Zawijanie kana³ów"
@@ -1282,7 +1441,7 @@ msgid "Can't shutdown - option '-s' not given!"
 msgstr "Nie mo¿na wy³±czyæ - nie podano opcji '-s'!"
 
 msgid "Editing - shut down anyway?"
-msgstr "Monta¿ w trakcie  - Wy³±czyæ mimo to?"
+msgstr "Monta¿ w trakcie - Wy³±czyæ mimo to?"
 
 msgid "Recording - shut down anyway?"
 msgstr "Trwa nagrywanie - wy³±czyæ mimo to?"
@@ -1299,7 +1458,7 @@ msgid "Plugin %s wakes up in %ld min, continue?"
 msgstr "Wtyczka %s obudzi siê za %ld min, kontynuowaæ?"
 
 msgid "Editing - restart anyway?"
-msgstr "Monta¿ w trakcie  - Zrestartowaæ mimo to?"
+msgstr "Monta¿ w trakcie - Zrestartowaæ mimo to?"
 
 msgid "Recording - restart anyway?"
 msgstr "Trwa nagrywanie - zrestartowaæ mimo to?"
@@ -1331,6 +1490,10 @@ msgstr "NA ¯YWO"
 
 msgid "PLAY"
 msgstr "ODTWARZA"
+
+#, c-format
+msgid "Moving dish to %.1f..."
+msgstr "Obracam talerz do %.1f..."
 
 msgid "ST:TNG Panels"
 msgstr "Panel ST:TNG"

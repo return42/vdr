@@ -1,19 +1,20 @@
 # VDR language source file.
-# Copyright (C) 2013 Klaus Schmidinger <vdr@tvdr.de>
+# Copyright (C) 2015 Klaus Schmidinger <vdr@tvdr.de>
 # This file is distributed under the same license as the VDR package.
 # Tomas Prybil <tomas@prybil.se>, 2002, 2003, 2005, 2006
 # Jan Ekholm <chakie@infa.abo.fi>, 2003
 # Tomas Berglund <tomber@telia.com>, 2008
 # Magnus Andersson <svankan@bahnhof.se>, 2008
 # Richard Lithvall <r-vdr@boomer.se>, 2013
+# Magnus Sirviö <sirwio@hotmail.com>, 2015
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: VDR 2.0.0\n"
+"Project-Id-Version: VDR 2.2.0\n"
 "Report-Msgid-Bugs-To: <vdr-bugs@tvdr.de>\n"
-"POT-Creation-Date: 2013-03-04 14:46+0100\n"
-"PO-Revision-Date: 2013-02-18 17:04+0100\n"
-"Last-Translator: Richard Lithvall <r-vdr@boomer.se>\n"
+"POT-Creation-Date: 2015-02-10 13:40+0100\n"
+"PO-Revision-Date: 2015-02-12 21:58+0100\n"
+"Last-Translator: Magnus Sirviö <sirwio@hotmail.com>\n"
 "Language-Team: Swedish <vdr@linuxtv.org>\n"
 "Language: sv\n"
 "MIME-Version: 1.0\n"
@@ -22,6 +23,9 @@ msgstr ""
 
 msgid "*** Invalid Channel ***"
 msgstr "*** Felaktig kanal ***"
+
+msgid "CAM activated!"
+msgstr "CAM aktiverad!"
 
 msgid "Channel not available!"
 msgstr "Kanalen är inte tillgänglig!"
@@ -72,13 +76,22 @@ msgid "Guard"
 msgstr "Guard"
 
 msgid "Hierarchy"
-msgstr "Hierarchy"
+msgstr "Hierarki"
 
 msgid "Rolloff"
 msgstr "Rolloff"
 
 msgid "StreamId"
 msgstr "StreamId"
+
+msgid "Pilot"
+msgstr "Pilotavsnitt"
+
+msgid "T2SystemId"
+msgstr "T2SystemId"
+
+msgid "SISO/MISO"
+msgstr "SISO/MISO"
 
 msgid "Starting EPG scan"
 msgstr "Påbörjar EPG-avsökning"
@@ -108,7 +121,7 @@ msgid "Content$Serious/Classical/Religious/Historical Movie/Drama"
 msgstr "Seriös/Klassisk/Religös/Historisk/Drama"
 
 msgid "Content$Adult Movie/Drama"
-msgstr "Vuxen/Drama"
+msgstr "Vuxenfilm/Drama"
 
 msgid "Content$News/Current Affairs"
 msgstr "Nyheter/Journalistik"
@@ -567,6 +580,12 @@ msgstr "Kortläsare"
 msgid "Sid"
 msgstr "Sid"
 
+msgid "Nid"
+msgstr "Nid"
+
+msgid "Tid"
+msgstr "Tid"
+
 msgid "Channel settings are not unique!"
 msgstr "Kanalinställningarna är ej unika!"
 
@@ -607,8 +626,8 @@ msgstr "Mappnamnet finns redan!"
 msgid "Folder name must not contain '%c'!"
 msgstr "Mappnamnet får inte innehålla '%c'!"
 
-msgid "Button$Select"
-msgstr "Välj"
+msgid "Button$Open"
+msgstr "Öppna"
 
 msgid "Delete folder and all sub folders?"
 msgstr "Radera mapp och alla undermappar?"
@@ -727,6 +746,76 @@ msgstr "Mata in %d siffror!"
 msgid "CAM not responding!"
 msgstr "CAM svarar inte!"
 
+msgid "Edit path"
+msgstr "Redigera sökväg"
+
+msgid "Folder"
+msgstr "Mapp"
+
+msgid "This folder is currently in use - no changes are possible!"
+msgstr "Den här mappen används just nu - inga förändringar är möjliga!"
+
+#, c-format
+msgid "Move entire folder containing %d recordings?"
+msgstr "Flytta hela mappen innehållandes %d inspelningar?"
+
+msgid "Error while moving folder!"
+msgstr "Ett fel upstod när mappen skulle flyttas!"
+
+msgid "Edit recording"
+msgstr "Redigera inspelning"
+
+msgid "This recording is currently in use - no changes are possible!"
+msgstr "Den här inspelningen används just nu - inga förändringar är möjliga!"
+
+msgid "Button$Cancel cutting"
+msgstr "Avbryta klippning"
+
+msgid "Button$Stop cutting"
+msgstr "Avsluta klippning"
+
+msgid "Button$Cancel moving"
+msgstr "Avbryta flytt"
+
+msgid "Button$Stop moving"
+msgstr "Avsluta flytt"
+
+msgid "Button$Cancel copying"
+msgstr "Avbryta kopiering"
+
+msgid "Button$Stop copying"
+msgstr "Avsluta kopiering"
+
+msgid "Button$Cut"
+msgstr "Redigera"
+
+msgid "Button$Delete marks"
+msgstr "Ta bort redigeringsmärke"
+
+msgid "Recording vanished!"
+msgstr "Inspelningen försvann!"
+
+msgid "Edited version already exists - overwrite?"
+msgstr "En redigerad version finns redan - skall den ersättas?"
+
+msgid "Error while queueing recording for cutting!"
+msgstr "Ett fel upstod när inspelningen köades för klippning!"
+
+msgid "Rename recording to folder name?"
+msgstr "Byta namn på inspelning till mappnamnet?"
+
+msgid "Delete editing marks for this recording?"
+msgstr "Ta bort redigeringsmärken för den här inspelningen?"
+
+msgid "Error while deleting editing marks!"
+msgstr "Ett fel uppstod när redigeringsmärken skulle tas bort!"
+
+msgid "Error while changing priority/lifetime!"
+msgstr "Ett fel upstod när prioritet/livstid skulle ändras!"
+
+msgid "Error while changing folder/name!"
+msgstr "Ett fel uppstod när mapp/namn skulle ändras!"
+
 msgid "Recording info"
 msgstr "Inspelningsinformation"
 
@@ -738,9 +827,6 @@ msgstr "Återspolning"
 
 msgid "Recordings"
 msgstr "Inspelningar"
-
-msgid "Button$Open"
-msgstr "Öppna"
 
 msgid "Commands"
 msgstr "Kommandon"
@@ -995,7 +1081,34 @@ msgid "Setup.LNB$Device %d connected to sat cable"
 msgstr "Enhet %d ansluten till satellitkabel"
 
 msgid "Setup.LNB$own"
-msgstr "ägare"
+msgstr "egen"
+
+msgid "Setup.LNB$Use dish positioner"
+msgstr "Använda parabolstyrning"
+
+msgid "Setup.LNB$Site latitude (degrees)"
+msgstr "Latitude (grader)"
+
+msgid "South"
+msgstr "Söder"
+
+msgid "North"
+msgstr "Norr"
+
+msgid "Setup.LNB$Site longitude (degrees)"
+msgstr "Longitud (grader)"
+
+msgid "West"
+msgstr "Väster"
+
+msgid "East"
+msgstr "Öster"
+
+msgid "Setup.LNB$Max. positioner swing (degrees)"
+msgstr "Maximal positonerings svängning (grader)"
+
+msgid "Setup.LNB$Positioner speed (degrees/s)"
+msgstr "Positoneringshastighet (grader/s)"
 
 msgid "CAM reset"
 msgstr "CAM omstart"
@@ -1006,8 +1119,18 @@ msgstr "CAM närvarande"
 msgid "CAM ready"
 msgstr "CAM klar"
 
+#. TRANSLATORS: note the leading blank!
+msgid " (activating)"
+msgstr " (aktiverar)"
+
 msgid "CAM"
 msgstr "CAM"
+
+msgid "Button$Cancel activation"
+msgstr "Avbryta aktivering"
+
+msgid "Button$Activate"
+msgstr "Aktivera"
 
 msgid "Button$Menu"
 msgstr "Meny"
@@ -1020,6 +1143,9 @@ msgstr "Öppnar CAM menyn..."
 
 msgid "Can't open CAM menu!"
 msgstr "Det går inte att öppna CAM menyn!"
+
+msgid "Can't activate CAM!"
+msgstr "Kan inte aktivera CAM!"
 
 msgid "CAM is in use - really reset?"
 msgstr "CAM upptagen, vill du verkligen återställa?"
@@ -1112,7 +1238,34 @@ msgid "Setup.Replay$Progress display time (s)"
 msgstr "Tid för visning av förloppsindikatorn (sek)"
 
 msgid "Setup.Replay$Pause replay when setting mark"
-msgstr "Pausa uppspelningen vid sättande av redigeringsmärke"
+msgstr "Pausa uppspelning vid sättande av redigeringsmärke"
+
+msgid "Setup.Replay$Pause replay when jumping to a mark"
+msgstr "Pausa uppspelning vid hopp till redigeringsmärke"
+
+msgid "Setup.Replay$Skip edited parts"
+msgstr "Hoppa över redigerade delar"
+
+msgid "Setup.Replay$Pause replay at last mark"
+msgstr "Pausa uppspelning på sista redigeringsmärket"
+
+msgid "Setup.Replay$Initial duration for adaptive skipping (s)"
+msgstr "Initialt värde på intelligent hopp i inspelning (s)"
+
+msgid "Setup.Replay$Reset timeout for adaptive skipping (s)"
+msgstr "Tidsgräns vid intelligenta hopp i inspellning (s)"
+
+msgid "Setup.Replay$Alternate behavior for adaptive skipping"
+msgstr "Alternativt beteende på intelligenta hopp i inspelning"
+
+msgid "Setup.Replay$Use Prev/Next keys for adaptive skipping"
+msgstr "Använda Föregående/Nästa knappar för intelligenta hopp i inspelning"
+
+msgid "Setup.Replay$Skip distance with Green/Yellow keys (s)"
+msgstr "Tid för hopp med Grön/Gul knapp (s)"
+
+msgid "Setup.Replay$Skip distance with Green/Yellow keys in repeat (s)"
+msgstr "Tid för hopp med Grön/Gul knapp vid återuppspelning (s)"
 
 msgid "Setup.Replay$Resume ID"
 msgstr "Återupptagnings-ID"
@@ -1149,6 +1302,12 @@ msgstr "samma som vid avslut"
 
 msgid "Setup.Miscellaneous$Initial volume"
 msgstr "Ljudstyrka vid uppstart"
+
+msgid "Setup.Miscellaneous$Volume steps"
+msgstr "Volymsteg"
+
+msgid "Setup.Miscellaneous$Volume linearize"
+msgstr "Volymlinjärisering"
 
 msgid "Setup.Miscellaneous$Channels wrap"
 msgstr "Cirkulär kanallista"
@@ -1248,7 +1407,7 @@ msgid "FileNameChars$ abcdefghijklmnopqrstuvwxyz0123456789-.,#~\\^$[]|()*+?{}/:%
 msgstr " abcdefghijklmnopqrstuvwxyzåäö0123456789-.,#~\\^$[]|()*+?{}/:%@&"
 
 msgid "CharMap$ 0\t-.,1#~\\^$[]|()*+?{}/:%@&\tabc2\tdef3\tghi4\tjkl5\tmno6\tpqrs7\ttuv8\twxyz9"
-msgstr " 0\t-.,1#~\\^$[]|()*+?{}/:%@&\tabcåä2\tdef3\tghi4\tjkl5\tmnoö6\tpqrs7\ttuv8\twxyz"
+msgstr " 0\t-.,1#~\\^$[]|()*+?{}/:%@&\tabcåä2\tdef3\tghi4\tjkl5\tmnoö6\tpqrs7\ttuv8\twxyz9"
 
 msgid "Button$ABC/abc"
 msgstr "ABC/abc"
@@ -1333,6 +1492,10 @@ msgstr "LIVE"
 
 msgid "PLAY"
 msgstr "SPELA"
+
+#, c-format
+msgid "Moving dish to %.1f..."
+msgstr "Flyttar parabol till %.1f..."
 
 msgid "ST:TNG Panels"
 msgstr "ST:TNG"

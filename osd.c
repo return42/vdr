@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: osd.c 2.38.1.1 2013/05/18 12:41:48 kls Exp $
+ * $Id: osd.c 3.5 2015/02/11 09:48:02 kls Exp $
  */
 
 #include "osd.h"
@@ -512,6 +512,17 @@ void cBitmap::SetIndex(int x, int y, tIndex Index)
      }
 }
 
+void cBitmap::Fill(tIndex Index)
+{
+  if (bitmap) {
+     memset(bitmap, Index, width * height);
+     dirtyX1 = 0;
+     dirtyY1 = 0;
+     dirtyX2 = width - 1;
+     dirtyY2 = height - 1;
+     }
+}
+
 void cBitmap::DrawPixel(int x, int y, tColor Color)
 {
   x -= x0;
@@ -824,7 +835,7 @@ void cBitmap::ShrinkBpp(int NewBpp)
      }
 }
 
-cBitmap *cBitmap::Scaled(double FactorX, double FactorY, bool AntiAlias)
+cBitmap *cBitmap::Scaled(double FactorX, double FactorY, bool AntiAlias) const
 {
   // Fixed point scaling code based on www.inversereality.org/files/bitmapscaling.pdf
   // by deltener@mindtremors.com
@@ -973,12 +984,13 @@ cPixmap::cPixmap(int Layer, const cRect &ViewPort, const cRect &DrawPort)
 
 void cPixmap::MarkViewPortDirty(const cRect &Rect)
 {
-  dirtyViewPort.Combine(Rect.Intersected(viewPort));
+  if (layer >= 0)
+     dirtyViewPort.Combine(Rect.Intersected(viewPort));
 }
 
 void cPixmap::MarkViewPortDirty(const cPoint &Point)
 {
-  if (viewPort.Contains(Point))
+  if (layer >= 0 && viewPort.Contains(Point))
      dirtyViewPort.Combine(Point);
 }
 
@@ -1014,11 +1026,18 @@ void cPixmap::SetLayer(int Layer)
      esyslog("ERROR: pixmap layer %d limited to %d", Layer, MAXPIXMAPLAYERS - 1);
      Layer = MAXPIXMAPLAYERS - 1;
      }
-  if (Layer != layer) {
-     if (Layer > 0 || layer > 0)
-        MarkViewPortDirty(viewPort);
+  // The sequence here is important, because the view port is only marked as dirty
+  // if the layer is >= 0:
+  if (layer >= 0) {
+     MarkViewPortDirty(viewPort); // the pixmap is visible and may or may not become invisible
      layer = Layer;
      }
+  else if (Layer >= 0) {
+     layer = Layer;
+     MarkViewPortDirty(viewPort); // the pixmap was invisible and has become visible
+     }
+  else
+     layer = Layer; // the pixmap was invisible and remains so
   Unlock();
 }
 
@@ -1130,6 +1149,7 @@ cPixmapMemory::cPixmapMemory(int Layer, const cRect &ViewPort, const cRect &Draw
 :cPixmap(Layer, ViewPort, DrawPort)
 {
   data = MALLOC(tColor, this->DrawPort().Width() * this->DrawPort().Height());
+  panning = false;
 }
 
 cPixmapMemory::~cPixmapMemory()
@@ -1703,7 +1723,8 @@ void cOsd::DestroyPixmap(cPixmap *Pixmap)
      LOCK_PIXMAPS;
      for (int i = 1; i < pixmaps.Size(); i++) { // begin at 1 - don't let the background pixmap be destroyed!
          if (pixmaps[i] == Pixmap) {
-            pixmaps[0]->MarkViewPortDirty(Pixmap->ViewPort());
+            if (Pixmap->Layer() >= 0)
+               pixmaps[0]->MarkViewPortDirty(Pixmap->ViewPort());
             delete Pixmap;
             pixmaps[i] = NULL;
             return;
@@ -1726,9 +1747,9 @@ cPixmap *cOsd::AddPixmap(cPixmap *Pixmap)
   return Pixmap;
 }
 
-cPixmapMemory *cOsd::RenderPixmaps(void)
+cPixmap *cOsd::RenderPixmaps(void)
 {
-  cPixmapMemory *Pixmap = NULL;
+  cPixmap *Pixmap = NULL;
   if (isTrueColor) {
      LOCK_PIXMAPS;
      // Collect overlapping dirty rectangles:
@@ -1751,25 +1772,27 @@ cPixmapMemory *cOsd::RenderPixmaps(void)
         d.Combine(OldDirty);
         OldDirty = NewDirty;
 #endif
-        Pixmap = new cPixmapMemory(0, d);
-        Pixmap->Clear();
-        // Render the individual pixmaps into the resulting pixmap:
-        for (int Layer = 0; Layer < MAXPIXMAPLAYERS; Layer++) {
-            for (int i = 0; i < pixmaps.Size(); i++) {
-                if (cPixmap *pm = pixmaps[i]) {
-                   if (pm->Layer() == Layer)
-                   Pixmap->DrawPixmap(pm, d);
+        Pixmap = CreatePixmap(-1, d);
+        if (Pixmap) {
+           Pixmap->Clear();
+           // Render the individual pixmaps into the resulting pixmap:
+           for (int Layer = 0; Layer < MAXPIXMAPLAYERS; Layer++) {
+               for (int i = 0; i < pixmaps.Size(); i++) {
+                   if (cPixmap *pm = pixmaps[i]) {
+                      if (pm->Layer() == Layer)
+                         Pixmap->DrawPixmap(pm, d);
+                      }
                    }
-                }
-            }
+               }
 #ifdef DebugDirty
-        cPixmapMemory DirtyIndicator(7, NewDirty);
-        static tColor DirtyIndicatorColors[] = { 0x7FFFFF00, 0x7F00FFFF };
-        static int DirtyIndicatorIndex = 0;
-        DirtyIndicator.Fill(DirtyIndicatorColors[DirtyIndicatorIndex]);
-        DirtyIndicatorIndex = 1 - DirtyIndicatorIndex;
-        Pixmap->Render(&DirtyIndicator, DirtyIndicator.DrawPort(), DirtyIndicator.ViewPort().Point().Shifted(-Pixmap->ViewPort().Point()));
+           cPixmapMemory DirtyIndicator(7, NewDirty);
+           static tColor DirtyIndicatorColors[] = { 0x7FFFFF00, 0x7F00FFFF };
+           static int DirtyIndicatorIndex = 0;
+           DirtyIndicator.Fill(DirtyIndicatorColors[DirtyIndicatorIndex]);
+           DirtyIndicatorIndex = 1 - DirtyIndicatorIndex;
+           Pixmap->Render(&DirtyIndicator, DirtyIndicator.DrawPort(), DirtyIndicator.ViewPort().Point().Shifted(-Pixmap->ViewPort().Point()));
 #endif
+           }
         }
      }
   return Pixmap;
@@ -1906,6 +1929,16 @@ void cOsd::DrawBitmap(int x, int y, const cBitmap &Bitmap, tColor ColorFg, tColo
      }
 }
 
+void cOsd::DrawScaledBitmap(int x, int y, const cBitmap &Bitmap, double FactorX, double FactorY, bool AntiAlias)
+{
+  const cBitmap *b = &Bitmap;
+  if (!DoubleEqual(FactorX, 1.0) || !DoubleEqual(FactorY, 1.0))
+     b = b->Scaled(FactorX, FactorY, AntiAlias);
+  DrawBitmap(x, y, *b);
+  if (b != &Bitmap)
+     delete b;
+}
+
 void cOsd::DrawText(int x, int y, const char *s, tColor ColorFg, tColor ColorBg, const cFont *Font, int Width, int Height, int Alignment)
 {
   if (isTrueColor)
@@ -1957,6 +1990,7 @@ int cOsdProvider::oldWidth = 0;
 int cOsdProvider::oldHeight = 0;
 double cOsdProvider::oldAspect = 1.0;
 cImage *cOsdProvider::images[MAXOSDIMAGES] = { NULL };
+int cOsdProvider::osdState = 0;
 
 cOsdProvider::cOsdProvider(void)
 {
@@ -1994,6 +2028,7 @@ void cOsdProvider::UpdateOsdSize(bool Force)
   int Width;
   int Height;
   double Aspect;
+  cMutexLock MutexLock(&cOsd::mutex);
   cDevice::PrimaryDevice()->GetOsdSize(Width, Height, Aspect);
   if (Width != oldWidth || Height != oldHeight || !DoubleEqual(Aspect, oldAspect) || Force) {
      Setup.OSDLeft = int(round(Width * Setup.OSDLeftP));
@@ -2011,7 +2046,16 @@ void cOsdProvider::UpdateOsdSize(bool Force)
      oldHeight = Height;
      oldAspect = Aspect;
      dsyslog("OSD size changed to %dx%d @ %g", Width, Height, Aspect);
+     osdState++;
      }
+}
+
+bool cOsdProvider::OsdSizeChanged(int &State)
+{
+  cMutexLock MutexLock(&cOsd::mutex);
+  bool Result = osdState != State;
+  State = osdState;
+  return Result;
 }
 
 bool cOsdProvider::SupportsTrueColor(void)

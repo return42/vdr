@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: config.c 2.38 2013/03/18 08:57:50 kls Exp $
+ * $Id: config.c 3.10 2015/02/10 12:24:13 kls Exp $
  */
 
 #include "config.h"
@@ -389,6 +389,12 @@ cSetup::cSetup(void)
   LnbFrequLo =  9750;
   LnbFrequHi = 10600;
   DiSEqC = 0;
+  UsePositioner = 0;
+  SiteLat = 0;
+  SiteLon = 0;
+  PositionerSpeed = 15;
+  PositionerSwing = 650;
+  PositionerLastLon = 0;
   SetSystemTime = 0;
   TimeSource = 0;
   TimeTransponder = 0;
@@ -464,9 +470,20 @@ cSetup::cSetup(void)
   ShowRemainingTime = 0;
   ProgressDisplayTime = 0;
   PauseOnMarkSet = 0;
+  PauseOnMarkJump = 1;
+  SkipEdited = 0;
+  PauseAtLastMark = 0;
+  AdaptiveSkipInitial = 120;
+  AdaptiveSkipTimeout = 3;
+  AdaptiveSkipAlternate = 0;
+  AdaptiveSkipPrevNext = 0;
+  SkipSeconds = 60;
+  SkipSecondsRepeat = 60;
   ResumeID = 0;
   CurrentChannel = -1;
   CurrentVolume = MAXVOLUME;
+  VolumeSteps = 51;
+  VolumeLinearize = 0;
   CurrentDolby = 0;
   InitialChannel = "";
   DeviceBondings = "";
@@ -594,6 +611,12 @@ bool cSetup::Parse(const char *Name, const char *Value)
   else if (!strcasecmp(Name, "LnbFrequLo"))          LnbFrequLo         = atoi(Value);
   else if (!strcasecmp(Name, "LnbFrequHi"))          LnbFrequHi         = atoi(Value);
   else if (!strcasecmp(Name, "DiSEqC"))              DiSEqC             = atoi(Value);
+  else if (!strcasecmp(Name, "UsePositioner"))       UsePositioner      = atoi(Value);
+  else if (!strcasecmp(Name, "SiteLat"))             SiteLat            = atoi(Value);
+  else if (!strcasecmp(Name, "SiteLon"))             SiteLon            = atoi(Value);
+  else if (!strcasecmp(Name, "PositionerSpeed"))     PositionerSpeed    = atoi(Value);
+  else if (!strcasecmp(Name, "PositionerSwing"))     PositionerSwing    = atoi(Value);
+  else if (!strcasecmp(Name, "PositionerLastLon"))   PositionerLastLon  = atoi(Value);
   else if (!strcasecmp(Name, "SetSystemTime"))       SetSystemTime      = atoi(Value);
   else if (!strcasecmp(Name, "TimeSource"))          TimeSource         = cSource::FromString(Value);
   else if (!strcasecmp(Name, "TimeTransponder"))     TimeTransponder    = atoi(Value);
@@ -669,11 +692,22 @@ bool cSetup::Parse(const char *Name, const char *Value)
   else if (!strcasecmp(Name, "ShowRemainingTime"))   ShowRemainingTime  = atoi(Value);
   else if (!strcasecmp(Name, "ProgressDisplayTime")) ProgressDisplayTime= atoi(Value);
   else if (!strcasecmp(Name, "PauseOnMarkSet"))      PauseOnMarkSet     = atoi(Value);
+  else if (!strcasecmp(Name, "PauseOnMarkJump"))     PauseOnMarkJump    = atoi(Value);
+  else if (!strcasecmp(Name, "SkipEdited"))          SkipEdited         = atoi(Value);
+  else if (!strcasecmp(Name, "PauseAtLastMark"))     PauseAtLastMark    = atoi(Value);
+  else if (!strcasecmp(Name, "AdaptiveSkipInitial")) AdaptiveSkipInitial= atoi(Value);
+  else if (!strcasecmp(Name, "AdaptiveSkipTimeout")) AdaptiveSkipTimeout= atoi(Value);
+  else if (!strcasecmp(Name, "AdaptiveSkipAlternate")) AdaptiveSkipAlternate = atoi(Value);
+  else if (!strcasecmp(Name, "AdaptiveSkipPrevNext")) AdaptiveSkipPrevNext = atoi(Value);
+  else if (!strcasecmp(Name, "SkipSeconds"))         SkipSeconds        = atoi(Value);
+  else if (!strcasecmp(Name, "SkipSecondsRepeat"))   SkipSecondsRepeat  = atoi(Value);
   else if (!strcasecmp(Name, "ResumeID"))            ResumeID           = atoi(Value);
   else if (!strcasecmp(Name, "CurrentChannel"))      CurrentChannel     = atoi(Value);
   else if (!strcasecmp(Name, "CurrentVolume"))       CurrentVolume      = atoi(Value);
   else if (!strcasecmp(Name, "CurrentDolby"))        CurrentDolby       = atoi(Value);
   else if (!strcasecmp(Name, "InitialChannel"))      InitialChannel     = Value;
+  else if (!strcasecmp(Name, "VolumeSteps"))         VolumeSteps        = atoi(Value);
+  else if (!strcasecmp(Name, "VolumeLinearize"))     VolumeLinearize    = atoi(Value);
   else if (!strcasecmp(Name, "InitialVolume"))       InitialVolume      = atoi(Value);
   else if (!strcasecmp(Name, "DeviceBondings"))      DeviceBondings     = Value;
   else if (!strcasecmp(Name, "ChannelsWrap"))        ChannelsWrap       = atoi(Value);
@@ -703,6 +737,12 @@ bool cSetup::Save(void)
   Store("LnbFrequLo",         LnbFrequLo);
   Store("LnbFrequHi",         LnbFrequHi);
   Store("DiSEqC",             DiSEqC);
+  Store("UsePositioner",      UsePositioner);
+  Store("SiteLat",            SiteLat);
+  Store("SiteLon",            SiteLon);
+  Store("PositionerSpeed",    PositionerSpeed);
+  Store("PositionerSwing",    PositionerSwing);
+  Store("PositionerLastLon",  PositionerLastLon);
   Store("SetSystemTime",      SetSystemTime);
   Store("TimeSource",         cSource::ToString(TimeSource));
   Store("TimeTransponder",    TimeTransponder);
@@ -778,11 +818,22 @@ bool cSetup::Save(void)
   Store("ShowRemainingTime",  ShowRemainingTime);
   Store("ProgressDisplayTime",ProgressDisplayTime);
   Store("PauseOnMarkSet",     PauseOnMarkSet);
+  Store("PauseOnMarkJump",    PauseOnMarkJump);
+  Store("SkipEdited",         SkipEdited);
+  Store("PauseAtLastMark",    PauseAtLastMark);
+  Store("AdaptiveSkipInitial",AdaptiveSkipInitial);
+  Store("AdaptiveSkipTimeout",AdaptiveSkipTimeout);
+  Store("AdaptiveSkipAlternate", AdaptiveSkipAlternate);
+  Store("AdaptiveSkipPrevNext", AdaptiveSkipPrevNext);
+  Store("SkipSeconds",        SkipSeconds);
+  Store("SkipSecondsRepeat",  SkipSecondsRepeat);
   Store("ResumeID",           ResumeID);
   Store("CurrentChannel",     CurrentChannel);
   Store("CurrentVolume",      CurrentVolume);
   Store("CurrentDolby",       CurrentDolby);
   Store("InitialChannel",     InitialChannel);
+  Store("VolumeSteps",        VolumeSteps);
+  Store("VolumeLinearize",    VolumeLinearize);
   Store("InitialVolume",      InitialVolume);
   Store("DeviceBondings",     DeviceBondings);
   Store("ChannelsWrap",       ChannelsWrap);

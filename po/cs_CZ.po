@@ -1,16 +1,16 @@
 # VDR language source file.
-# Copyright (C) 2013 Klaus Schmidinger <vdr@tvdr.de>
+# Copyright (C) 2015 Klaus Schmidinger <vdr@tvdr.de>
 # This file is distributed under the same license as the VDR package.
 # Vladimír Bárta <vladimir.barta@k2atmitec.cz>, 2006, 2008
 # Jiří Dobrý <jdobry@centrum.cz>, 2008
 # Radek Šťastný <dedkus@gmail.com>, 2010
-# Aleš Juřík <ajurik@quick.cz>, 2013
+# Aleš Juřík <ajurik@quick.cz>, 2013, 2015
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: VDR 2.0.0\n"
+"Project-Id-Version: VDR 2.2.0\n"
 "Report-Msgid-Bugs-To: <vdr-bugs@tvdr.de>\n"
-"POT-Creation-Date: 2013-03-04 14:46+0100\n"
+"POT-Creation-Date: 2015-02-10 13:40+0100\n"
 "PO-Revision-Date: 2010-05-06 11:00+0200\n"
 "Last-Translator: Aleš Juřík <ajurik@quick.cz>\n"
 "Language-Team: Czech <vdr@linuxtv.org>\n"
@@ -22,6 +22,9 @@ msgstr ""
 msgid "*** Invalid Channel ***"
 msgstr "*** Neplatný kanál ***"
 
+msgid "CAM activated!"
+msgstr "CAM aktivován"
+
 msgid "Channel not available!"
 msgstr "Kanál není dostupný!"
 
@@ -32,7 +35,7 @@ msgid "off"
 msgstr "vyp."
 
 msgid "on"
-msgstr "zap. "
+msgstr "zap."
 
 msgid "auto"
 msgstr "auto"
@@ -78,6 +81,15 @@ msgstr "RollOff"
 
 msgid "StreamId"
 msgstr "StreamId"
+
+msgid "Pilot"
+msgstr "Pilot"
+
+msgid "T2SystemId"
+msgstr "Systémový identifikátor T2"
+
+msgid "SISO/MISO"
+msgstr "Mód SISO/MISO"
 
 msgid "Starting EPG scan"
 msgstr "Začíná prohledávání EPG"
@@ -566,6 +578,12 @@ msgstr "CA"
 msgid "Sid"
 msgstr "Sid"
 
+msgid "Nid"
+msgstr "Nid"
+
+msgid "Tid"
+msgstr "Tid"
+
 msgid "Channel settings are not unique!"
 msgstr "Nastavení kanálu není jedinečné!"
 
@@ -606,8 +624,8 @@ msgstr "Složka již existuje!"
 msgid "Folder name must not contain '%c'!"
 msgstr "Jméno složky nesmí obsahovat '%c'!"
 
-msgid "Button$Select"
-msgstr "Vybrat"
+msgid "Button$Open"
+msgstr "Otevřít"
 
 msgid "Delete folder and all sub folders?"
 msgstr "Smazat složku včetně podsložek?"
@@ -726,6 +744,76 @@ msgstr "Prosím vložte %d znaků!"
 msgid "CAM not responding!"
 msgstr "CAM neodpovídá!"
 
+msgid "Edit path"
+msgstr "Editace cesty"
+
+msgid "Folder"
+msgstr "Složka"
+
+msgid "This folder is currently in use - no changes are possible!"
+msgstr "Tato složka je používána - změny nejsou možné!"
+
+#, c-format
+msgid "Move entire folder containing %d recordings?"
+msgstr "Přesunout vloženou složku obsahující %d nahrávek?"
+
+msgid "Error while moving folder!"
+msgstr "Chyba při přesunu složky!"
+
+msgid "Edit recording"
+msgstr "Editace nahrávky"
+
+msgid "This recording is currently in use - no changes are possible!"
+msgstr "Tato nahrávka je nyní používána - změny nejsou možné!"
+
+msgid "Button$Cancel cutting"
+msgstr "Zrušení střihu"
+
+msgid "Button$Stop cutting"
+msgstr "Zastavení střihu"
+
+msgid "Button$Cancel moving"
+msgstr "Zrušení přesunu"
+
+msgid "Button$Stop moving"
+msgstr "Zastavení přesunu"
+
+msgid "Button$Cancel copying"
+msgstr "Zrušení kopírování"
+
+msgid "Button$Stop copying"
+msgstr "Zastavené kopírování"
+
+msgid "Button$Cut"
+msgstr "Střih"
+
+msgid "Button$Delete marks"
+msgstr "Výmaz značek"
+
+msgid "Recording vanished!"
+msgstr "Nahrávka zmizela!"
+
+msgid "Edited version already exists - overwrite?"
+msgstr "Editovaná verze již existuje - přepsat?"
+
+msgid "Error while queueing recording for cutting!"
+msgstr "Chyba při vložení nahrávky do fronty pro střih"
+
+msgid "Rename recording to folder name?"
+msgstr "Přejmenovat nahrávku jménem složky?"
+
+msgid "Delete editing marks for this recording?"
+msgstr "Samzat editační značky této nahrávky?"
+
+msgid "Error while deleting editing marks!"
+msgstr "Chyba při mazání editačních značek!"
+
+msgid "Error while changing priority/lifetime!"
+msgstr "Chyba při změně priority/životnosti!"
+
+msgid "Error while changing folder/name!"
+msgstr "Chyba při změně složky/jména!"
+
 msgid "Recording info"
 msgstr "Detail nahrávky"
 
@@ -737,9 +825,6 @@ msgstr "Na začátek"
 
 msgid "Recordings"
 msgstr "Nahrávky"
-
-msgid "Button$Open"
-msgstr "Otevřít"
 
 msgid "Commands"
 msgstr "Příkazy"
@@ -996,6 +1081,33 @@ msgstr "Zařízení %d připojeno k sat. kabelu"
 msgid "Setup.LNB$own"
 msgstr "vlastní"
 
+msgid "Setup.LNB$Use dish positioner"
+msgstr "Použít anténní pozicionér?"
+
+msgid "Setup.LNB$Site latitude (degrees)"
+msgstr "Zeměpisná šířka místa (stupně)"
+
+msgid "South"
+msgstr "Jih"
+
+msgid "North"
+msgstr "Sever"
+
+msgid "Setup.LNB$Site longitude (degrees)"
+msgstr "Zeměpisná délka místa (stupně)"
+
+msgid "West"
+msgstr "Západ"
+
+msgid "East"
+msgstr "Východ"
+
+msgid "Setup.LNB$Max. positioner swing (degrees)"
+msgstr "Max. otočení pozicionéru (stupně)"
+
+msgid "Setup.LNB$Positioner speed (degrees/s)"
+msgstr "Rychlost pozicionéru (stupně/vteřinu)"
+
 msgid "CAM reset"
 msgstr "Reset CAMu"
 
@@ -1005,8 +1117,18 @@ msgstr "CAM přítomen"
 msgid "CAM ready"
 msgstr "CAM připraven"
 
+#. TRANSLATORS: note the leading blank!
+msgid " (activating)"
+msgstr " (aktivuji)"
+
 msgid "CAM"
 msgstr "CAM"
+
+msgid "Button$Cancel activation"
+msgstr "Zrušení aktivace"
+
+msgid "Button$Activate"
+msgstr "Aktivace"
 
 msgid "Button$Menu"
 msgstr "Menu"
@@ -1019,6 +1141,9 @@ msgstr "Otevírá se menu CAM..."
 
 msgid "Can't open CAM menu!"
 msgstr "Menu CAM není dostupné"
+
+msgid "Can't activate CAM!"
+msgstr "Nemohu aktivovat CAM!"
 
 msgid "CAM is in use - really reset?"
 msgstr "CAM se používá - opravdu restartovat?"
@@ -1113,6 +1238,33 @@ msgstr "Čas zobrazení ukazatele průběhu (s)"
 msgid "Setup.Replay$Pause replay when setting mark"
 msgstr "Pozastavit přehrávání při nastavování značky"
 
+msgid "Setup.Replay$Pause replay when jumping to a mark"
+msgstr "Pozastavit přehrávání při skoku na značku"
+
+msgid "Setup.Replay$Skip edited parts"
+msgstr "Přeskočit editavané části"
+
+msgid "Setup.Replay$Pause replay at last mark"
+msgstr "Pozastavit přehrávání na poslední značce"
+
+msgid "Setup.Replay$Initial duration for adaptive skipping (s)"
+msgstr "Trvání úvodního času pro adaptivní přeskakování (s)"
+
+msgid "Setup.Replay$Reset timeout for adaptive skipping (s)"
+msgstr "Doba pro vynulování adaptivního přeskakování (s)"
+
+msgid "Setup.Replay$Alternate behavior for adaptive skipping"
+msgstr "Změň chování adaptivního přeskakování"
+
+msgid "Setup.Replay$Use Prev/Next keys for adaptive skipping"
+msgstr "Použití tlačítek Zpšt/Dále pro adaptivní přeskakování"
+
+msgid "Setup.Replay$Skip distance with Green/Yellow keys (s)"
+msgstr "Velikost skoku za použití tlačítek Zelená/Žlutá (s)"
+
+msgid "Setup.Replay$Skip distance with Green/Yellow keys in repeat (s)"
+msgstr "Velikost skoku za použití tlačítek Zelená/Žlutá při opakování (s)"
+
 msgid "Setup.Replay$Resume ID"
 msgstr "ID obnovení"
 
@@ -1148,6 +1300,12 @@ msgstr "jako naposledy"
 
 msgid "Setup.Miscellaneous$Initial volume"
 msgstr "Hlasitost po spuštění"
+
+msgid "Setup.Miscellaneous$Volume steps"
+msgstr "Krok hlasitosti"
+
+msgid "Setup.Miscellaneous$Volume linearize"
+msgstr "Linearizace hlasitosti"
 
 msgid "Setup.Miscellaneous$Channels wrap"
 msgstr "Přecházet z konce na začátek seznamu kanálů"
@@ -1332,6 +1490,10 @@ msgstr "ŽIVĚ"
 
 msgid "PLAY"
 msgstr "PŘEHRÁVÁNÍ"
+
+#, c-format
+msgid "Moving dish to %.1f..."
+msgstr "Otáčení antény na %.1f..."
 
 msgid "ST:TNG Panels"
 msgstr "ST:TNG konzola"

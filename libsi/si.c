@@ -6,7 +6,7 @@
  *   the Free Software Foundation; either version 2 of the License, or     *
  *   (at your option) any later version.                                   *
  *                                                                         *
- *   $Id: si.c 2.8 2012/09/29 14:44:20 kls Exp $
+ *   $Id: si.c 3.3 2015/02/10 13:42:41 kls Exp $
  *                                                                         *
  ***************************************************************************/
 
@@ -198,17 +198,18 @@ void DescriptorGroup::Delete() {
       }
 }
 
-void DescriptorGroup::Add(GroupDescriptor *d) {
+bool DescriptorGroup::Add(GroupDescriptor *d) {
    if (!array) {
       length=d->getLastDescriptorNumber()+1;
       array=new GroupDescriptor*[length]; //numbering is zero-based
       for (int i=0;i<length;i++)
          array[i]=0;
    } else if (length != d->getLastDescriptorNumber()+1)
-      return; //avoid crash in case of misuse
+      return false; //avoid crash in case of misuse
    if (length <= d->getDescriptorNumber())
-      return; // see http://www.vdr-portal.de/board60-linux/board14-betriebssystem/board69-c-t-vdr/p1025777-segfault-mit-vdr-1-7-21/#post1025777
+      return false; // see http://www.vdr-portal.de/board60-linux/board14-betriebssystem/board69-c-t-vdr/p1025777-segfault-mit-vdr-1-7-21/#post1025777
    array[d->getDescriptorNumber()]=d;
+   return true;
 }
 
 bool DescriptorGroup::isComplete() {
@@ -318,6 +319,14 @@ bool systemCharacterTableIsSingleByte(void)
   return SystemCharacterTableIsSingleByte;
 }
 
+static char *OverrideCharacterTable = NULL;
+
+void SetOverrideCharacterTable(const char *CharacterTable)
+{
+  free(OverrideCharacterTable);
+  OverrideCharacterTable = CharacterTable ? strdup(CharacterTable) : NULL;
+}
+
 bool SetSystemCharacterTable(const char *CharacterTable) {
    if (CharacterTable) {
       for (unsigned int i = 0; i < NumEntries(CharacterTables1); i++) {
@@ -347,9 +356,8 @@ const char *getCharacterTable(const unsigned char *&buffer, int &length, bool *i
    // Workaround for broadcaster stupidity: according to
    // "ETSI EN 300 468" the default character set is ISO6937. But unfortunately some
    // broadcasters actually use ISO-8859-9, but fail to correctly announce that.
-   static const char *CharsetOverride = getenv("VDR_CHARSET_OVERRIDE");
-   if (CharsetOverride)
-      cs = CharsetOverride;
+   if (OverrideCharacterTable)
+      cs = OverrideCharacterTable;
    if (isSingleByte)
       *isSingleByte = false;
    if (length <= 0)
@@ -508,6 +516,9 @@ Descriptor *Descriptor::getDescriptor(CharArray da, DescriptorTagDomain domain, 
          case CarouselIdentifierDescriptorTag:
             d=new CarouselIdentifierDescriptor();
             break;
+         case AVCDescriptorTag:
+            d=new AVCDescriptor();
+            break;
          case NetworkNameDescriptorTag:
             d=new NetworkNameDescriptor();
             break;
@@ -613,6 +624,12 @@ Descriptor *Descriptor::getDescriptor(CharArray da, DescriptorTagDomain domain, 
             break;
          case ExtensionDescriptorTag:
             d=new ExtensionDescriptor();
+            break;
+         case LogicalChannelDescriptorTag:
+            d=new LogicalChannelDescriptor();
+            break;
+         case HdSimulcastLogicalChannelDescriptorTag:
+            d=new HdSimulcastLogicalChannelDescriptor();
             break;
          case RegistrationDescriptorTag:
             d=new RegistrationDescriptor();

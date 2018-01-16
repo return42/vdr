@@ -3,14 +3,14 @@
  *
  * See the README file for copyright information and how to reach the author.
  *
- * $Id: svccli.c 2.4 2013/03/31 09:30:18 kls Exp $
+ * $Id: svccli.c 3.2 2015/02/17 13:13:05 kls Exp $
  */
 
 #include <stdlib.h>
 #include <vdr/interface.h>
 #include <vdr/plugin.h>
 
-static const char *VERSION        = "2.0.0";
+static const char *VERSION        = "2.2.0";
 static const char *DESCRIPTION    = "Service demo client";
 static const char *MAINMENUENTRY  = "Service demo";
 

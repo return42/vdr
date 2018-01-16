@@ -4,7 +4,7 @@
 # See the main source file 'vdr.c' for copyright information and
 # how to reach the author.
 #
-# $Id: Makefile 2.54.1.1 2015/01/01 13:59:51 kls Exp $
+# $Id: Makefile 3.6 2015/02/09 12:28:24 kls Exp $
 
 .DELETE_ON_ERROR:
 
@@ -31,6 +31,7 @@ PLUGINDIR ?= $(CWD)/PLUGINS
 DESTDIR   ?=
 VIDEODIR  ?= /srv/vdr/video
 CONFDIR   ?= /var/lib/vdr
+ARGSDIR   ?= /etc/vdr/conf.d
 CACHEDIR  ?= /var/cache/vdr
 
 PREFIX    ?= /usr/local
@@ -66,9 +67,9 @@ endif
 
 SILIB    = $(LSIDIR)/libsi.a
 
-OBJS = audio.o channels.o ci.o config.o cutter.o device.o diseqc.o dvbdevice.o dvbci.o\
+OBJS = args.o audio.o channels.o ci.o config.o cutter.o device.o diseqc.o dvbdevice.o dvbci.o\
        dvbplayer.o dvbspu.o dvbsubtitle.o eit.o eitscan.o epg.o filter.o font.o i18n.o interface.o keys.o\
-       lirc.o menu.o menuitems.o nit.o osdbase.o osd.o pat.o player.o plugin.o\
+       lirc.o menu.o menuitems.o nit.o osdbase.o osd.o pat.o player.o plugin.o positioner.o\
        receiver.o recorder.o recording.o remote.o remux.o ringbuffer.o sdt.o sections.o shutdown.o\
        skinclassic.o skinlcars.o skins.o skinsttng.o sourceparams.o sources.o spu.o status.o svdrp.o themes.o thread.o\
        timers.o tools.o transfer.o vdr.o videodir.o
@@ -93,12 +94,18 @@ INCLUDES += $(shell pkg-config --cflags fribidi)
 DEFINES += -DBIDI
 LIBS += $(shell pkg-config --libs fribidi)
 endif
+ifdef SDNOTIFY
+INCLUDES += $(shell pkg-config --cflags libsystemd-daemon)
+DEFINES += -DSDNOTIFY
+LIBS += $(shell pkg-config --libs libsystemd-daemon)
+endif
 
 LIRC_DEVICE ?= /var/run/lirc/lircd
 
 DEFINES += -DLIRC_DEVICE=\"$(LIRC_DEVICE)\"
 DEFINES += -DVIDEODIR=\"$(VIDEODIR)\"
 DEFINES += -DCONFDIR=\"$(CONFDIR)\"
+DEFINES += -DARGSDIR=\"$(ARGSDIR)\"
 DEFINES += -DCACHEDIR=\"$(CACHEDIR)\"
 DEFINES += -DRESDIR=\"$(RESDIR)\"
 DEFINES += -DPLUGINDIR=\"$(LIBDIR)\"
@@ -132,8 +139,9 @@ vdr: $(OBJS) $(SILIB)
 
 # The libsi library:
 
-$(SILIB):
-	$(MAKE) --no-print-directory -C $(LSIDIR) CXXFLAGS="$(CXXFLAGS)" DEFINES="$(CDEFINES)" all
+$(SILIB): make-libsi
+	@$(MAKE) --no-print-directory -C $(LSIDIR) CXXFLAGS="$(CXXFLAGS)" DEFINES="$(CDEFINES)" all
+make-libsi: # empty rule makes sure the sub-make for libsi is always called
 
 # pkg-config file:
 
@@ -141,8 +149,9 @@ $(SILIB):
 vdr.pc:
 	@echo "bindir=$(BINDIR)" > $@
 	@echo "mandir=$(MANDIR)" >> $@
-	@echo "configdir=$(CONFDIR)" >> $@
 	@echo "videodir=$(VIDEODIR)" >> $@
+	@echo "configdir=$(CONFDIR)" >> $@
+	@echo "argsdir=$(ARGSDIR)" >> $@
 	@echo "cachedir=$(CACHEDIR)" >> $@
 	@echo "resdir=$(RESDIR)" >> $@
 	@echo "libdir=$(LIBDIR)" >> $@
@@ -242,7 +251,7 @@ plugins: include-dir vdr.pc
 	if [ -n "$$failed" ] ; then echo; echo "*** failed plugins:$$failed"; echo; exit 1; fi
 
 clean-plugins:
-	@for i in `ls $(PLUGINDIR)/src | grep -v '[^a-z0-9]'`; do $(MAKE) --no-print-directory -C "$(PLUGINDIR)/src/$$i" clean; done
+	@for i in `ls $(PLUGINDIR)/src | grep -v '[^a-z0-9]'`; do $(MAKE) --no-print-directory -C "$(PLUGINDIR)/src/$$i" VDRDIR="$(CWD)" clean; done
 	@-rm -f $(PLUGINDIR)/lib/lib*-*.so.$(APIVERSION)
 
 # Install the files (note that 'install-pc' must be first!):
@@ -260,6 +269,7 @@ install-bin: vdr
 install-dirs:
 	@mkdir -p $(DESTDIR)$(VIDEODIR)
 	@mkdir -p $(DESTDIR)$(CONFDIR)
+	@mkdir -p $(DESTDIR)$(ARGSDIR)
 	@mkdir -p $(DESTDIR)$(CACHEDIR)
 	@mkdir -p $(DESTDIR)$(RESDIR)
 

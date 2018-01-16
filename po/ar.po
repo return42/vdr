@@ -1,13 +1,13 @@
 # VDR language source file.
-# Copyright (C) 2013 Klaus Schmidinger <vdr@tvdr.de>
+# Copyright (C) 2015 Klaus Schmidinger <vdr@tvdr.de>
 # This file is distributed under the same license as the VDR package.
 # Osama Alrawab <alrawab@hotmail.com>, 2010, 2013
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: VDR 2.0.0\n"
+"Project-Id-Version: VDR 2.2.0\n"
 "Report-Msgid-Bugs-To: <vdr-bugs@tvdr.de>\n"
-"POT-Creation-Date: 2013-02-03 16:46+0100\n"
+"POT-Creation-Date: 2015-02-10 13:40+0100\n"
 "PO-Revision-Date: 2008-10-16 11:16-0400\n"
 "Last-Translator: Osama Alrawab <alrawab@hotmail.com>\n"
 "Language-Team: Arabic <ar@li.org>\n"
@@ -23,11 +23,14 @@ msgstr ""
 msgid "*** Invalid Channel ***"
 msgstr "*** قناة خاطئة ***"
 
+msgid "CAM activated!"
+msgstr ""
+
 msgid "Channel not available!"
 msgstr "القناة غير متاحة"
 
 msgid "Can't start Transfer Mode!"
-msgstr "تعذر  بدء طور النقل"
+msgstr "تعذر بدء طور النقل"
 
 msgid "off"
 msgstr "ايقاف"
@@ -80,8 +83,17 @@ msgstr "Rolloff"
 msgid "StreamId"
 msgstr "StreamId"
 
+msgid "Pilot"
+msgstr ""
+
+msgid "T2SystemId"
+msgstr ""
+
+msgid "SISO/MISO"
+msgstr ""
+
 msgid "Starting EPG scan"
-msgstr "EPG ا لبدء بالبحث على دليل القنوات الالكترونى "
+msgstr "EPG ا لبدء بالبحث على دليل القنوات الالكترونى"
 
 msgid "Content$Movie/Drama"
 msgstr "Movie/Drama"
@@ -336,7 +348,7 @@ msgid "LanguageCode$eng"
 msgstr "ara"
 
 msgid "Phase 1: Detecting RC code type"
-msgstr "التحقق من مفاتيح  وحدة التحكم"
+msgstr "التحقق من مفاتيح وحدة التحكم"
 
 msgid "Press any key on the RC unit"
 msgstr "الرجاء الضغط على اى زر فى وحدة التحكم"
@@ -502,10 +514,10 @@ msgid "Key$User4"
 msgstr "المستخدم 4"
 
 msgid "Key$User5"
-msgstr "المستخدم 5 "
+msgstr "المستخدم 5"
 
 msgid "Key$User6"
-msgstr "المستخدم 6 "
+msgstr "المستخدم 6"
 
 msgid "Key$User7"
 msgstr "المستخدم 7"
@@ -567,6 +579,12 @@ msgstr "الكامة"
 msgid "Sid"
 msgstr "Sid"
 
+msgid "Nid"
+msgstr ""
+
+msgid "Tid"
+msgstr ""
+
 msgid "Channel settings are not unique!"
 msgstr "اعدادات القناة غبر موحد"
 
@@ -607,8 +625,8 @@ msgstr "المجلد موجود بالفعل"
 msgid "Folder name must not contain '%c'!"
 msgstr "'%c'! اسم المجلد لا يجب ان يحتوى على"
 
-msgid "Button$Select"
-msgstr "الزر"
+msgid "Button$Open"
+msgstr "افتح"
 
 msgid "Delete folder and all sub folders?"
 msgstr "حذف المجلد وكل المجلدات الفرعية"
@@ -712,7 +730,7 @@ msgstr "%sجدولة"
 
 #, c-format
 msgid "This event - %s"
-msgstr " %sهذا الحدث"
+msgstr "%sهذا الحدث"
 
 msgid "This event - all channels"
 msgstr "هذا الحدث لكل القنوات"
@@ -727,6 +745,76 @@ msgstr "الرجاء ادخال %d رقم!"
 msgid "CAM not responding!"
 msgstr "الكامة لا تستجيب"
 
+msgid "Edit path"
+msgstr ""
+
+msgid "Folder"
+msgstr ""
+
+msgid "This folder is currently in use - no changes are possible!"
+msgstr ""
+
+#, c-format
+msgid "Move entire folder containing %d recordings?"
+msgstr ""
+
+msgid "Error while moving folder!"
+msgstr ""
+
+msgid "Edit recording"
+msgstr ""
+
+msgid "This recording is currently in use - no changes are possible!"
+msgstr ""
+
+msgid "Button$Cancel cutting"
+msgstr ""
+
+msgid "Button$Stop cutting"
+msgstr ""
+
+msgid "Button$Cancel moving"
+msgstr ""
+
+msgid "Button$Stop moving"
+msgstr ""
+
+msgid "Button$Cancel copying"
+msgstr ""
+
+msgid "Button$Stop copying"
+msgstr ""
+
+msgid "Button$Cut"
+msgstr ""
+
+msgid "Button$Delete marks"
+msgstr ""
+
+msgid "Recording vanished!"
+msgstr ""
+
+msgid "Edited version already exists - overwrite?"
+msgstr ""
+
+msgid "Error while queueing recording for cutting!"
+msgstr ""
+
+msgid "Rename recording to folder name?"
+msgstr ""
+
+msgid "Delete editing marks for this recording?"
+msgstr ""
+
+msgid "Error while deleting editing marks!"
+msgstr ""
+
+msgid "Error while changing priority/lifetime!"
+msgstr ""
+
+msgid "Error while changing folder/name!"
+msgstr ""
+
 msgid "Recording info"
 msgstr "معلومات التسجبل"
 
@@ -738,9 +826,6 @@ msgstr "اعادة"
 
 msgid "Recordings"
 msgstr "التسجيلات"
-
-msgid "Button$Open"
-msgstr "افتح"
 
 msgid "Commands"
 msgstr "الاوامر"
@@ -773,10 +858,10 @@ msgid "Setup.OSD$Language"
 msgstr "اللغة"
 
 msgid "Setup.OSD$Skin"
-msgstr " الثوب"
+msgstr "الثوب"
 
 msgid "Setup.OSD$Theme"
-msgstr " الثيمة"
+msgstr "الثيمة"
 
 msgid "Setup.OSD$Left (%)"
 msgstr "Left (%)"
@@ -818,7 +903,7 @@ msgid "Setup.OSD$Fixed font size (%)"
 msgstr "Fixed font size (%)"
 
 msgid "Setup.OSD$Channel info position"
-msgstr " موضع معلومات القناة"
+msgstr "موضع معلومات القناة"
 
 msgid "bottom"
 msgstr "اسفل"
@@ -878,7 +963,7 @@ msgid "Setup.EPG$EPG scan timeout (h)"
 msgstr "اﻻنتهاء من البحث على الدليل الالكترونى للقنوات"
 
 msgid "Setup.EPG$EPG bugfix level"
-msgstr " معدل اصلاح اخطاء الدليل الالكترونى"
+msgstr "معدل اصلاح اخطاء الدليل الالكترونى"
 
 msgid "Setup.EPG$EPG linger time (min)"
 msgstr "اقل مدة للدليل الالكترونى"
@@ -940,7 +1025,7 @@ msgid "Setup.DVB$Standard compliance"
 msgstr "Standard compliance"
 
 msgid "Setup.DVB$Video format"
-msgstr "نوع الفيديو  "
+msgstr "نوع الفيديو"
 
 msgid "Setup.DVB$Video display format"
 msgstr "نوع عرض الفديو"
@@ -979,7 +1064,7 @@ msgid "LNB"
 msgstr "الاقط"
 
 msgid "Setup.LNB$Use DiSEqC"
-msgstr " DiSEqC استعمل"
+msgstr "DiSEqC استعمل"
 
 msgid "Setup.LNB$SLOF (MHz)"
 msgstr "التذبذب المحلى للاقط م هرتز"
@@ -997,6 +1082,33 @@ msgstr "Device %d connected to sat cable"
 msgid "Setup.LNB$own"
 msgstr "own"
 
+msgid "Setup.LNB$Use dish positioner"
+msgstr ""
+
+msgid "Setup.LNB$Site latitude (degrees)"
+msgstr ""
+
+msgid "South"
+msgstr ""
+
+msgid "North"
+msgstr ""
+
+msgid "Setup.LNB$Site longitude (degrees)"
+msgstr ""
+
+msgid "West"
+msgstr ""
+
+msgid "East"
+msgstr ""
+
+msgid "Setup.LNB$Max. positioner swing (degrees)"
+msgstr ""
+
+msgid "Setup.LNB$Positioner speed (degrees/s)"
+msgstr ""
+
 msgid "CAM reset"
 msgstr "اعادة تشغيل الكامة"
 
@@ -1006,8 +1118,18 @@ msgstr "الكامة موجودة"
 msgid "CAM ready"
 msgstr "الكامة جاهزة"
 
+#. TRANSLATORS: note the leading blank!
+msgid " (activating)"
+msgstr ""
+
 msgid "CAM"
-msgstr "الكامة "
+msgstr "الكامة"
+
+msgid "Button$Cancel activation"
+msgstr ""
+
+msgid "Button$Activate"
+msgstr ""
 
 msgid "Button$Menu"
 msgstr "القائمة"
@@ -1020,6 +1142,9 @@ msgstr "فتح قائمة الكامة"
 
 msgid "Can't open CAM menu!"
 msgstr "تعذر فتح قائمة الكامة"
+
+msgid "Can't activate CAM!"
+msgstr ""
 
 msgid "CAM is in use - really reset?"
 msgstr "الكامة مستخدمة الان هل تريد اعادة تشغيلها"
@@ -1114,6 +1239,33 @@ msgstr "Progress display time (s)"
 msgid "Setup.Replay$Pause replay when setting mark"
 msgstr "Pause replay when setting mark"
 
+msgid "Setup.Replay$Pause replay when jumping to a mark"
+msgstr ""
+
+msgid "Setup.Replay$Skip edited parts"
+msgstr ""
+
+msgid "Setup.Replay$Pause replay at last mark"
+msgstr ""
+
+msgid "Setup.Replay$Initial duration for adaptive skipping (s)"
+msgstr ""
+
+msgid "Setup.Replay$Reset timeout for adaptive skipping (s)"
+msgstr ""
+
+msgid "Setup.Replay$Alternate behavior for adaptive skipping"
+msgstr ""
+
+msgid "Setup.Replay$Use Prev/Next keys for adaptive skipping"
+msgstr ""
+
+msgid "Setup.Replay$Skip distance with Green/Yellow keys (s)"
+msgstr ""
+
+msgid "Setup.Replay$Skip distance with Green/Yellow keys in repeat (s)"
+msgstr ""
+
 msgid "Setup.Replay$Resume ID"
 msgstr "رقم المواصلة"
 
@@ -1149,6 +1301,12 @@ msgstr "كسابق"
 
 msgid "Setup.Miscellaneous$Initial volume"
 msgstr "فعل الصوت"
+
+msgid "Setup.Miscellaneous$Volume steps"
+msgstr ""
+
+msgid "Setup.Miscellaneous$Volume linearize"
+msgstr ""
 
 msgid "Setup.Miscellaneous$Channels wrap"
 msgstr "Channels wrap"
@@ -1227,7 +1385,7 @@ msgstr "Delete timeshift recording?"
 
 #. TRANSLATORS: note the trailing blank!
 msgid "Jump: "
-msgstr "اقفز الى  "
+msgstr "اقفز الى "
 
 msgid "No editing marks defined!"
 msgstr "لاتوجد علامات تعديل معرفة"
@@ -1314,7 +1472,7 @@ msgid "Volume "
 msgstr "الصوت "
 
 msgid "Classic VDR"
-msgstr "VDR تقليدى  "
+msgstr "VDR تقليدى"
 
 msgid "DISK"
 msgstr "قرص"
@@ -1334,8 +1492,12 @@ msgstr "بث حى"
 msgid "PLAY"
 msgstr "عرض"
 
+#, c-format
+msgid "Moving dish to %.1f..."
+msgstr ""
+
 msgid "ST:TNG Panels"
-msgstr "ST:TNG شاشة "
+msgstr "ST:TNG شاشة"
 
 #. TRANSLATORS: the first character of each weekday, beginning with monday
 msgid "MTWTFSS"
@@ -1376,7 +1538,7 @@ msgid "Recording started"
 msgstr "ابتداء التسجيل"
 
 msgid "VDR will shut down later - press Power to force"
-msgstr "البرنامج سيقوم بالاغلاق لاحقا اضغط زر  القفل لاتمام  عملية الاغلاق"
+msgstr "البرنامج سيقوم بالاغلاق لاحقا اضغط زر القفل لاتمام عملية الاغلاق"
 
 msgid "Press any key to cancel shutdown"
 msgstr "اضغط اى زر لالغاء اقفال البرنامج"
@@ -1395,7 +1557,7 @@ msgstr "اضغط اى زر لالغاء اعادة التشغيل"
 
 #, c-format
 msgid "VDR will shut down in %s minutes"
-msgstr "البرنامج سيقوم بالاغلاق بعد%s دقيقة "
+msgstr "البرنامج سيقوم بالاغلاق بعد%s دقيقة"
 
 msgid "Disk"
 msgstr "القرص الصلب"

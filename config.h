@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: config.h 2.76.1.8 2014/04/13 14:00:42 kls Exp $
+ * $Id: config.h 3.21 2015/02/13 15:39:08 kls Exp $
  */
 
 #ifndef __CONFIG_H
@@ -22,13 +22,13 @@
 
 // VDR's own version number:
 
-#define VDRVERSION  "2.0.7"
-#define VDRVERSNUM   20007  // Version * 10000 + Major * 100 + Minor
+#define VDRVERSION  "2.2.0"
+#define VDRVERSNUM   20200  // Version * 10000 + Major * 100 + Minor
 
 // The plugin API's version number:
 
-#define APIVERSION  "2.0.6"
-#define APIVERSNUM   20006  // Version * 10000 + Major * 100 + Minor
+#define APIVERSION  "2.2.0"
+#define APIVERSNUM   20200  // Version * 10000 + Major * 100 + Minor
 
 // When loading plugins, VDR searches them by their APIVERSION, which
 // may be smaller than VDRVERSION in case there have been no changes to
@@ -65,6 +65,7 @@
 
 #define STANDARD_DVB       0
 #define STANDARD_ANSISCTE  1
+#define STANDARD_NORDIG    2
 
 typedef uint32_t in_addr_t; //XXX from /usr/include/netinet/in.h (apparently this is not defined on systems with glibc < 2.2)
 
@@ -266,6 +267,12 @@ public:
   int LnbFrequLo;
   int LnbFrequHi;
   int DiSEqC;
+  int UsePositioner;
+  int SiteLat;
+  int SiteLon;
+  int PositionerSpeed;
+  int PositionerSwing;
+  int PositionerLastLon;
   int SetSystemTime;
   int TimeSource;
   int TimeTransponder;
@@ -327,9 +334,20 @@ public:
   int ShowRemainingTime;
   int ProgressDisplayTime;
   int PauseOnMarkSet;
+  int PauseOnMarkJump;
+  int SkipEdited;
+  int PauseAtLastMark;
+  int AdaptiveSkipInitial;
+  int AdaptiveSkipTimeout;
+  int AdaptiveSkipAlternate;
+  int AdaptiveSkipPrevNext;
+  int SkipSeconds;
+  int SkipSecondsRepeat;
   int ResumeID;
   int CurrentChannel;
   int CurrentVolume;
+  int VolumeSteps;
+  int VolumeLinearize;
   int CurrentDolby;
   int InitialVolume;
   int ChannelsWrap;

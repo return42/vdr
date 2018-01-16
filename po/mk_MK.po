@@ -1,14 +1,14 @@
 # VDR language source file.
-# Copyright (C) 2013 Klaus Schmidinger <vdr@tvdr.de>
+# Copyright (C) 2015 Klaus Schmidinger <vdr@tvdr.de>
 # This file is distributed under the same license as the VDR package.
-# Dimitar Petrovski <dimeptr@gmail.com>, 2009, 2012, 2013
+# Dimitar Petrovski <dimeptr@gmail.com>, 2009, 2012, 2013, 2015
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: VDR 2.0.0\n"
+"Project-Id-Version: VDR 2.2.0\n"
 "Report-Msgid-Bugs-To: <vdr-bugs@tvdr.de>\n"
-"POT-Creation-Date: 2013-03-04 14:46+0100\n"
-"PO-Revision-Date: 2012-11-19 15:18+0100\n"
+"POT-Creation-Date: 2015-02-10 13:40+0100\n"
+"PO-Revision-Date: 2015-02-08 15:18+0100\n"
 "Last-Translator: Dimitar Petrovski <dimeptr@gmail.com>\n"
 "Language-Team: Macedonian <en@li.org>\n"
 "Language: mk\n"
@@ -19,6 +19,9 @@ msgstr ""
 
 msgid "*** Invalid Channel ***"
 msgstr "*** Невалиден Канал ***"
+
+msgid "CAM activated!"
+msgstr "CAM активиран!"
 
 msgid "Channel not available!"
 msgstr "Каналот е недостапен!"
@@ -76,6 +79,15 @@ msgstr "Рол-оф"
 
 msgid "StreamId"
 msgstr "StreamId"
+
+msgid "Pilot"
+msgstr "Пилот"
+
+msgid "T2SystemId"
+msgstr "Т2СистемИд"
+
+msgid "SISO/MISO"
+msgstr "СИСО/МИСО"
 
 msgid "Starting EPG scan"
 msgstr "Започнувам скенирање на EPG"
@@ -333,7 +345,7 @@ msgid "LanguageCode$eng"
 msgstr "mkd"
 
 msgid "Phase 1: Detecting RC code type"
-msgstr "Фаза 1: Детекција на типот на далечински управувач "
+msgstr "Фаза 1: Детекција на типот на далечински управувач"
 
 msgid "Press any key on the RC unit"
 msgstr "Притиснете копче на далечинскиот управувач"
@@ -564,6 +576,12 @@ msgstr "Кодирање (CA)"
 msgid "Sid"
 msgstr "Sid"
 
+msgid "Nid"
+msgstr "Nid"
+
+msgid "Tid"
+msgstr "Tid"
+
 msgid "Channel settings are not unique!"
 msgstr "Уредбите на каналот не се уникатни!"
 
@@ -604,8 +622,8 @@ msgstr "Името веќе постои"
 msgid "Folder name must not contain '%c'!"
 msgstr "Името на директориумот не смее да содржи '%c'"
 
-msgid "Button$Select"
-msgstr "Избери"
+msgid "Button$Open"
+msgstr "Отвори"
 
 msgid "Delete folder and all sub folders?"
 msgstr "Избриши директориум со сите поддиректориуми?"
@@ -724,6 +742,76 @@ msgstr "Внеси %d цифри!"
 msgid "CAM not responding!"
 msgstr "CAM не одговара!"
 
+msgid "Edit path"
+msgstr "Уреди патека"
+
+msgid "Folder"
+msgstr "Папка"
+
+msgid "This folder is currently in use - no changes are possible!"
+msgstr "Оваа папка е моментално во употреба - промени не се возможни!"
+
+#, c-format
+msgid "Move entire folder containing %d recordings?"
+msgstr "Помести цела папка со %d снимки?"
+
+msgid "Error while moving folder!"
+msgstr "Грешка при поместување папка!"
+
+msgid "Edit recording"
+msgstr "Уреди снимка"
+
+msgid "This recording is currently in use - no changes are possible!"
+msgstr "Оваа снимка е моментално во употреба - промени не се возможни!"
+
+msgid "Button$Cancel cutting"
+msgstr "Откажи сечење"
+
+msgid "Button$Stop cutting"
+msgstr "Запри сечење"
+
+msgid "Button$Cancel moving"
+msgstr "Откажи преместување"
+
+msgid "Button$Stop moving"
+msgstr "Запри преместување"
+
+msgid "Button$Cancel copying"
+msgstr "Откажи копирање"
+
+msgid "Button$Stop copying"
+msgstr "Запри копирање"
+
+msgid "Button$Cut"
+msgstr "Сечи"
+
+msgid "Button$Delete marks"
+msgstr "Избриши ознаки"
+
+msgid "Recording vanished!"
+msgstr "Снимката исчезна!"
+
+msgid "Edited version already exists - overwrite?"
+msgstr "Уредена верзија веќе постои - пребриши?"
+
+msgid "Error while queueing recording for cutting!"
+msgstr "Грешка при редење на снимка за сечење!"
+
+msgid "Rename recording to folder name?"
+msgstr "Преименувај ја снимката како името на папката?"
+
+msgid "Delete editing marks for this recording?"
+msgstr "Бриши ознаки за уредување за оваа снимка?"
+
+msgid "Error while deleting editing marks!"
+msgstr "Грешка при бришење на ознака за уредување!"
+
+msgid "Error while changing priority/lifetime!"
+msgstr "Грешка при промена на приоритет/траење!"
+
+msgid "Error while changing folder/name!"
+msgstr "Грешка при промена на папка/име!"
+
 msgid "Recording info"
 msgstr "Детали на снимката"
 
@@ -735,9 +823,6 @@ msgstr "Премотај"
 
 msgid "Recordings"
 msgstr "Снимки"
-
-msgid "Button$Open"
-msgstr "Отвори"
 
 msgid "Commands"
 msgstr "Наредби"
@@ -994,6 +1079,33 @@ msgstr "Уред %d поврзан со сателитски кабел"
 msgid "Setup.LNB$own"
 msgstr "свој"
 
+msgid "Setup.LNB$Use dish positioner"
+msgstr "Користи позиционер за чинија"
+
+msgid "Setup.LNB$Site latitude (degrees)"
+msgstr "Латидута на локацијата (степени)"
+
+msgid "South"
+msgstr "Југ"
+
+msgid "North"
+msgstr "Север"
+
+msgid "Setup.LNB$Site longitude (degrees)"
+msgstr "Лонгитуда на локацијата (степени)"
+
+msgid "West"
+msgstr "Запад"
+
+msgid "East"
+msgstr "Исток"
+
+msgid "Setup.LNB$Max. positioner swing (degrees)"
+msgstr "Максимален од на позиционерот (степени)"
+
+msgid "Setup.LNB$Positioner speed (degrees/s)"
+msgstr "Брзина на позиционерот (степени/сек)"
+
 msgid "CAM reset"
 msgstr "Рестартирај CAM"
 
@@ -1003,8 +1115,18 @@ msgstr "CAM присутен"
 msgid "CAM ready"
 msgstr "CAM спремен"
 
+#. TRANSLATORS: note the leading blank!
+msgid " (activating)"
+msgstr " (активирање)"
+
 msgid "CAM"
 msgstr "CAM"
+
+msgid "Button$Cancel activation"
+msgstr "Откажи активација"
+
+msgid "Button$Activate"
+msgstr "Активирај"
 
 msgid "Button$Menu"
 msgstr "Мени"
@@ -1017,6 +1139,9 @@ msgstr "Отварам CAM мени..."
 
 msgid "Can't open CAM menu!"
 msgstr "Неуспешно отварање на CAM менито!"
+
+msgid "Can't activate CAM!"
+msgstr "Неуспешно активирање на CAM!"
 
 msgid "CAM is in use - really reset?"
 msgstr "CAM е во употреба - рестартирај?"
@@ -1111,6 +1236,33 @@ msgstr "Време на прикажување на прогрес (сек)"
 msgid "Setup.Replay$Pause replay when setting mark"
 msgstr "Паузирај репродукција кога се внесува ознака"
 
+msgid "Setup.Replay$Pause replay when jumping to a mark"
+msgstr "Паузирај репродукција кога се скока до ознака"
+
+msgid "Setup.Replay$Skip edited parts"
+msgstr "Прескокни ги уредуваните делови"
+
+msgid "Setup.Replay$Pause replay at last mark"
+msgstr "Паузирај репродукција на последанта ознака"
+
+msgid "Setup.Replay$Initial duration for adaptive skipping (s)"
+msgstr "Почетно траење на адаптабилно скокање (сек)"
+
+msgid "Setup.Replay$Reset timeout for adaptive skipping (s)"
+msgstr "Време на ресетирање за адаптабилно скокање (сек)"
+
+msgid "Setup.Replay$Alternate behavior for adaptive skipping"
+msgstr "Алтернативно однесување за адаптабилно скокање"
+
+msgid "Setup.Replay$Use Prev/Next keys for adaptive skipping"
+msgstr "Користи копчиња Претходно/Следно за адаптабилно скокање"
+
+msgid "Setup.Replay$Skip distance with Green/Yellow keys (s)"
+msgstr "Дистанца на скокање со Зелено/Жолто копче (сек)"
+
+msgid "Setup.Replay$Skip distance with Green/Yellow keys in repeat (s)"
+msgstr "Дистанца на скокање со Зелено/Жолто копче при повторување (сек)"
+
 msgid "Setup.Replay$Resume ID"
 msgstr "ID на продолжеток"
 
@@ -1146,6 +1298,12 @@ msgstr "како претходно"
 
 msgid "Setup.Miscellaneous$Initial volume"
 msgstr "Почетна јачина на звук"
+
+msgid "Setup.Miscellaneous$Volume steps"
+msgstr "Чекори на јачина на звук"
+
+msgid "Setup.Miscellaneous$Volume linearize"
+msgstr "Линеаризациај на јачина на звук"
 
 msgid "Setup.Miscellaneous$Channels wrap"
 msgstr "Премотување канали"
@@ -1242,10 +1400,10 @@ msgid "Editing process already active!"
 msgstr "Уредувањето е веќе во тек!!"
 
 msgid "FileNameChars$ abcdefghijklmnopqrstuvwxyz0123456789-.,#~\\^$[]|()*+?{}/:%@&"
-msgstr "абвгдѓежзѕијклљмнњопрстќуфхцчџш0123456789-.,#~\\^$[]|()*+?{}/:%@&"
+msgstr " абвгдѓежзѕијклљмнњопрстќуфхцчџш0123456789-.,#~\\^$[]|()*+?{}/:%@&"
 
 msgid "CharMap$ 0\t-.,1#~\\^$[]|()*+?{}/:%@&\tabc2\tdef3\tghi4\tjkl5\tmno6\tpqrs7\ttuv8\twxyz9"
-msgstr "0\t-.,1#~\\^$[]|()*+?{}/:%@&\tabcабвг2\tdefдѓеж3\tghiзѕиј4\tjklклљм5\tmnoнњоп6\tpqrsрстќ7\ttuvуфхц8\twxyzчџш9"
+msgstr " 0\t-.,1#~\\^$[]|()*+?{}/:%@&\tabcабвг2\tdefдѓеж3\tghiзѕиј4\tjklклљм5\tmnoнњоп6\tpqrsрстќ7\ttuvуфхц8\twxyzчџш9"
 
 msgid "Button$ABC/abc"
 msgstr "АБВ/абв"
@@ -1330,6 +1488,10 @@ msgstr "ЖИВО"
 
 msgid "PLAY"
 msgstr "ПУШТИ"
+
+#, c-format
+msgid "Moving dish to %.1f..."
+msgstr "Движење на чинијата кон %.1f..."
 
 msgid "ST:TNG Panels"
 msgstr "ST:TNG Панели"
