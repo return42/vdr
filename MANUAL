@@ -1,6 +1,9 @@
 Video Disk Recorder User's Manual
 ---------------------------------
 
+Version 1.2
+-----------
+
 * Remote Control Keys
 
   The following remote control keys are used to control the VDR
@@ -8,29 +11,58 @@ Video Disk Recorder User's Manual
   possible, several keys have different meanings in the various
   modes:
 
-  Key     Normal      VDR          Channels   Timers     Edit/New      Recordings  Replay
+  Key     Normal      VDR          Channels   Timers     Edit/New      Recordings        Replay
 
-  Up      Ch up       Crsr up      Crsr up    Crsr up    Crsr up       Crsr up     Play
-  Down    Ch down     Crsr down    Crsr down  Crsr down  Crsr down     Crsr down   Pause
-  Left    Prev group  -            Page up    Page up    Decrement     Page up     Search back
-  Right   Next group  -            Page down  Page down  Increment     Page down   Search forward
-  Ok      Ch display  Select       Switch     Edit       Accept        Play        Progress disp.
-  Menu    Menu on     Menu off     Menu off   Menu off   Menu off      Menu off    Menu on
-  Back    -           Menu off     VDR menu   VDR menu   Discard       VDR menu    Recordings menu
-  Red     -           Record       Edit       Edit       ABC/abc       Play        Jump
-  Green   -           Language     New        New        Ins/Ovr       Rewind      Skip -60s
-  Yellow  -           -            Delete     Delete     Delete        Delete      Skip +60s
-  Blue    -           Stop/Resume  Mark       On/Off(1)  -             Summary     Stop
-  0..9    Ch select   -            -          -          Numeric inp.  -           Editing
+  Up      Ch up       Crsr up      Crsr up    Crsr up    Crsr up       Crsr up           Play
+  Down    Ch down     Crsr down    Crsr down  Crsr down  Crsr down     Crsr down         Pause
+  Left    Prev group  -            Page up    Page up    Decrement     Page up           Search back
+  Right   Next group  -            Page down  Page down  Increment     Page down         Search forward
+  Ok      Ch display  Select       Switch     Edit       Accept        Play              Progress disp.
+  Menu    Menu on     Menu off     Menu off   Menu off   Menu off      Menu off          Menu on
+  Back    -           Menu off     VDR menu   VDR menu   Discard       VDR menu          Recordings menu
+  Red     -           Record       Edit       Edit       ABC/abc       Play/Commands(2)  Jump
+  Green   -           Language     New        New        Ins/Ovr       Rewind            Skip -60s
+  Yellow  -           Pause live   Delete     Delete     Delete        Delete            Skip +60s
+  Blue    -           Stop/Resume  Mark       On/Off(1)  -             Summary           Stop
+  0..9    Ch select   -            -          -          Numeric inp.  Exec cmd(2)       Editing
 
-  Power   Shutdown
-  Volume+ Volume up
-  Volume- Volume down
-  Mute    Mute
+  In a numerical input field (like the response to a CAM enquiry) the keys 0..9
+  are used to enter the data, and the Left key can be used to delete the last
+  entered digit.
+
+  If your remote control provides additional keys, they can be used for the
+  following functions:
+
+  Play        resume normal replay
+  Pause       pause replay or live video
+  Stop        stop replay
+  Record      instant recording
+  FastFwd     fast forward
+  FastRew     fast rewind
+
+  Channel+    channel up
+  Channel-    channel down
+
+  Power       shutdown
+
+  Volume+     volume up
+  Volume-     volume down
+  Mute        mute
+
+  Schedule    \
+  Channels    |
+  Timers      | directly access the VDR
+  Recordings  | main menu functions
+  Setup       |
+  Commands    /
+
+  User1...9   additional user defined keys for macro functions
+              (defined in 'keymacros.conf')
 
   (1) The "On/Off" button in the "Timers" menu only works if sorting the timers
       has been enabled in the "Setup" menu. Otherwise the Blue button is used
       to "mark" a timer for moving.
+  (2) See "Processing Recordings" below.
 
 * Navigating through the On Screen Menus
 
@@ -157,10 +189,26 @@ Video Disk Recorder User's Manual
 
   You can start recording the current channel by pressing the "Red" button
   in the "VDR" menu. This will create a timer event named "@channelname" that
-  starts at the current time and records for two hours.
+  starts at the current time and by default records for 3 hours.
   If you want to modify the recording time you need to edit the timer.
   Stop instant recording by pressing the "Menu" button and selecting
-  "Stop Recording", or by disabling the timer.
+  "Stop Recording", or by disabling the timer. The default priority, lifetime
+  and recording time can be defined in the "Setup/Recording" menu.
+
+* Pausing live video
+
+  If you want to pause the live programme you are just watching, simple press
+  "Menu/Yellow" or "Pause" on your remote control. VDR will start an instant
+  recording of the current channel (just as if you had pressed "Menu/Red" or
+  "Record") and immediately begin replaying that recording. Replay will be
+  put into "pause" mode, so you can attend to whatever it was that disturbed
+  your live viewing session. Once you're back, simply press the "Up" or "Play"
+  button and you'll be watching the current channel in time shift mode, right
+  from the point where you left off. The instant recording VDR has started
+  will use the parameters for "Pause priority" and "Pause lifetime" as defined
+  in the "Setup/Recording" menu. Recording time will be the same as for
+  any other instant recording, so by default it will record 3 hours (which
+  should be enough for any normal broadcast).
 
 * Replaying a Recording
 
@@ -186,6 +234,15 @@ Video Disk Recorder User's Manual
   or by pressing the "Blue" button outside the menu.
   A previously stopped playback session can be resumed by pressing the "Blue"
   button in the "VDR" menu.
+
+* Processing Recordings
+
+  The configuration file 'reccmds.conf' can be used to define system commands
+  that can be applied to the recording that is currently highlighted in the
+  "Recordings" menu. The "Red" button in the "Recordings" menu opens the "Recording
+  commands" menu if there are commands defined in the file 'reccmds.conf'. Pressing
+  one of the keys '1'..'9' in the "Recordings" menu executes the corresponding
+  command from 'reccmds.conf' (see also "Executing system commands" below).
 
 * Replay Control
 
@@ -377,11 +434,11 @@ Video Disk Recorder User's Manual
                          always displayed when pressing the "Ok" button in
                          normal viewing mode.
 
-  Scroll pages = yes     yes = when pressing the "Down" ("Up") key while the cursor
+  Scroll pages = yes     no  = when pressing the "Down" ("Up") key while the cursor
                                is on the last (first) line of a list page, the
                                list is advanced by a full page and the cursor will
                                be at the top (bottom) of that page
-                         no  = dto., but the cursor remains at the bottom (top) of
+                         yes = dto., but the cursor remains at the bottom (top) of
                                the page (this mode allows for faster scrolling
                                through long lists).
 
@@ -496,6 +553,9 @@ Video Disk Recorder User's Manual
                          means that this recording will never be deleted
                          automatically.
 
+  Pause priority = 10    The Priority and Lifetime values used when pausing live
+  Pause lifetime = 1     video.
+
   Use episode name = yes Repeating timers use the EPG's 'Episode name' information
                          to create recording file names in a hierarchical structure
                          (for instance to gather all episodes of a series in a
@@ -551,6 +611,12 @@ Video Disk Recorder User's Manual
 
   Show replay mode = no  Turns displaying the current replay mode on or off.
 
+  Resume ID = 0          Defines an additional ID that can be used in a multi user
+                         environment, so that every user has his/her own resume
+                         files for each recording. The valid range is 0...99, with
+                         0 resulting in a file named 'resume.vdr', and any other
+                         value resulting in 'resume.n.vdr'.
+
   Miscellaneous:
 
   Min. event timeout = 30
@@ -571,7 +637,7 @@ Video Disk Recorder User's Manual
 * Executing system commands
 
   The "VDR" menu option "Commands" allows you to execute any system commands
-  defined in the configuration file 'commands.conf' (see FORMATS for details).
+  defined in the configuration file 'commands.conf' (see vdr(5) for details).
   The "Commands" option will only be present in the "VDR" menu if a valid
   'commands.conf' file containing at least one command definition has been
   found at program start.
@@ -584,7 +650,7 @@ Video Disk Recorder User's Manual
   be displayed on a result screen after executing the command. This screen will
   use a 'fixed' font so that you can generate formatted output. In order to
   avoid error messages going to stderr, command definitions should redirect
-  stderr to stdout (see FORMATS).
+  stderr to stdout (see vdr(5)).
 
   WARNING: THE COMMANDS DEFINED IN 'commands.conf' WILL BE EXECUTED UNDER THE
   =======  SAME USER ID THAT VDR IS RUNNING WITH. BE VERY CAREFUL WHEN

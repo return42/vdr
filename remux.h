@@ -4,14 +4,15 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: remux.h 1.5 2001/06/23 14:06:59 kls Exp $
+ * $Id: remux.h 1.10 2003/04/26 14:13:11 kls Exp $
  */
 
 #ifndef __REMUX_H
 #define __REMUX_H
 
-#include <time.h> //XXX FIXME: DVB/ost/include/ost/dmx.h should include <time.h> itself!!!
-#include <ost/dmx.h>
+#include <time.h> //XXX FIXME: DVB/linux/dvb/dmx.h should include <time.h> itself!!!
+#include <linux/dvb/dmx.h>
+#include "tools.h"
 
 // Picture types:
 #define NO_PICTURE 0
@@ -24,7 +25,6 @@
 
 #define RESULTBUFFERSIZE (MINVIDEODATA * 4)
 
-typedef unsigned char uchar;
 class cTS2PES;
 
 class cRemux {
@@ -43,8 +43,8 @@ private:
 public:
   cRemux(int VPid, int APid1, int APid2, int DPid1, int DPid2, bool ExitOnFailure = false);
   ~cRemux();
-  void SetAudioPid(int APid);
-  const uchar *Process(const uchar *Data, int &Count, int &Result, uchar *PictureType = NULL);
+  uchar *Process(const uchar *Data, int &Count, int &Result, uchar *PictureType = NULL);
+  static void SetBrokenLink(uchar *Data, int Length);
   };
 
 #endif // __REMUX_H

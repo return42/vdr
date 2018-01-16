@@ -4,14 +4,14 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: interface.h 1.25 2002/04/19 13:17:15 kls Exp $
+ * $Id: interface.h 1.29 2002/11/30 14:37:04 kls Exp $
  */
 
 #ifndef __INTERFACE_H
 #define __INTERFACE_H
 
 #include "config.h"
-#include "dvbapi.h"
+#include "osdbase.h"
 #include "remote.h"
 #include "svdrp.h"
 
@@ -22,24 +22,22 @@ private:
   int width, height;
   int open;
   int cols[MaxCols];
-  eKeys keyFromWait;
   bool interrupted;
   cSVDRP *SVDRP;
-  cRcIoBase *rcIo;
-  unsigned int GetCh(bool Wait = true, bool *Repeat = NULL, bool *Release = NULL);
-  void QueryKeys(void);
+  void QueryKeys(cRemote *Remote);
   void HelpButton(int Index, const char *Text, eDvbColor FgColor, eDvbColor BgColor);
   eKeys Wait(int Seconds = 0, bool KeepChar = false);
 public:
   cInterface(int SVDRPport = 0);
   ~cInterface();
+  bool IsOpen(void) { return open > 0; }
   void Open(int NumCols = 0, int NumLines = 0);
   void Close(void);
+  bool HasSVDRPConnection(void) { return SVDRP && SVDRP->HasConnection(); }
   void Interrupt(void) { interrupted = true; }
   int Width(void) { return width; }
   int Height(void) { return height; }
   eKeys GetKey(bool Wait = true);
-  void PutKey(eKeys Key);
   void Clear(void);
   void ClearEol(int x, int y, eDvbColor Color = clrBackground);
   void Fill(int x, int y, int w, int h, eDvbColor color = clrBackground);
@@ -58,9 +56,6 @@ public:
   bool Confirm(const char *s, int Seconds = 10, bool WaitForTimeout = false);
   void Help(const char *Red, const char *Green = NULL, const char *Yellow = NULL, const char *Blue = NULL);
   void LearnKeys(void);
-  void DisplayChannelNumber(int Number);
-  void DisplayRecording(int Index, bool On);
-  bool Recording(void);
   };
 
 extern cInterface *Interface;

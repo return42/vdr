@@ -16,12 +16,13 @@
  *   the Free Software Foundation; either version 2 of the License, or     *
  *   (at your option) any later version.                                   *
  *                                                                         *
- * $Id: eit.h 1.16 2002/03/10 10:56:57 kls Exp $
+ * $Id: eit.h 1.29 2003/05/17 09:15:56 kls Exp $
  ***************************************************************************/
 
 #ifndef __EIT_H
 #define __EIT_H
 
+#include "channels.h"
 #include "thread.h"
 #include "tools.h"
 
@@ -32,7 +33,7 @@ class cEventInfo : public cListObject {
   friend class cEIT;
 private:
   unsigned char uTableID;           // Table ID this event came from
-  unsigned short uServiceID;        // Service ID of program for that event
+  tChannelID channelID;             // Channel ID of program for that event
   bool bIsFollowing;                // true if this is the next event on this channel
   bool bIsPresent;                  // true if this is the present event running
   char *pExtendedDescription;       // Extended description of this event
@@ -47,13 +48,13 @@ protected:
   void SetFollowing(bool foll);
   void SetPresent(bool pres);
   void SetTitle(const char *string);
-  void SetServiceID(unsigned short servid);
+  void SetChannelID(tChannelID channelid);
   void SetEventID(unsigned short evid);
   void SetDuration(long l);
   void SetTime(time_t t);
   void SetExtendedDescription(const char *string);
   void SetSubtitle(const char *string);
-  cEventInfo(unsigned short serviceid, unsigned short eventid);
+  cEventInfo(tChannelID channelid, unsigned short eventid);
 public:
   ~cEventInfo();
   const unsigned char GetTableID(void) const;
@@ -68,7 +69,7 @@ public:
   unsigned short GetEventID(void) const;
   long GetDuration(void) const;
   time_t GetTime(void) const;
-  unsigned short GetServiceID(void) const;
+  tChannelID GetChannelID(void) const;
   int GetChannelNumber(void) const { return nChannelNumber; }
   void SetChannelNumber(int ChannelNumber) const { ((cEventInfo *)this)->nChannelNumber = ChannelNumber; } // doesn't modify the EIT data, so it's ok to make it 'const'
   void Dump(FILE *f, const char *Prefix = "") const;
@@ -82,21 +83,21 @@ class cSchedule : public cListObject  {
 private:
   cEventInfo *pPresent;
   cEventInfo *pFollowing;
-  unsigned short uServiceID;
+  tChannelID channelID;
   cList<cEventInfo> Events;
 protected:
-  void SetServiceID(unsigned short servid);
+  void SetChannelID(tChannelID channelid);
   bool SetFollowingEvent(cEventInfo *pEvent);
   bool SetPresentEvent(cEventInfo *pEvent);
   void Cleanup(time_t tTime);
   void Cleanup(void);
-  cSchedule(unsigned short servid = 0);
+  cSchedule(tChannelID channelid = tChannelID::InvalidID);
 public:
   ~cSchedule();
   cEventInfo *AddEvent(cEventInfo *EventInfo);
   const cEventInfo *GetPresentEvent(void) const;
   const cEventInfo *GetFollowingEvent(void) const;
-  unsigned short GetServiceID(void) const;
+  tChannelID GetChannelID(void) const;
   const cEventInfo *GetEvent(unsigned short uEventID, time_t tTime = 0) const;
   const cEventInfo *GetEventAround(time_t tTime) const;
   const cEventInfo *GetEventNumber(int n) const { return Events.Get(n); }
@@ -110,14 +111,15 @@ class cSchedules : public cList<cSchedule> {
   friend class cSIProcessor;
 private:
   const cSchedule *pCurrentSchedule;
-  unsigned short uCurrentServiceID;
+  tChannelID currentChannelID;
 protected:
-  const cSchedule *SetCurrentServiceID(unsigned short servid);
+  const cSchedule *AddChannelID(tChannelID channelid);
+  const cSchedule *SetCurrentChannelID(tChannelID channelid);
   void Cleanup();
 public:
   cSchedules(void);
   ~cSchedules();
-  const cSchedule *GetSchedule(unsigned short servid) const;
+  const cSchedule *GetSchedule(tChannelID channelid) const;
   const cSchedule *GetSchedule(void) const;
   void Dump(FILE *f, const char *Prefix = "") const;
   static bool Read(FILE *f);
@@ -125,27 +127,38 @@ public:
 
 typedef struct sip_filter {
 
-  u_char pid;
+  unsigned short pid;
   u_char tid;
   int handle;
   bool inuse;
 
 }SIP_FILTER;
 
+class cCaDescriptor;
+
 class cSIProcessor : public cThread {
 private:
   static int numSIProcessors;
   static cSchedules *schedules;
   static cMutex schedulesMutex;
+  static cList<cCaDescriptor> caDescriptors;
+  static cMutex caDescriptorsMutex;
   static const char *epgDataFileName;
+  static time_t lastDump;
   bool masterSIProcessor;
+  int currentSource;
   int currentTransponder;
+  int statusCount;
+  int pmtIndex;
+  int pmtPid;
   SIP_FILTER *filters;
   char *fileName;
   bool active;
   void Action(void);
-  bool AddFilter(u_char pid, u_char tid);
+  bool AddFilter(unsigned short pid, u_char tid, u_char mask = 0xFF);
+  bool DelFilter(unsigned short pid, u_char tid);
   bool ShutDownFilters(void);
+  void NewCaDescriptor(struct Descriptor *d, int ServiceId);
 public:
   cSIProcessor(const char *FileName);
   ~cSIProcessor();
@@ -155,10 +168,19 @@ public:
          // Caller must provide a cMutexLock which has to survive the entire
          // time the returned cSchedules is accessed. Once the cSchedules is no
          // longer used, the cMutexLock must be destroyed.
+  static int GetCaDescriptors(int Source, int Transponder, int ServiceId, const unsigned short *CaSystemIds, int BufSize, uchar *Data);
+         ///< Gets all CA descriptors for a given channel.
+         ///< Copies all available CA descriptors for the given Source, Transponder and ServiceId
+         ///< into the provided buffer at Data (at most BufSize bytes). Only those CA descriptors
+         ///< are copied that match one of the given CA system IDs.
+         ///< \return Returns the number of bytes copied into Data (0 if no CA descriptors are
+         ///< available), or -1 if BufSize was too small to hold all CA descriptors.
   static bool Read(FILE *f = NULL);
+  static void Clear(void);
   void SetStatus(bool On);
-  void SetCurrentTransponder(int CurrentTransponder);
-  bool SetCurrentServiceID(unsigned short servid);
+  void SetCurrentTransponder(int CurrentSource, int CurrentTransponder);
+  static bool SetCurrentChannelID(tChannelID channelid);
+  static void TriggerDump(void);
   };
 
 #endif

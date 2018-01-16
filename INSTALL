@@ -1,6 +1,19 @@
 Installation of the Video Disk Recorder
 ---------------------------------------
 
+Version 1.2
+-----------
+
+IMPORTANT NOTE:
+---------------
+
+VDR currently doesn't work with NPTL ("Native Posix Thread Library").
+Either don't use NPTL, or set the environment variable
+
+  LD_ASSUME_KERNEL=2.4.1
+  
+before running VDR.
+
 Compiling and running the program:
 ----------------------------------
 
@@ -13,9 +26,9 @@ extracted into the directory /home/kls/vdr/DVB, then this
 package should be extracted into /home/kls/vdr/VDR.
 If you have the DVB driver source in a different location
 you will have to change the definition of DVBDIR in the
-Makefile.
+Makefile (see the file Make.config.template).
 
-VDR requires the Linux-DVB card driver version dated 2001-09-14 or higher
+VDR requires the Linux-DVB card driver version dated 2003-05-24 or higher
 to work properly.
 
 After extracting the package, change into the VDR directory
@@ -26,17 +39,17 @@ installed.
 IMPORTANT: See "Configuration files" below for information on how
 =========  to set up the configuration files at the proper location!
 
-The 'vdr' program can be controlled via the PC keyboard or
-an infrared remote control unit. Define the REMOTE macro to one of the
-following values 'make' call to activate the respective control mode:
+By default the 'vdr' program can be controlled via the PC keyboard. If you have
+an infrared remote control unit you can define the REMOTE macro to one of the
+following values in the 'make' call to activate the respective control mode:
 
-  REMOTE=KBD    control via the PC keyboard (default)
   REMOTE=RCU    control via the "Remote Control Unit" receiver
-                (see http://www.cadsoft.de/people/kls/vdr/remote.htm)
+                (see http://www.cadsoft.de/vdr/remote.htm)
   REMOTE=LIRC   control via the "Linux Infrared Remote Control"
                 (see http://www.lirc.org)
-  REMOTE=NONE   no remote control (in case only SVDRP shall be used)
 
+If you want to disable control via the PC keyboard, you can add NO_KBD=1
+to the 'make' call.
 Adding "DEBUG_OSD=1" will use the PC screen (or current window)
 to display texts instead of the DVB card's on-screen display
 interface. These modes are useful when testing new menus if you
@@ -278,6 +291,11 @@ with the name of the basic directory when running 'vdr':
 
    vdr -v /video0
 
+Note that you should not copy any non-VDR files into the /videoX directories,
+since this might cause the watchdog timer to expire when VDR cleans up those
+directories and there is a large number of files and/or subdirectories in
+there.
+
 Configuration files:
 --------------------
 
@@ -306,8 +324,8 @@ Setting up DiSEqC:
 
 If you are using a DVB-S card with a satellite equipment that needs to be
 accessed using DiSEqC, you have to go to the "Setup" menu and set the "DiSEqC"
-parameter to "on". Also check the "DiSEqC" parameters for the various channels
-and set them to the necessary values.
+parameter to "on". You also need to set up the file 'diseqc.conf' to properly
+access your DiSEqC equipment (see man vdr(5) for details).
 
 Running VDR with DVB-C (cable) or DVB-T (terrestrial):
 ------------------------------------------------------
@@ -318,20 +336,18 @@ cable or terrestrial reception is the 'channels.conf' file. The distribution
 archive contains a default 'channels.conf.cable' and 'channels.conf.terr',
 respectively, which users of such cards can rename or copy to 'channels.conf'
 in order to receive digital cable or terrestrial channels. The format of these
-files is exactly the same as for satellite channels (the fields containing
-"Polarization" and "Diseqc" data are ignored in case of DVB-C and DVB-T, and
-the "Frequency" is in kHz in case of DVB-T).
+files is mostly the same as for satellite channels, however, some fields have
+different or extended meanings (see man vdr(5) for details).
 
 You can even use a mixture of DVB-S, DVB-C and DVB-T cards in the same system.
 All you need to do is to put all the channel definitions into one big
-'channels.conf' file and set the 'Ca' parameter of each channel to the number
-of the card that can receive it.
+'channels.conf' file. VDR will automatically know which channels can be
+received with which card(s) by evaluating the 'source' parameter.
 
 Learning the remote control keys:
 ---------------------------------
 
-There is no default 'keys.conf' file, so if you compile the program
-with 'REMOTE=RCU' you will have to go through a "teach-in"
+There is no default 'remote.conf' file, so you will have to go through a "teach-in"
 session that allows the program to learn your remote control codes.
 It will first attempt to determine the basic data transfer mode and
 timing of your remote control unit, and then will ask you to press one
@@ -342,11 +358,8 @@ you define, the more you will be able to navigate through the menus and
 control recording/replaying. The program uses only a very small number
 of keys which have multiple meanings in the various modes (see MANUAL
 for a detailed description).
-If the program has been built with "REMOTE=KBD", it will use the
-key configuration file 'keys-pc.conf', so that you won't loose data
-when switching between remote control and keyboard mode.
 
-The default PC key assignments are:
+The recommended PC key assignments are:
 
   Up, Down, Left, Right     Crsr keys in numeric block
   Menu                      'Home' in numeric block
@@ -359,10 +372,14 @@ The default PC key assignments are:
   Mute                      'm'
 
 If you prefer different key assignments, or if the default doesn't work for
-your keyboard, simply delete the file 'keys-pc.conf' and restart 'vdr' to get
+your keyboard, simply delete the file 'remote.conf' and restart 'vdr' to get
 into learning mode.
 
-If the program has been compiled with 'REMOTE=LIRC', no 'keys.conf' file
-will be used. Instead, the key names as listed in the source file 'config.c'
-must be used when setting up LIRC. See http://www.lirc.org for more about LIRC.
+Generating source code documentation:
+-------------------------------------
 
+You can do a 'make srcdoc' to generate source code documentation using the
+Doxygen tool. To do so you need the Doxygen package from http://www.doxygen.src
+and the Graphviz package from http://www.research.att.com/sw/tools/graphviz.
+After installing these two packages you can do 'make srcdoc' and then use your
+HTML browser to read srcdoc/html/index.html.

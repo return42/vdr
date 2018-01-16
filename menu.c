@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: menu.c 1.189 2002/05/01 14:54:10 kls Exp $
+ * $Id: menu.c 1.253 2003/05/30 09:53:57 kls Exp $
  */
 
 #include "menu.h"
@@ -13,139 +13,28 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "channels.h"
 #include "config.h"
+#include "cutter.h"
 #include "eit.h"
 #include "i18n.h"
+#include "menuitems.h"
+#include "plugin.h"
+#include "recording.h"
+#include "remote.h"
+#include "sources.h"
+#include "status.h"
+#include "timers.h"
 #include "videodir.h"
 
 #define MENUTIMEOUT     120 // seconds
-#define MAXWAIT4EPGINFO  10 // seconds
+#define MAXWAIT4EPGINFO   3 // seconds
 #define MODETIMEOUT       3 // seconds
 
+#define MAXRECORDCONTROLS (MAXDEVICES * MAXRECEIVERS)
 #define MAXINSTANTRECTIME (24 * 60 - 1) // 23:59 hours
 
-#define CHNUMWIDTH  (Channels.Count() > 999 ? 5 : 4) // there are people with more than 999 channels...
-
-const char *FileNameChars = " abcdefghijklmnopqrstuvwxyz0123456789-.#~";
-
-// --- cMenuEditItem ---------------------------------------------------------
-
-class cMenuEditItem : public cOsdItem {
-private:
-  const char *name;
-  const char *value;
-public:
-  cMenuEditItem(const char *Name);
-  ~cMenuEditItem();
-  void SetValue(const char *Value);
-  };
-
-cMenuEditItem::cMenuEditItem(const char *Name)
-{
-  name = strdup(Name);
-  value = NULL;
-}
-
-cMenuEditItem::~cMenuEditItem()
-{
-  delete name;
-  delete value;
-}
-
-void cMenuEditItem::SetValue(const char *Value)
-{
-  delete value;
-  value = strdup(Value);
-  char *buffer = NULL;
-  asprintf(&buffer, "%s:\t%s", name, value);
-  SetText(buffer, false);
-  Display();
-}
-
-// --- cMenuEditIntItem ------------------------------------------------------
-
-class cMenuEditIntItem : public cMenuEditItem {
-protected:
-  int *value;
-  int min, max;
-  virtual void Set(void);
-public:
-  cMenuEditIntItem(const char *Name, int *Value, int Min = 0, int Max = INT_MAX);
-  virtual eOSState ProcessKey(eKeys Key);
-  };
-
-cMenuEditIntItem::cMenuEditIntItem(const char *Name, int *Value, int Min, int Max)
-:cMenuEditItem(Name)
-{
-  value = Value;
-  min = Min;
-  max = Max;
-  Set();
-}
-
-void cMenuEditIntItem::Set(void)
-{
-  char buf[16];
-  snprintf(buf, sizeof(buf), "%d", *value);
-  SetValue(buf);
-}
-
-eOSState cMenuEditIntItem::ProcessKey(eKeys Key)
-{
-  eOSState state = cMenuEditItem::ProcessKey(Key);
-
-  if (state == osUnknown) {
-     int newValue;
-     if (k0 <= Key && Key <= k9) {
-        if (fresh) {
-           *value = 0;
-           fresh = false;
-           }
-        newValue = *value  * 10 + (Key - k0);
-        }
-     else if (NORMALKEY(Key) == kLeft) { // TODO might want to increase the delta if repeated quickly?
-        newValue = *value - 1;
-        fresh = true;
-        }
-     else if (NORMALKEY(Key) == kRight) {
-        newValue = *value + 1;
-        fresh = true;
-        }
-     else
-        return state;
-     if ((!fresh || min <= newValue) && newValue <= max) {
-        *value = newValue;
-        Set();
-        }
-     state = osContinue;
-     }
-  return state;
-}
-
-// --- cMenuEditBoolItem -----------------------------------------------------
-
-class cMenuEditBoolItem : public cMenuEditIntItem {
-protected:
-  const char *falseString, *trueString;
-  virtual void Set(void);
-public:
-  cMenuEditBoolItem(const char *Name, int *Value, const char *FalseString = NULL, const char *TrueString = NULL);
-  };
-
-cMenuEditBoolItem::cMenuEditBoolItem(const char *Name, int *Value, const char *FalseString, const char *TrueString)
-:cMenuEditIntItem(Name, Value, 0, 1)
-{
-  falseString = FalseString ? FalseString : tr("no");
-  trueString = TrueString ? TrueString : tr("yes");
-  Set();
-}
-
-void cMenuEditBoolItem::Set(void)
-{
-  char buf[16];
-  snprintf(buf, sizeof(buf), "%s", *value ? trueString : falseString);
-  SetValue(buf);
-}
+#define CHNUMWIDTH  (numdigits(Channels.MaxNumber()) + 1)
 
 // --- cMenuEditChanItem -----------------------------------------------------
 
@@ -154,6 +43,7 @@ protected:
   virtual void Set(void);
 public:
   cMenuEditChanItem(const char *Name, int *Value);
+  virtual eOSState ProcessKey(eKeys Key);
   };
 
 cMenuEditChanItem::cMenuEditChanItem(const char *Name, int *Value)
@@ -166,11 +56,30 @@ void cMenuEditChanItem::Set(void)
 {
   char buf[255];
   cChannel *channel = Channels.GetByNumber(*value);
-  if (channel)
-     snprintf(buf, sizeof(buf), "%d %s", *value, channel->name);
-  else
-     *buf = 0;
+  snprintf(buf, sizeof(buf), "%d %s", *value, channel ? channel->Name() : "");
   SetValue(buf);
+}
+
+eOSState cMenuEditChanItem::ProcessKey(eKeys Key)
+{
+  int delta = 1;
+
+  switch (Key) {
+    case kLeft|k_Repeat:
+    case kLeft:  delta = -1;
+    case kRight|k_Repeat:
+    case kRight: 
+                 {
+                   cChannel *channel = Channels.GetByNumber(*value + delta, delta);
+                   if (channel) {
+                      *value = channel->Number();
+                      Set();
+                      }
+                 }
+                 break;
+    default : return cMenuEditIntItem::ProcessKey(Key);
+    }
+  return osContinue;
 }
 
 // --- cMenuEditTranItem -----------------------------------------------------
@@ -191,8 +100,8 @@ cMenuEditTranItem::cMenuEditTranItem(const char *Name, int *Value)
   transponder = *Value;
   cChannel *channel = Channels.First();
   while (channel) {
-        if (!channel->groupSep && ISTRANSPONDER(channel->frequency, *Value)) {
-           number = channel->number;
+        if (!channel->GroupSep() && ISTRANSPONDER(channel->Frequency(), *Value)) {
+           number = channel->Number();
            break;
            }
         channel = (cChannel *)channel->Next();
@@ -209,7 +118,7 @@ eOSState cMenuEditTranItem::ProcessKey(eKeys Key)
   number = *value;
   cChannel *channel = Channels.GetByNumber(*value);
   if (channel)
-     transponder = channel->frequency;
+     transponder = channel->Frequency();
   *value = transponder;
   return state;
 }
@@ -451,282 +360,6 @@ eOSState cMenuEditTimeItem::ProcessKey(eKeys Key)
   return state;
 }
 
-// --- cMenuEditChrItem ------------------------------------------------------
-
-class cMenuEditChrItem : public cMenuEditItem {
-private:
-  char *value;
-  const char *allowed;
-  const char *current;
-  virtual void Set(void);
-public:
-  cMenuEditChrItem(const char *Name, char *Value, const char *Allowed);
-  ~cMenuEditChrItem();
-  virtual eOSState ProcessKey(eKeys Key);
-  };
-
-cMenuEditChrItem::cMenuEditChrItem(const char *Name, char *Value, const char *Allowed)
-:cMenuEditItem(Name)
-{
-  value = Value;
-  allowed = strdup(Allowed);
-  current = strchr(allowed, *Value);
-  if (!current)
-     current = allowed;
-  Set();
-}
-
-cMenuEditChrItem::~cMenuEditChrItem()
-{
-  delete allowed;
-}
-
-void cMenuEditChrItem::Set(void)
-{
-  char buf[2];
-  snprintf(buf, sizeof(buf), "%c", *value);
-  SetValue(buf);
-}
-
-eOSState cMenuEditChrItem::ProcessKey(eKeys Key)
-{
-  eOSState state = cMenuEditItem::ProcessKey(Key);
-
-  if (state == osUnknown) {
-     if (NORMALKEY(Key) == kLeft) {
-        if (current > allowed)
-           current--;
-        }
-     else if (NORMALKEY(Key) == kRight) {
-        if (*(current + 1))
-           current++;
-        }
-     else
-        return state;
-     *value = *current;
-     Set();
-     state = osContinue;
-     }
-  return state;
-}
-
-// --- cMenuEditStrItem ------------------------------------------------------
-
-class cMenuEditStrItem : public cMenuEditItem {
-private:
-  char *value;
-  int length;
-  const char *allowed;
-  int pos;
-  bool insert, newchar, uppercase;
-  void SetHelpKeys(void);
-  virtual void Set(void);
-  char Inc(char c, bool Up);
-public:
-  cMenuEditStrItem(const char *Name, char *Value, int Length, const char *Allowed);
-  ~cMenuEditStrItem();
-  virtual eOSState ProcessKey(eKeys Key);
-  };
-
-cMenuEditStrItem::cMenuEditStrItem(const char *Name, char *Value, int Length, const char *Allowed)
-:cMenuEditItem(Name)
-{
-  value = Value;
-  length = Length;
-  allowed = strdup(Allowed);
-  pos = -1;
-  insert = uppercase = false;
-  newchar = true;
-  Set();
-}
-
-cMenuEditStrItem::~cMenuEditStrItem()
-{
-  delete allowed;
-}
-
-void cMenuEditStrItem::SetHelpKeys(void)
-{
-  if (pos >= 0)
-     Interface->Help(tr("ABC/abc"), tr(insert ? "Overwrite" : "Insert"), tr("Delete"));
-  else
-     Interface->Help(NULL);
-}
-
-void cMenuEditStrItem::Set(void)
-{
-  char buf[1000];
-  const char *fmt = insert && newchar ? "[]%c%s" : "[%c]%s";
-
-  if (pos >= 0) {
-     strncpy(buf, value, pos);
-     snprintf(buf + pos, sizeof(buf) - pos - 2, fmt, *(value + pos), value + pos + 1);
-     int width = Interface->Width() - Interface->GetCols()[0];
-     if (cDvbApi::PrimaryDvbApi->WidthInCells(buf) <= width) {
-        // the whole buffer fits on the screen
-        SetValue(buf);
-        return;
-        }
-     width *= cDvbApi::PrimaryDvbApi->CellWidth();
-     width -= cDvbApi::PrimaryDvbApi->Width('>'); // assuming '<' and '>' have the same with
-     int w = 0;
-     int i = 0;
-     int l = strlen(buf);
-     while (i < l && w <= width)
-           w += cDvbApi::PrimaryDvbApi->Width(buf[i++]);
-     if (i >= pos + 4) {
-        // the cursor fits on the screen
-        buf[i - 1] = '>';
-        buf[i] = 0;
-        SetValue(buf);
-        return;
-        }
-     // the cursor doesn't fit on the screen
-     w = 0;
-     if (buf[i = pos + 3]) {
-        buf[i] = '>';
-        buf[i + 1] = 0;
-        }
-     else
-        i--;
-     while (i >= 0 && w <= width)
-           w += cDvbApi::PrimaryDvbApi->Width(buf[i--]);
-     buf[++i] = '<';
-     SetValue(buf + i);
-     }
-  else
-     SetValue(value);
-}
-
-char cMenuEditStrItem::Inc(char c, bool Up)
-{
-  const char *p = strchr(allowed, c);
-  if (!p)
-     p = allowed;
-  if (Up) {
-     if (!*++p)
-        p = allowed;
-     }
-  else if (--p < allowed)
-     p = allowed + strlen(allowed) - 1;
-  return *p;
-}
-
-eOSState cMenuEditStrItem::ProcessKey(eKeys Key)
-{
-  switch (Key) {
-    case kRed:   // Switch between upper- and lowercase characters
-                 if (pos >= 0 && (!insert || !newchar)) {
-                    uppercase = !uppercase;
-                    value[pos] = uppercase ? toupper(value[pos]) : tolower(value[pos]);
-                    }
-                 break;
-    case kGreen: // Toggle insert/overwrite modes
-                 if (pos >= 0) {
-                    insert = !insert;
-                    newchar = true;
-                    }
-                 SetHelpKeys();
-                 break;
-    case kYellow|k_Repeat:
-    case kYellow: // Remove the character at current position; in insert mode it is the character to the right of cursor
-                 if (pos >= 0) {
-                    if (strlen(value) > 1) {
-                       memmove(value + pos, value + pos + 1, strlen(value) - pos);
-                       // reduce position, if we removed the last character
-                       if (pos == int(strlen(value)))
-                          pos--;
-                       }
-                    else if (strlen(value) == 1)
-                       value[0] = ' '; // This is the last character in the string, replace it with a blank
-                    if (isalpha(value[pos]))
-                       uppercase = isupper(value[pos]);
-                    newchar = true;
-                    }
-                 break;
-    case kLeft|k_Repeat:
-    case kLeft:  if (pos > 0) {
-                    if (!insert || newchar)
-                       pos--;
-                    newchar = true;
-                    }
-                 if (!insert && isalpha(value[pos]))
-                    uppercase = isupper(value[pos]);
-                 break;
-    case kRight|k_Repeat:
-    case kRight: if (pos < length && pos < int(strlen(value)) ) {
-                    if (++pos >= int(strlen(value))) {
-                       if (pos >= 2 && value[pos - 1] == ' ' && value[pos - 2] == ' ')
-                          pos--; // allow only two blanks at the end
-                       else {
-                          value[pos] = ' ';
-                          value[pos + 1] = 0;
-                          }
-                       }
-                    }
-                 newchar = true;
-                 if (!insert && isalpha(value[pos]))
-                    uppercase = isupper(value[pos]);
-                 if (pos == 0)
-                    SetHelpKeys();
-                 break;
-    case kUp|k_Repeat:
-    case kUp:
-    case kDown|k_Repeat:
-    case kDown:  if (pos >= 0) {
-                    if (insert && newchar) {
-                       // create a new character in insert mode
-                       if (int(strlen(value)) < length) {
-                          memmove(value + pos + 1, value + pos, strlen(value) - pos + 1);
-                          value[pos] = ' ';
-                          }
-                       }
-                    if (uppercase)
-                       value[pos] = toupper(Inc(tolower(value[pos]), NORMALKEY(Key) == kUp));
-                    else
-                       value[pos] =         Inc(        value[pos],  NORMALKEY(Key) == kUp);
-                    newchar = false;
-                    }
-                 else
-                    return cMenuEditItem::ProcessKey(Key);
-                 break;
-    case kOk:    if (pos >= 0) {
-                    pos = -1;
-                    newchar = true;
-                    stripspace(value);
-                    SetHelpKeys();
-                    break;
-                    }
-                 // run into default
-    default:     return cMenuEditItem::ProcessKey(Key);
-    }
-  Set();
-  return osContinue;
-}
-
-// --- cMenuEditStraItem -----------------------------------------------------
-
-class cMenuEditStraItem : public cMenuEditIntItem {
-private:
-  const char * const *strings;
-protected:
-  virtual void Set(void);
-public:
-  cMenuEditStraItem(const char *Name, int *Value, int NumStrings, const char * const *Strings);
-  };
-
-cMenuEditStraItem::cMenuEditStraItem(const char *Name, int *Value, int NumStrings, const char * const *Strings)
-:cMenuEditIntItem(Name, Value, 0, NumStrings - 1)
-{
-  strings = Strings;
-  Set();
-}
-
-void cMenuEditStraItem::Set(void)
-{
-  SetValue(strings[*value]);
-}
-
 // --- cMenuEditCaItem -------------------------------------------------------
 
 class cMenuEditCaItem : public cMenuEditIntItem {
@@ -768,7 +401,7 @@ eOSState cMenuEditCaItem::ProcessKey(eKeys Key)
            }
         }
      else if (NORMALKEY(Key) == kRight) {
-        if (ca && ca->Next() && (allowCardNr || ((cCaDefinition *)ca->Next())->Number() > MAXDVBAPI)) {
+        if (ca && ca->Next() && (allowCardNr || ((cCaDefinition *)ca->Next())->Number() > MAXDEVICES)) {
            ca = (cCaDefinition *)ca->Next();
            *value = ca->Number();
            }
@@ -781,51 +414,227 @@ eOSState cMenuEditCaItem::ProcessKey(eKeys Key)
   return state;
 }
 
+// --- cMenuEditSrcItem ------------------------------------------------------
+
+class cMenuEditSrcItem : public cMenuEditIntItem {
+private:
+  const cSource *source;
+protected:
+  virtual void Set(void);
+public:
+  cMenuEditSrcItem(const char *Name, int *Value);
+  eOSState ProcessKey(eKeys Key);
+  };
+
+cMenuEditSrcItem::cMenuEditSrcItem(const char *Name, int *Value)
+:cMenuEditIntItem(Name, Value, 0)
+{
+  source = Sources.Get(*Value);
+  Set();
+}
+
+void cMenuEditSrcItem::Set(void)
+{
+  if (source) {
+     char *buffer = NULL;
+     asprintf(&buffer, "%s - %s", cSource::ToString(source->Code()), source->Description());
+     SetValue(buffer);
+     free(buffer);
+     }
+  else
+     cMenuEditIntItem::Set();
+}
+
+eOSState cMenuEditSrcItem::ProcessKey(eKeys Key)
+{
+  eOSState state = cMenuEditItem::ProcessKey(Key);
+
+  if (state == osUnknown) {
+     if (NORMALKEY(Key) == kLeft) { // TODO might want to increase the delta if repeated quickly?
+        if (source && source->Prev()) {
+           source = (cSource *)source->Prev();
+           *value = source->Code();
+           }
+        }
+     else if (NORMALKEY(Key) == kRight) {
+        if (source) { 
+           if (source->Next())
+              source = (cSource *)source->Next();
+           }
+        else
+           source = Sources.First();
+        if (source)
+           *value = source->Code();
+        }
+     else
+        return state; // we don't call cMenuEditIntItem::ProcessKey(Key) here since we don't accept numerical input
+     Set();
+     state = osContinue;
+     }
+  return state;
+}
+
+// --- cMenuEditMapItem ------------------------------------------------------
+
+class cMenuEditMapItem : public cMenuEditItem {
+protected:
+  int *value;
+  const tChannelParameterMap *map;
+  const char *zeroString;
+  virtual void Set(void);
+public:
+  cMenuEditMapItem(const char *Name, int *Value, const tChannelParameterMap *Map, const char *ZeroString = NULL);
+  virtual eOSState ProcessKey(eKeys Key);
+  };
+
+cMenuEditMapItem::cMenuEditMapItem(const char *Name, int *Value, const tChannelParameterMap *Map, const char *ZeroString)
+:cMenuEditItem(Name)
+{
+  value = Value;
+  map = Map;
+  zeroString = ZeroString;
+  Set();
+}
+
+void cMenuEditMapItem::Set(void)
+{
+  int n = MapToUser(*value, map);
+  if (n == 999)
+     SetValue(tr("auto"));
+  else if (n == 0 && zeroString)
+     SetValue(zeroString);
+  else if (n >= 0) {
+     char buf[16];
+     snprintf(buf, sizeof(buf), "%d", n);
+     SetValue(buf);
+     }
+  else
+     SetValue("???");
+}
+
+eOSState cMenuEditMapItem::ProcessKey(eKeys Key)
+{
+  eOSState state = cMenuEditItem::ProcessKey(Key);
+
+  if (state == osUnknown) {
+     int newValue = *value;
+     int n = DriverIndex(*value, map);
+     if (NORMALKEY(Key) == kLeft) { // TODO might want to increase the delta if repeated quickly?
+        if (n-- > 0)
+           newValue = map[n].driverValue;
+        }
+     else if (NORMALKEY(Key) == kRight) {
+        if (map[++n].userValue >= 0)
+           newValue = map[n].driverValue;
+        }
+     else
+        return state;
+     if (newValue != *value) {
+        *value = newValue;
+        Set();
+        }
+     state = osContinue;
+     }
+  return state;
+}
+
 // --- cMenuEditChannel ------------------------------------------------------
 
 class cMenuEditChannel : public cOsdMenu {
 private:
   cChannel *channel;
   cChannel data;
+  void Setup(void);
 public:
-  cMenuEditChannel(int Index);
+  cMenuEditChannel(cChannel *Channel, bool New = false);
   virtual eOSState ProcessKey(eKeys Key);
   };
 
-cMenuEditChannel::cMenuEditChannel(int Index)
+cMenuEditChannel::cMenuEditChannel(cChannel *Channel, bool New)
 :cOsdMenu(tr("Edit channel"), 14)
 {
-  channel = Channels.Get(Index);
+  channel = Channel;
   if (channel) {
      data = *channel;
-     Add(new cMenuEditStrItem( tr("Name"),          data.name, sizeof(data.name), tr(FileNameChars)));
-     Add(new cMenuEditIntItem( tr("Frequency"),    &data.frequency));
-     Add(new cMenuEditChrItem( tr("Polarization"), &data.polarization, "hv"));
-     Add(new cMenuEditIntItem( tr("DiSEqC"),       &data.diseqc, 0, 10)); //TODO exact limits???
-     Add(new cMenuEditIntItem( tr("Srate"),        &data.srate));
-     Add(new cMenuEditIntItem( tr("Vpid"),         &data.vpid,  0, 0x1FFF));
-     Add(new cMenuEditIntItem( tr("Apid1"),        &data.apid1, 0, 0x1FFF));
-     Add(new cMenuEditIntItem( tr("Apid2"),        &data.apid2, 0, 0x1FFF));
-     Add(new cMenuEditIntItem( tr("Dpid1"),        &data.dpid1, 0, 0x1FFF));
-     Add(new cMenuEditIntItem( tr("Dpid2"),        &data.dpid2, 0, 0x1FFF));
-     Add(new cMenuEditIntItem( tr("Tpid"),         &data.tpid,  0, 0x1FFF));
-     Add(new cMenuEditCaItem(  tr("CA"),           &data.ca, true));
-     Add(new cMenuEditIntItem( tr("Pnr"),          &data.pnr, 0));
+     if (New)
+        channel = NULL;
+     Setup();
      }
+}
+
+void cMenuEditChannel::Setup(void)
+{
+  int current = Current();
+  char type = *cSource::ToString(data.source);
+#define ST(s) if (strchr(s, type))
+
+  Clear();
+
+  // Parameters for all types of sources:
+  Add(new cMenuEditStrItem( tr("Name"),          data.name, sizeof(data.name), tr(FileNameChars)));
+  Add(new cMenuEditSrcItem( tr("Source"),       &data.source));
+  Add(new cMenuEditIntItem( tr("Frequency"),    &data.frequency));
+  Add(new cMenuEditIntItem( tr("Vpid"),         &data.vpid,  0, 0x1FFF));
+  Add(new cMenuEditIntItem( tr("Ppid"),         &data.ppid,  0, 0x1FFF));
+  Add(new cMenuEditIntItem( tr("Apid1"),        &data.apid1, 0, 0x1FFF));
+  Add(new cMenuEditIntItem( tr("Apid2"),        &data.apid2, 0, 0x1FFF));
+  Add(new cMenuEditIntItem( tr("Dpid1"),        &data.dpid1, 0, 0x1FFF));
+  Add(new cMenuEditIntItem( tr("Dpid2"),        &data.dpid2, 0, 0x1FFF));
+  Add(new cMenuEditIntItem( tr("Tpid"),         &data.tpid,  0, 0x1FFF));
+  Add(new cMenuEditCaItem(  tr("CA"),           &data.ca, true));
+  Add(new cMenuEditIntItem( tr("Sid"),          &data.sid, 0));
+  /* XXX not yet used
+  Add(new cMenuEditIntItem( tr("Nid"),          &data.nid, 0));
+  Add(new cMenuEditIntItem( tr("Tid"),          &data.tid, 0));
+  Add(new cMenuEditIntItem( tr("Rid"),          &data.rid, 0));
+  XXX*/
+  // Parameters for specific types of sources:
+  ST(" S ")  Add(new cMenuEditChrItem( tr("Polarization"), &data.polarization, "hv"));
+  ST("CS ")  Add(new cMenuEditIntItem( tr("Srate"),        &data.srate));
+  ST("CST")  Add(new cMenuEditMapItem( tr("Inversion"),    &data.inversion,    InversionValues, tr("off")));
+  ST("CST")  Add(new cMenuEditMapItem( tr("CoderateH"),    &data.coderateH,    CoderateValues, tr("none")));
+  ST("  T")  Add(new cMenuEditMapItem( tr("CoderateL"),    &data.coderateL,    CoderateValues, tr("none")));
+  ST("C T")  Add(new cMenuEditMapItem( tr("Modulation"),   &data.modulation,   ModulationValues, "QPSK"));
+  ST("  T")  Add(new cMenuEditMapItem( tr("Bandwidth"),    &data.bandwidth,    BandwidthValues));
+  ST("  T")  Add(new cMenuEditMapItem( tr("Transmission"), &data.transmission, TransmissionValues));
+  ST("  T")  Add(new cMenuEditMapItem( tr("Guard"),        &data.guard,        GuardValues));
+  ST("  T")  Add(new cMenuEditMapItem( tr("Hierarchy"),    &data.hierarchy,    HierarchyValues, tr("none")));
+
+  SetCurrent(Get(current));
+  Display();
 }
 
 eOSState cMenuEditChannel::ProcessKey(eKeys Key)
 {
+  int oldSource = data.source;
   eOSState state = cOsdMenu::ProcessKey(Key);
 
   if (state == osUnknown) {
      if (Key == kOk) {
-        if (channel)
-           *channel = data;
-        Channels.Save();
-        state = osBack;
+        if (Channels.HasUniqueChannelID(&data, channel)) {
+           if (channel) {
+              *channel = data;
+              isyslog("edited channel %d %s", channel->Number(), data.ToText());
+              state = osBack;
+              }
+           else {
+              channel = new cChannel;
+              *channel = data;
+              Channels.Add(channel);
+              Channels.ReNumber();
+              isyslog("added channel %d %s", channel->Number(), data.ToText());
+              state = osUser1;
+              }
+           Channels.Save();
+           }
+        else {
+           Interface->Error(tr("Channel settings are not unique!"));
+           state = osContinue;
+           }
         }
      }
+  if (Key != kNone && (data.source & cSource::st_Mask) != (oldSource & cSource::st_Mask))
+     Setup();
   return state;
 }
 
@@ -833,19 +642,17 @@ eOSState cMenuEditChannel::ProcessKey(eKeys Key)
 
 class cMenuChannelItem : public cOsdItem {
 private:
-  int index;
   cChannel *channel;
 public:
-  cMenuChannelItem(int Index, cChannel *Channel);
+  cMenuChannelItem(cChannel *Channel);
   virtual void Set(void);
-  void SetIndex(int Index);
+  cChannel *Channel(void) { return channel; }
   };
 
-cMenuChannelItem::cMenuChannelItem(int Index, cChannel *Channel)
+cMenuChannelItem::cMenuChannelItem(cChannel *Channel)
 {
-  index = Index;
   channel = Channel;
-  if (channel->groupSep)
+  if (channel->GroupSep())
      SetColor(clrCyan, clrBackground);
   Set();
 }
@@ -853,27 +660,24 @@ cMenuChannelItem::cMenuChannelItem(int Index, cChannel *Channel)
 void cMenuChannelItem::Set(void)
 {
   char *buffer = NULL;
-  if (!channel->groupSep)
-     asprintf(&buffer, "%d\t%s", channel->number, channel->name );
+  if (!channel->GroupSep())
+     asprintf(&buffer, "%d\t%s", channel->Number(), channel->Name());
   else
-     asprintf(&buffer, "---\t%s ----------------------------------------------------------------", channel->name);
+     asprintf(&buffer, "---\t%s ----------------------------------------------------------------", channel->Name());
   SetText(buffer, false);
-}
-
-void cMenuChannelItem::SetIndex(int Index)
-{
-  index = Index;
-  Set();
 }
 
 // --- cMenuChannels ---------------------------------------------------------
 
 class cMenuChannels : public cOsdMenu {
+private:
+  cChannel *GetChannel(int Index);
+  void Propagate(void);
 protected:
   eOSState Switch(void);
   eOSState Edit(void);
   eOSState New(void);
-  eOSState Del(void);
+  eOSState Delete(void);
   virtual void Move(int From, int To);
 public:
   cMenuChannels(void);
@@ -883,23 +687,34 @@ public:
 cMenuChannels::cMenuChannels(void)
 :cOsdMenu(tr("Channels"), CHNUMWIDTH)
 {
-  //TODO
-  int i = 0;
-  cChannel *channel;
-  int curr = ((channel = Channels.GetByNumber(cDvbApi::CurrentChannel())) != NULL) ? channel->Index() : -1;
-
-  while ((channel = Channels.Get(i)) != NULL) {
-        Add(new cMenuChannelItem(i, channel), i == curr);
-        i++;
-        }
+  for (cChannel *channel = Channels.First(); channel; channel = Channels.Next(channel)) {
+      if (!channel->GroupSep() || *channel->Name())
+         Add(new cMenuChannelItem(channel), channel->Number() == cDevice::CurrentChannel());
+      }
   SetHelp(tr("Edit"), tr("New"), tr("Delete"), tr("Mark"));
+}
+
+cChannel *cMenuChannels::GetChannel(int Index)
+{
+  cMenuChannelItem *p = (cMenuChannelItem *)Get(Index);
+  return p ? (cChannel *)p->Channel() : NULL;
+}
+
+void cMenuChannels::Propagate(void)
+{
+  Channels.ReNumber();
+  Channels.Save();
+  for (cMenuChannelItem *ci = (cMenuChannelItem *)First(); ci; ci = (cMenuChannelItem *)ci->Next())
+      ci->Set();
+  Timers.Save(); // channel numbering has changed!
+  Display();
 }
 
 eOSState cMenuChannels::Switch(void)
 {
-  cChannel *ch = Channels.Get(Current());
+  cChannel *ch = GetChannel(Current());
   if (ch)
-     ch->Switch();
+     cDevice::PrimaryDevice()->SwitchChannel(ch, true);
   return osEnd;
 }
 
@@ -907,60 +722,37 @@ eOSState cMenuChannels::Edit(void)
 {
   if (HasSubMenu() || Count() == 0)
      return osContinue;
-  isyslog(LOG_INFO, "editing channel %d", Current() + 1);
-  return AddSubMenu(new cMenuEditChannel(Current()));
+  cChannel *ch = GetChannel(Current());
+  if (ch)
+     return AddSubMenu(new cMenuEditChannel(ch));
+  return osContinue;
 }
 
 eOSState cMenuChannels::New(void)
 {
   if (HasSubMenu())
      return osContinue;
-  cChannel *channel = new cChannel(Channels.Get(Current()));
-  Channels.Add(channel);
-  Channels.ReNumber();
-  Add(new cMenuChannelItem(channel->Index()/*XXX*/, channel), true);
-  Channels.Save();
-  isyslog(LOG_INFO, "channel %d added", channel->number);
-  return AddSubMenu(new cMenuEditChannel(Current()));
+  return AddSubMenu(new cMenuEditChannel(Channels.Get(Current()), true));
 }
 
-eOSState cMenuChannels::Del(void)
+eOSState cMenuChannels::Delete(void)
 {
   if (Count() > 0) {
      int Index = Current();
-     cChannel *channel = Channels.Get(Index);
-     int DeletedChannel = channel->number;
+     cChannel *channel = GetChannel(Current());
+     int DeletedChannel = channel->Number();
      // Check if there is a timer using this channel:
-     for (cTimer *ti = Timers.First(); ti; ti = (cTimer *)ti->Next()) {
-         if (ti->channel == DeletedChannel) {
+     for (cTimer *ti = Timers.First(); ti; ti = Timers.Next(ti)) {
+         if (ti->Channel() == channel) {
             Interface->Error(tr("Channel is being used by a timer!"));
             return osContinue;
             }
          }
      if (Interface->Confirm(tr("Delete channel?"))) {
-        // Move and renumber the channels:
         Channels.Del(channel);
-        Channels.ReNumber();
         cOsdMenu::Del(Index);
-        int i = 0;
-        for (cMenuChannelItem *ci = (cMenuChannelItem *)First(); ci; ci = (cMenuChannelItem *)ci->Next())
-            ci->SetIndex(i++);
-        Channels.Save();
-        isyslog(LOG_INFO, "channel %d deleted", DeletedChannel);
-        // Fix the timers:
-        bool TimersModified = false;
-        for (cTimer *ti = Timers.First(); ti; ti = (cTimer *)ti->Next()) {
-            int OldChannel = ti->channel;
-            if (ti->channel > DeletedChannel)
-               ti->channel--;
-            if (ti->channel != OldChannel) {
-               TimersModified = true;
-               isyslog(LOG_INFO, "timer %d: channel changed from %d to %d", ti->Index() + 1, OldChannel, ti->channel);
-               }
-            }
-        if (TimersModified)
-           Timers.Save();
-        Display();
+        Propagate();
+        isyslog("channel %d deleted", DeletedChannel);
         }
      }
   return osContinue;
@@ -968,164 +760,44 @@ eOSState cMenuChannels::Del(void)
 
 void cMenuChannels::Move(int From, int To)
 {
-  int FromNumber = Channels.Get(From)->number;
-  int ToNumber = Channels.Get(To)->number;
-  // Move and renumber the channels:
-  Channels.Move(From, To);
-  Channels.ReNumber();
-  cOsdMenu::Move(From, To);
-  int i = 0;
-  for (cMenuChannelItem *ci = (cMenuChannelItem *)First(); ci; ci = (cMenuChannelItem *)ci->Next())
-      ci->SetIndex(i++);
-  Channels.Save();
-  isyslog(LOG_INFO, "channel %d moved to %d", FromNumber, ToNumber);
-  // Fix the timers:
-  bool TimersModified = false;
-  From++; // user visible channel numbers start with '1'
-  To++;
-  for (cTimer *ti = Timers.First(); ti; ti = (cTimer *)ti->Next()) {
-      int OldChannel = ti->channel;
-      if (ti->channel == FromNumber)
-         ti->channel = ToNumber;
-      else if (ti->channel > FromNumber && ti->channel <= ToNumber)
-         ti->channel--;
-      else if (ti->channel < FromNumber && ti->channel >= ToNumber)
-         ti->channel++;
-      if (ti->channel != OldChannel) {
-         TimersModified = true;
-         isyslog(LOG_INFO, "timer %d: channel changed from %d to %d", ti->Index() + 1, OldChannel, ti->channel);
-         }
-      }
-  if (TimersModified)
-     Timers.Save();
-  Display();
+  cChannel *FromChannel = GetChannel(From);
+  cChannel *ToChannel = GetChannel(To);
+  if (FromChannel && ToChannel) {
+     int FromNumber = FromChannel->Number();
+     int ToNumber = ToChannel->Number();
+     Channels.Move(FromChannel, ToChannel);
+     cOsdMenu::Move(From, To);
+     Propagate();
+     isyslog("channel %d moved to %d", FromNumber, ToNumber);
+     }
 }
 
 eOSState cMenuChannels::ProcessKey(eKeys Key)
 {
   eOSState state = cOsdMenu::ProcessKey(Key);
 
-  if (state == osUnknown) {
-     switch (Key) {
-       case kOk:     return Switch();
-       case kRed:    return Edit();
-       case kGreen:  return New();
-       case kYellow: return Del();
-       case kBlue:   Mark(); break;
-       default: break;
-       }
-     }
-  return state;
-}
-
-// --- cMenuTextItem ---------------------------------------------------------
-
-class cMenuTextItem : public cOsdItem {
-private:
-  char *text;
-  int x, y, w, h, lines, offset;
-  eDvbColor fgColor, bgColor;
-  eDvbFont font;
-public:
-  cMenuTextItem(const char *Text, int X, int Y, int W, int H = -1, eDvbColor FgColor = clrWhite, eDvbColor BgColor = clrBackground, eDvbFont Font = fontOsd);
-  ~cMenuTextItem();
-  int Height(void) { return h; }
-  void Clear(void);
-  virtual void Display(int Offset = -1, eDvbColor FgColor = clrWhite, eDvbColor BgColor = clrBackground);
-  bool CanScrollUp(void) { return offset > 0; }
-  bool CanScrollDown(void) { return h + offset < lines; }
-  void ScrollUp(bool Page);
-  void ScrollDown(bool Page);
-  virtual eOSState ProcessKey(eKeys Key);
-  };
-
-cMenuTextItem::cMenuTextItem(const char *Text, int X, int Y, int W, int H, eDvbColor FgColor, eDvbColor BgColor, eDvbFont Font)
-{
-  x = X;
-  y = Y;
-  w = W;
-  h = H;
-  fgColor = FgColor;
-  bgColor = BgColor;
-  font = Font;
-  offset = 0;
-  eDvbFont oldFont = Interface->SetFont(font);
-  text = Interface->WrapText(Text, w - 1, &lines);
-  Interface->SetFont(oldFont);
-  if (h < 0)
-     h = lines;
-}
-
-cMenuTextItem::~cMenuTextItem()
-{
-  delete text;
-}
-
-void cMenuTextItem::Clear(void)
-{
-  Interface->Fill(x, y, w, h, bgColor);
-}
-
-void cMenuTextItem::Display(int Offset, eDvbColor FgColor, eDvbColor BgColor)
-{
-  int l = 0;
-  char *t = text;
-  eDvbFont oldFont = Interface->SetFont(font);
-  while (*t) {
-        char *n = strchr(t, '\n');
-        if (l >= offset) {
-           if (n)
-              *n = 0;
-           Interface->Write(x, y + l - offset, t, fgColor, bgColor);
-           if (n)
-              *n = '\n';
-           else
-              break;
-           }
-        if (!n)
-           break;
-        t = n + 1;
-        if (++l >= h + offset)
-           break;
-        }
-  Interface->SetFont(oldFont);
-  // scroll indicators use inverted color scheme!
-  if (CanScrollUp())   Interface->Write(x + w - 1, y,         "^", bgColor, fgColor);
-  if (CanScrollDown()) Interface->Write(x + w - 1, y + h - 1, "v", bgColor, fgColor);
-}
-
-void cMenuTextItem::ScrollUp(bool Page)
-{
-  if (CanScrollUp()) {
-     Clear();
-     offset = max(offset - (Page ? h : 1), 0);
-     Display();
-     }
-}
-
-void cMenuTextItem::ScrollDown(bool Page)
-{
-  if (CanScrollDown()) {
-     Clear();
-     offset = min(offset + (Page ? h : 1), lines - h);
-     Display();
-     }
-}
-
-eOSState cMenuTextItem::ProcessKey(eKeys Key)
-{
-  switch (Key) {
-    case kLeft|k_Repeat:
-    case kLeft:
-    case kUp|k_Repeat:
-    case kUp:            ScrollUp(NORMALKEY(Key) == kLeft);    break;
-    case kRight|k_Repeat:
-    case kRight:
-    case kDown|k_Repeat:
-    case kDown:          ScrollDown(NORMALKEY(Key) == kRight); break;
-    default:             return osUnknown;
+  switch (state) {
+    case osUser1: {
+         cChannel *channel = Channels.Last();
+         if (channel) {
+            Add(new cMenuChannelItem(channel), true);
+            return CloseSubMenu();
+            }
+         }
+         break;
+    default:
+         if (state == osUnknown) {
+            switch (Key) {
+              case kOk:     return Switch();
+              case kRed:    return Edit();
+              case kGreen:  return New();
+              case kYellow: return Delete();
+              case kBlue:   Mark(); break;
+              default: break;
+              }
+            }
     }
-  return osContinue;
+  return state;
 }
 
 // --- cMenuText -------------------------------------------------------------
@@ -1161,10 +833,13 @@ class cMenuEditTimer : public cOsdMenu {
 private:
   cTimer *timer;
   cTimer data;
+  int channel;
+  bool deleteIfCancelled;
   cMenuEditDateItem *firstday;
   void SetFirstDayItem(void);
 public:
   cMenuEditTimer(int Index, bool New = false);
+  virtual ~cMenuEditTimer();
   virtual eOSState ProcessKey(eKeys Key);
   };
 
@@ -1173,21 +848,34 @@ cMenuEditTimer::cMenuEditTimer(int Index, bool New)
 {
   firstday = NULL;
   timer = Timers.Get(Index);
+  deleteIfCancelled = New;
   if (timer) {
      data = *timer;
      if (New)
         data.active = 1;
+     channel = data.Channel()->Number();
      Add(new cMenuEditBoolItem(tr("Active"),       &data.active));
-     Add(new cMenuEditChanItem(tr("Channel"),      &data.channel));
+     Add(new cMenuEditChanItem(tr("Channel"),      &channel));
      Add(new cMenuEditDayItem( tr("Day"),          &data.day));
      Add(new cMenuEditTimeItem(tr("Start"),        &data.start));
      Add(new cMenuEditTimeItem(tr("Stop"),         &data.stop));
-//TODO VPS???
      Add(new cMenuEditIntItem( tr("Priority"),     &data.priority, 0, MAXPRIORITY));
      Add(new cMenuEditIntItem( tr("Lifetime"),     &data.lifetime, 0, MAXLIFETIME));
      Add(new cMenuEditStrItem( tr("File"),          data.file, sizeof(data.file), tr(FileNameChars)));
      SetFirstDayItem();
      }
+  Timers.IncBeingEdited();
+}
+
+cMenuEditTimer::~cMenuEditTimer()
+{
+  if (timer && deleteIfCancelled) {
+     int Index = timer->Index();
+     Timers.Del(timer);
+     Timers.Save();
+     isyslog("timer %d deleted", Index + 1);
+     }
+  Timers.DecBeingEdited();
 }
 
 void cMenuEditTimer::SetFirstDayItem(void)
@@ -1210,15 +898,25 @@ eOSState cMenuEditTimer::ProcessKey(eKeys Key)
 
   if (state == osUnknown) {
      switch (Key) {
-       case kOk:     if (!*data.file)
-                        strcpy(data.file, Channels.GetChannelNameByNumber(data.channel));
-                     if (timer && memcmp(timer, &data, sizeof(data)) != 0) {
-                        *timer = data;
-                        if (timer->active)
-                           timer->active = 1; // allows external programs to mark active timers with values > 1 and recognize if the user has modified them
-                        Timers.Save();
-                        isyslog(LOG_INFO, "timer %d modified (%s)", timer->Index() + 1, timer->active ? "active" : "inactive");
-                        }
+       case kOk:     {  
+                       cChannel *ch = Channels.GetByNumber(channel);
+                       if (ch)
+                          data.channel = ch;
+                       else {
+                          Interface->Error(tr("*** Invalid Channel ***"));
+                          break;
+                          }
+                       if (!*data.file)
+                          strcpy(data.file, data.Channel()->Name());
+                       if (timer && memcmp(timer, &data, sizeof(data)) != 0) {
+                          *timer = data;
+                          if (timer->active)
+                             timer->active = 1; // allows external programs to mark active timers with values > 1 and recognize if the user has modified them
+                          Timers.Save();
+                          isyslog("timer %d modified (%s)", timer->Index() + 1, timer->active ? "active" : "inactive");
+                          }
+                       deleteIfCancelled = false;
+                     }
                      return osBack;
        case kRed:
        case kGreen:
@@ -1259,14 +957,14 @@ void cMenuTimerItem::Set(void)
 {
   char *buffer = NULL;
   asprintf(&buffer, "%c\t%d\t%s\t%02d:%02d\t%02d:%02d\t%s",
-                    !timer->active ? ' ' : timer->firstday ? '!' : timer->recording ? '#' : '>',
-                    timer->channel,
-                    timer->PrintDay(timer->day),
-                    timer->start / 100,
-                    timer->start % 100,
-                    timer->stop / 100,
-                    timer->stop % 100,
-                    timer->file);
+                    !timer->Active() ? ' ' : timer->FirstDay() ? '!' : timer->Recording() ? '#' : '>',
+                    timer->Channel()->Number(),
+                    timer->PrintDay(timer->Day()),
+                    timer->Start() / 100,
+                    timer->Start() % 100,
+                    timer->Stop() / 100,
+                    timer->Stop() % 100,
+                    timer->File());
   SetText(buffer, false);
 }
 
@@ -1276,13 +974,14 @@ class cMenuTimers : public cOsdMenu {
 private:
   eOSState Edit(void);
   eOSState New(void);
-  eOSState Del(void);
+  eOSState Delete(void);
   eOSState OnOff(void);
   virtual void Move(int From, int To);
   eOSState Summary(void);
   cTimer *CurrentTimer(void);
 public:
   cMenuTimers(void);
+  virtual ~cMenuTimers();
   virtual eOSState ProcessKey(eKeys Key);
   };
 
@@ -1299,6 +998,12 @@ cMenuTimers::cMenuTimers(void)
   if (Setup.SortTimers)
      Sort();
   SetHelp(tr("Edit"), tr("New"), tr("Delete"), Setup.SortTimers ? tr("On/Off") : tr("Mark"));
+  Timers.IncBeingEdited();
+}
+
+cMenuTimers::~cMenuTimers()
+{
+  Timers.DecBeingEdited();
 }
 
 cTimer *cMenuTimers::CurrentTimer(void)
@@ -1311,23 +1016,13 @@ eOSState cMenuTimers::OnOff(void)
 {
   cTimer *timer = CurrentTimer();
   if (timer) {
-     if (timer->IsSingleEvent())
-        timer->active = !timer->active;
-     else if (timer->firstday) {
-        timer->firstday = 0;
-        timer->active = false;
-        }
-     else if (timer->active)
-        timer->Skip();
-     else
-        timer->active = true;
-     timer->Matches(); // refresh start and end time
+     timer->OnOff();
      RefreshCurrent();
      DisplayCurrent(true);
-     if (timer->firstday)
-        isyslog(LOG_INFO, "timer %d first day set to %s", timer->Index() + 1, timer->PrintFirstDay());
+     if (timer->FirstDay())
+        isyslog("timer %d first day set to %s", timer->Index() + 1, timer->PrintFirstDay());
      else
-        isyslog(LOG_INFO, "timer %d %sactivated", timer->Index() + 1, timer->active ? "" : "de");
+        isyslog("timer %d %sactivated", timer->Index() + 1, timer->Active() ? "" : "de");
      Timers.Save();
      }
   return osContinue;
@@ -1337,7 +1032,7 @@ eOSState cMenuTimers::Edit(void)
 {
   if (HasSubMenu() || Count() == 0)
      return osContinue;
-  isyslog(LOG_INFO, "editing timer %d", CurrentTimer()->Index() + 1);
+  isyslog("editing timer %d", CurrentTimer()->Index() + 1);
   return AddSubMenu(new cMenuEditTimer(CurrentTimer()->Index()));
 }
 
@@ -1349,27 +1044,31 @@ eOSState cMenuTimers::New(void)
   Timers.Add(timer);
   Add(new cMenuTimerItem(timer), true);
   Timers.Save();
-  isyslog(LOG_INFO, "timer %d added", timer->Index() + 1);
+  isyslog("timer %d added", timer->Index() + 1);
   return AddSubMenu(new cMenuEditTimer(timer->Index(), true));
 }
 
-eOSState cMenuTimers::Del(void)
+eOSState cMenuTimers::Delete(void)
 {
   // Check if this timer is active:
   cTimer *ti = CurrentTimer();
   if (ti) {
-     if (!ti->recording) {
-        if (Interface->Confirm(tr("Delete timer?"))) {
-           int Index = ti->Index();
-           Timers.Del(ti);
-           cOsdMenu::Del(Current());
-           Timers.Save();
-           Display();
-           isyslog(LOG_INFO, "timer %d deleted", Index + 1);
+     if (Interface->Confirm(tr("Delete timer?"))) {
+        if (ti->Recording()) {
+           if (Interface->Confirm(tr("Timer still recording - really delete?"))) {
+              ti->Skip();
+              cRecordControls::Process(time(NULL));
+              }
+           else
+              return osContinue;
            }
+        int Index = ti->Index();
+        Timers.Del(ti);
+        cOsdMenu::Del(Current());
+        Timers.Save();
+        Display();
+        isyslog("timer %d deleted", Index + 1);
         }
-     else
-        Interface->Error(tr("Timer is recording!"));
      }
   return osContinue;
 }
@@ -1380,7 +1079,7 @@ void cMenuTimers::Move(int From, int To)
   cOsdMenu::Move(From, To);
   Timers.Save();
   Display();
-  isyslog(LOG_INFO, "timer %d moved to %d", From + 1, To + 1);
+  isyslog("timer %d moved to %d", From + 1, To + 1);
 }
 
 eOSState cMenuTimers::Summary(void)
@@ -1388,13 +1087,15 @@ eOSState cMenuTimers::Summary(void)
   if (HasSubMenu() || Count() == 0)
      return osContinue;
   cTimer *ti = CurrentTimer();
-  if (ti && ti->summary && *ti->summary)
-     return AddSubMenu(new cMenuText(tr("Summary"), ti->summary));
+  if (ti && !isempty(ti->Summary()))
+     return AddSubMenu(new cMenuText(tr("Summary"), ti->Summary()));
   return Edit(); // convenience for people not using the Summary feature ;-)
 }
 
 eOSState cMenuTimers::ProcessKey(eKeys Key)
 {
+  cTimer *ti = HasSubMenu() ? CurrentTimer() : NULL;
+  int TimerNumber = ti ? ti->Index() : -1;
   eOSState state = cOsdMenu::ProcessKey(Key);
 
   if (state == osUnknown) {
@@ -1402,7 +1103,7 @@ eOSState cMenuTimers::ProcessKey(eKeys Key)
        case kOk:     return Summary();
        case kRed:    return Edit();
        case kGreen:  return New();
-       case kYellow: return Del();
+       case kYellow: return Delete();
        case kBlue:   if (Setup.SortTimers)
                         OnOff();
                      else
@@ -1410,6 +1111,11 @@ eOSState cMenuTimers::ProcessKey(eKeys Key)
                      break;
        default: break;
        }
+     }
+  if (TimerNumber >= 0 && !HasSubMenu() && !Timers.Get(TimerNumber)) {
+     // a newly created timer wasn't confirmed with Ok
+     cOsdMenu::Del(Current());
+     Display();
      }
   return state;
 }
@@ -1430,12 +1136,12 @@ cMenuEvent::cMenuEvent(const cEventInfo *EventInfo, bool CanSwitch)
 {
   eventInfo = EventInfo;
   if (eventInfo) {
-     cChannel *channel = Channels.GetByServiceID(eventInfo->GetServiceID());
+     cChannel *channel = Channels.GetByChannelID(eventInfo->GetChannelID(), true);
      if (channel) {
         char *buffer;
-        asprintf(&buffer, "%-17.*s\t%.*s  %s - %s", 17, channel->name, 5, eventInfo->GetDate(), eventInfo->GetTimeString(), eventInfo->GetEndTimeString());
+        asprintf(&buffer, "%-17.*s\t%.*s  %s - %s", 17, channel->Name(), 5, eventInfo->GetDate(), eventInfo->GetTimeString(), eventInfo->GetEndTimeString());
         SetTitle(buffer, false);
-        delete buffer;
+        free(buffer);
         int Line = 2;
         cMenuTextItem *item;
         const char *Title = eventInfo->GetTitle();
@@ -1484,7 +1190,7 @@ cMenuWhatsOnItem::cMenuWhatsOnItem(const cEventInfo *EventInfo)
   eventInfo = EventInfo;
   char *buffer = NULL;
   cChannel *channel = Channels.GetByNumber(eventInfo->GetChannelNumber());
-  asprintf(&buffer, "%d\t%.*s\t%.*s\t%s", eventInfo->GetChannelNumber(), 6, channel ? channel->name : "???", 5, eventInfo->GetTimeString(), eventInfo->GetTitle());
+  asprintf(&buffer, "%d\t%.*s\t%.*s\t%s", eventInfo->GetChannelNumber(), 6, channel ? channel->Name() : "???", 5, eventInfo->GetTimeString(), eventInfo->GetTitle());
   SetText(buffer, false);
 }
 
@@ -1524,9 +1230,9 @@ cMenuWhatsOn::cMenuWhatsOn(const cSchedules *Schedules, bool Now, int CurrentCha
 
         pArray[num] = Now ? Schedule->GetPresentEvent() : Schedule->GetFollowingEvent();
         if (pArray[num]) {
-           cChannel *channel = Channels.GetByServiceID(pArray[num]->GetServiceID());
+           cChannel *channel = Channels.GetByChannelID(pArray[num]->GetChannelID(), true);
            if (channel) {
-              pArray[num]->SetChannelNumber(channel->number);
+              pArray[num]->SetChannelNumber(channel->Number());
               num++;
               }
            }
@@ -1539,7 +1245,7 @@ cMenuWhatsOn::cMenuWhatsOn(const cSchedules *Schedules, bool Now, int CurrentCha
       Add(new cMenuWhatsOnItem(pArray[a]), pArray[a]->GetChannelNumber() == CurrentChannelNr);
 
   currentChannel = CurrentChannelNr;
-  delete pArray;
+  free(pArray);
   SetHelp(tr("Record"), Now ? tr("Next") : tr("Now"), tr("Button$Schedule"), tr("Switch"));
 }
 
@@ -1554,8 +1260,8 @@ eOSState cMenuWhatsOn::Switch(void)
 {
   cMenuWhatsOnItem *item = (cMenuWhatsOnItem *)Get(Current());
   if (item) {
-     cChannel *channel = Channels.GetByServiceID(item->eventInfo->GetServiceID());
-     if (channel && channel->Switch())
+     cChannel *channel = Channels.GetByChannelID(item->eventInfo->GetChannelID(), true);
+     if (channel && cDevice::PrimaryDevice()->SwitchChannel(channel, true))
         return osEnd;
      }
   Interface->Error(tr("Can't switch channel!"));
@@ -1571,13 +1277,13 @@ eOSState cMenuWhatsOn::Record(void)
      if (!t) {
         Timers.Add(timer);
         Timers.Save();
-        isyslog(LOG_INFO, "timer %d added", timer->Index() + 1);
+        isyslog("timer %d added", timer->Index() + 1);
         }
      else {
         delete timer;
         timer = t;
         }
-     return AddSubMenu(new cMenuEditTimer(timer->Index(), true));
+     return AddSubMenu(new cMenuEditTimer(timer->Index(), !t));
      }
   return osContinue;
 }
@@ -1588,6 +1294,7 @@ eOSState cMenuWhatsOn::ProcessKey(eKeys Key)
 
   if (state == osUnknown) {
      switch (Key) {
+       case kRecord:
        case kRed:    return Record();
        case kYellow: state = osBack;
                      // continue with kGreen
@@ -1647,9 +1354,9 @@ cMenuSchedule::cMenuSchedule(void)
 {
   now = next = false;
   otherChannel = 0;
-  cChannel *channel = Channels.GetByNumber(cDvbApi::CurrentChannel());
+  cChannel *channel = Channels.GetByNumber(cDevice::CurrentChannel());
   if (channel) {
-     cMenuWhatsOn::SetCurrentChannel(channel->number);
+     cMenuWhatsOn::SetCurrentChannel(channel->Number());
      schedules = cSIProcessor::Schedules(mutexLock);
      PrepareSchedule(channel);
      SetHelp(tr("Record"), tr("Now"), tr("Next"));
@@ -1670,13 +1377,13 @@ void cMenuSchedule::PrepareSchedule(cChannel *Channel)
 {
   Clear();
   char *buffer = NULL;
-  asprintf(&buffer, tr("Schedule - %s"), Channel->name);
+  asprintf(&buffer, tr("Schedule - %s"), Channel->Name());
   SetTitle(buffer);
-  delete buffer;
+  free(buffer);
   if (schedules) {
-     const cSchedule *Schedule = Channel->pnr ? schedules->GetSchedule(Channel->pnr) : schedules->GetSchedule();
+     const cSchedule *Schedule = schedules->GetSchedule(Channel->GetChannelID());
      int num = Schedule->NumEvents();
-     const cEventInfo **pArray = (const cEventInfo **)malloc(num * sizeof(cEventInfo *));
+     const cEventInfo **pArray = MALLOC(const cEventInfo *, num);
      if (pArray) {
         time_t now = time(NULL);
         int numreal = 0;
@@ -1690,7 +1397,7 @@ void cMenuSchedule::PrepareSchedule(cChannel *Channel)
 
         for (int a = 0; a < numreal; a++)
             Add(new cMenuScheduleItem(pArray[a]));
-        delete pArray;
+        free(pArray);
         }
      }
 }
@@ -1704,13 +1411,13 @@ eOSState cMenuSchedule::Record(void)
      if (!t) {
         Timers.Add(timer);
         Timers.Save();
-        isyslog(LOG_INFO, "timer %d added", timer->Index() + 1);
+        isyslog("timer %d added", timer->Index() + 1);
         }
      else {
         delete timer;
         timer = t;
         }
-     return AddSubMenu(new cMenuEditTimer(timer->Index(), true));
+     return AddSubMenu(new cMenuEditTimer(timer->Index(), !t));
      }
   return osContinue;
 }
@@ -1731,14 +1438,15 @@ eOSState cMenuSchedule::ProcessKey(eKeys Key)
 
   if (state == osUnknown) {
      switch (Key) {
+       case kRecord:
        case kRed:    return Record();
        case kGreen:  if (schedules) {
                         if (!now && !next) {
                            int ChannelNr = 0;
                            if (Count()) {
-                              cChannel *channel = Channels.GetByServiceID(((cMenuScheduleItem *)Get(Current()))->eventInfo->GetServiceID());
+                              cChannel *channel = Channels.GetByChannelID(((cMenuScheduleItem *)Get(Current()))->eventInfo->GetChannelID(), true);
                               if (channel)
-                                 ChannelNr = channel->number;
+                                 ChannelNr = channel->Number();
                               }
                            now = true;
                            return AddSubMenu(new cMenuWhatsOn(schedules, true, ChannelNr));
@@ -1763,11 +1471,11 @@ eOSState cMenuSchedule::ProcessKey(eKeys Key)
      now = next = false;
      const cEventInfo *ei = cMenuWhatsOn::ScheduleEventInfo();
      if (ei) {
-        cChannel *channel = Channels.GetByServiceID(ei->GetServiceID());
+        cChannel *channel = Channels.GetByChannelID(ei->GetChannelID(), true);
         if (channel) {
            PrepareSchedule(channel);
-           if (channel->number != cDvbApi::CurrentChannel()) {
-              otherChannel = channel->number;
+           if (channel->Number() != cDevice::CurrentChannel()) {
+              otherChannel = channel->Number();
               SetHelp(tr("Record"), tr("Now"), tr("Next"), tr("Switch"));
               }
            Display();
@@ -1775,6 +1483,193 @@ eOSState cMenuSchedule::ProcessKey(eKeys Key)
         }
      }
   return state;
+}
+
+// --- cMenuCommands ---------------------------------------------------------
+
+class cMenuCommands : public cOsdMenu {
+private:
+  cCommands *commands;
+  char *parameters;
+  eOSState Execute(void);
+public:
+  cMenuCommands(const char *Title, cCommands *Commands, const char *Parameters = NULL);
+  virtual ~cMenuCommands();
+  virtual eOSState ProcessKey(eKeys Key);
+  };
+
+cMenuCommands::cMenuCommands(const char *Title, cCommands *Commands, const char *Parameters)
+:cOsdMenu(Title)
+{
+  SetHasHotkeys();
+  commands = Commands;
+  parameters = Parameters ? strdup(Parameters) : NULL;
+  int i = 0;
+  cCommand *command;
+
+  while ((command = commands->Get(i)) != NULL) {
+        Add(new cOsdItem(hk(command->Title())));
+        i++;
+        }
+}
+
+cMenuCommands::~cMenuCommands()
+{
+  free(parameters);
+}
+
+eOSState cMenuCommands::Execute(void)
+{
+  cCommand *command = commands->Get(Current());
+  if (command) {
+     char *buffer = NULL;
+     bool confirmed = true;
+     if (command->Confirm()) {
+        asprintf(&buffer, "%s?", command->Title());
+        confirmed = Interface->Confirm(buffer);
+        free(buffer);
+        }
+     if (confirmed) {
+        asprintf(&buffer, "%s...", command->Title());
+        Interface->Status(buffer);
+        Interface->Flush();
+        free(buffer);
+        const char *Result = command->Execute(parameters);
+        if (Result)
+           return AddSubMenu(new cMenuText(command->Title(), Result, fontFix));
+        return osEnd;
+        }
+     }
+  return osContinue;
+}
+
+eOSState cMenuCommands::ProcessKey(eKeys Key)
+{
+  eOSState state = cOsdMenu::ProcessKey(Key);
+
+  if (state == osUnknown) {
+     switch (Key) {
+       case kOk:  return Execute();
+       default:   break;
+       }
+     }
+  return state;
+}
+
+// --- cMenuCam --------------------------------------------------------------
+
+cMenuCam::cMenuCam(cCiMenu *CiMenu)
+:cOsdMenu("")
+{
+  ciMenu = CiMenu;
+  selected = false;
+  if (ciMenu->Selectable())
+     SetHasHotkeys();
+  SetTitle(ciMenu->TitleText() ? ciMenu->TitleText() : "CAM");
+  for (int i = 0; i < ciMenu->NumEntries(); i++)
+      Add(new cOsdItem(hk(ciMenu->Entry(i))));
+  //XXX implement a clean way of displaying this:
+  Add(new cOsdItem(ciMenu->SubTitleText()));
+  Add(new cOsdItem(ciMenu->BottomText()));
+  Display();
+  dsyslog("CAM: Menu - %s", ciMenu->TitleText());
+}
+
+cMenuCam::~cMenuCam()
+{
+  if (!selected)
+     ciMenu->Cancel();
+  delete ciMenu;
+}
+
+eOSState cMenuCam::Select(void)
+{
+  if (ciMenu->Selectable()) {
+     ciMenu->Select(Current());
+     selected = true;
+     }
+  return osEnd;
+}
+
+eOSState cMenuCam::ProcessKey(eKeys Key)
+{
+  eOSState state = cOsdMenu::ProcessKey(Key);
+
+  if (state == osUnknown) {
+     switch (Key) {
+       case kOk:     return Select();
+       default: break;
+       }
+     }
+  return state;
+}
+
+// --- cMenuCamEnquiry -------------------------------------------------------
+
+//XXX this is just quick and dirty - make this a separate display object
+cMenuCamEnquiry::cMenuCamEnquiry(cCiEnquiry *CiEnquiry)
+:cOsdMenu("", 10)
+{
+  ciEnquiry = CiEnquiry;
+  int Length = ciEnquiry->ExpectedLength();
+  input = MALLOC(char, Length + 1);
+  *input = 0;
+  replied = false;
+  SetTitle(ciEnquiry->Text() ? ciEnquiry->Text() : "CAM");
+  Add(new cMenuEditNumItem("Input", input, Length, ciEnquiry->Blind()));
+  Display();
+}
+
+cMenuCamEnquiry::~cMenuCamEnquiry()
+{
+  if (!replied)
+     ciEnquiry->Cancel();
+  free(input);
+  delete ciEnquiry;
+}
+
+eOSState cMenuCamEnquiry::Reply(void)
+{
+  //XXX check length???
+  ciEnquiry->Reply(input);
+  replied = true;
+  return osEnd;
+}
+
+eOSState cMenuCamEnquiry::ProcessKey(eKeys Key)
+{
+  eOSState state = cOsdMenu::ProcessKey(Key);
+
+  if (state == osUnknown) {
+     switch (Key) {
+       case kOk:     return Reply();
+       default: break;
+       }
+     }
+  return state;
+}
+
+// --- CamControl ------------------------------------------------------------
+
+cOsdObject *CamControl(void)
+{
+  for (int d = 0; d < cDevice::NumDevices(); d++) {
+      cDevice *Device = cDevice::GetDevice(d);
+      if (Device) {
+         cCiHandler *CiHandler = Device->CiHandler();
+         if (CiHandler && CiHandler->HasUserIO()) {
+            cCiMenu *CiMenu = CiHandler->GetMenu();
+            if (CiMenu)
+               return new cMenuCam(CiMenu);
+            else {
+               cCiEnquiry *CiEnquiry = CiHandler->GetEnquiry();
+               if (CiEnquiry)
+                  return new cMenuCamEnquiry(CiEnquiry);
+               }
+            }
+         }
+      }
+  return NULL;
 }
 
 // --- cMenuRecordingItem ----------------------------------------------------
@@ -1805,8 +1700,8 @@ cMenuRecordingItem::cMenuRecordingItem(cRecording *Recording, int Level)
 
 cMenuRecordingItem::~cMenuRecordingItem()
 {
-  delete fileName;
-  delete name;
+  free(fileName);
+  free(name);
 }
 
 void cMenuRecordingItem::IncrementCounter(bool New)
@@ -1829,6 +1724,7 @@ cMenuRecordings::cMenuRecordings(const char *Base, int Level, bool OpenSubMenus)
 {
   base = Base ? strdup(Base) : NULL;
   level = Setup.RecordingDirs ? Level : -1;
+  Display(); // this keeps the higher level menus from showing up briefly when pressing 'Back' during replay
   if (!Base) {
      Interface->Status(tr("scanning recordings..."));
      Interface->Flush();
@@ -1843,7 +1739,7 @@ cMenuRecordings::cMenuRecordings(const char *Base, int Level, bool OpenSubMenus)
             if (*Item->Text() && (!LastItem || strcmp(Item->Text(), LastItemText) != 0)) {
                Add(Item);
                LastItem = Item;
-               delete LastItemText;
+               free(LastItemText);
                LastItemText = strdup(LastItem->Text()); // must use a copy because of the counters!
                }
             else
@@ -1856,20 +1752,19 @@ cMenuRecordings::cMenuRecordings(const char *Base, int Level, bool OpenSubMenus)
                }
             }
          }
-     delete LastItemText;
+     free(LastItemText);
      if (Current() < 0)
         SetCurrent(First());
      else if (OpenSubMenus && Open(true))
         return;
      }
-  Display(); // this keeps the higher level menus from showing up briefly when pressing 'Back' during replay
   SetHelpKeys();
 }
 
 cMenuRecordings::~cMenuRecordings()
 {
   helpKeys = -1;
-  delete base;
+  free(base);
 }
 
 void cMenuRecordings::SetHelpKeys(void)
@@ -1891,7 +1786,7 @@ void cMenuRecordings::SetHelpKeys(void)
        case 0: SetHelp(NULL); break;
        case 1: SetHelp(tr("Open")); break;
        case 2:
-       case 3: SetHelp(tr("Play"), tr("Rewind"), tr("Delete"), NewHelpKeys == 3 ? tr("Summary") : NULL);
+       case 3: SetHelp(RecordingCommands.Count() ? tr("Commands") : tr("Play"), tr("Rewind"), tr("Delete"), NewHelpKeys == 3 ? tr("Summary") : NULL);
        }
      helpKeys = NewHelpKeys;
      }
@@ -1916,7 +1811,7 @@ bool cMenuRecordings::Open(bool OpenSubMenus)
         t = buffer;
         }
      AddSubMenu(new cMenuRecordings(t, level + 1, OpenSubMenus));
-     delete buffer;
+     free(buffer);
      return true;
      }
   return false;
@@ -1941,9 +1836,11 @@ eOSState cMenuRecordings::Play(void)
 
 eOSState cMenuRecordings::Rewind(void)
 {
+  if (HasSubMenu() || Count() == 0)
+     return osContinue;
   cMenuRecordingItem *ri = (cMenuRecordingItem *)Get(Current());
   if (ri && !ri->IsDirectory()) {
-     cDvbApi::PrimaryDvbApi->StopReplay(); // must do this first to be able to rewind the currently replayed recording
+     cDevice::PrimaryDevice()->StopReplay(); // must do this first to be able to rewind the currently replayed recording
      cResumeFile ResumeFile(ri->FileName());
      ResumeFile.Delete();
      return Play();
@@ -1951,8 +1848,10 @@ eOSState cMenuRecordings::Rewind(void)
   return osContinue;
 }
 
-eOSState cMenuRecordings::Del(void)
+eOSState cMenuRecordings::Delete(void)
 {
+  if (HasSubMenu() || Count() == 0)
+     return osContinue;
   cMenuRecordingItem *ri = (cMenuRecordingItem *)Get(Current());
   if (ri && !ri->IsDirectory()) {
      if (Interface->Confirm(tr("Delete recording?"))) {
@@ -1963,6 +1862,11 @@ eOSState cMenuRecordings::Del(void)
               if (timer) {
                  timer->Skip();
                  cRecordControls::Process(time(NULL));
+                 if (timer->IsSingleEvent()) {
+                    int Index = timer->Index();
+                    Timers.Del(timer);
+                    isyslog("timer %d deleted", Index + 1);
+                    }
                  Timers.Save();
                  }
               }
@@ -2000,6 +1904,27 @@ eOSState cMenuRecordings::Summary(void)
   return osContinue;
 }
 
+eOSState cMenuRecordings::Commands(eKeys Key)
+{
+  if (HasSubMenu() || Count() == 0)
+     return osContinue;
+  cMenuRecordingItem *ri = (cMenuRecordingItem *)Get(Current());
+  if (ri && !ri->IsDirectory()) {
+     cRecording *recording = GetRecording(ri);
+     if (recording) {
+        char *parameter = NULL;
+        asprintf(&parameter, "'%s'", recording->FileName());
+        cMenuCommands *menu;
+        eOSState state = AddSubMenu(menu = new cMenuCommands(tr("Recording commands"), &RecordingCommands, parameter));
+        free(parameter);
+        if (Key != kNone)
+           state = menu->ProcessKey(Key);
+        return state;
+        }
+     }
+  return osContinue;
+}
+
 eOSState cMenuRecordings::ProcessKey(eKeys Key)
 {
   bool HadSubMenu = HasSubMenu();
@@ -2007,12 +1932,12 @@ eOSState cMenuRecordings::ProcessKey(eKeys Key)
 
   if (state == osUnknown) {
      switch (Key) {
-       case kOk:
-       case kRed:    return Play();
+       case kOk:     return Play();
+       case kRed:    return (helpKeys > 1 && RecordingCommands.Count()) ? Commands() : Play();
        case kGreen:  return Rewind();
-       case kYellow: return Del();
+       case kYellow: return Delete();
        case kBlue:   return Summary();
-       case kMenu:   return osEnd;
+       case k1...k9: return Commands(Key);
        default: break;
        }
      }
@@ -2028,74 +1953,42 @@ eOSState cMenuRecordings::ProcessKey(eKeys Key)
   return state;
 }
 
-// --- cMenuSetupPage --------------------------------------------------------
+// --- cMenuSetupBase --------------------------------------------------------
 
-class cMenuSetupPage : public cOsdMenu {
+class cMenuSetupBase : public cMenuSetupPage {
 protected:
   cSetup data;
-  int osdLanguage;
-  void SetupTitle(const char *s);
-  virtual void Set(void) = 0;
+  virtual void Store(void);
 public:
-  cMenuSetupPage(void);
-  virtual eOSState ProcessKey(eKeys Key);
+  cMenuSetupBase(void);
   };
 
-cMenuSetupPage::cMenuSetupPage(void)
-:cOsdMenu("", 33)
+cMenuSetupBase::cMenuSetupBase(void)
 {
   data = Setup;
-  osdLanguage = Setup.OSDLanguage;
 }
 
-void cMenuSetupPage::SetupTitle(const char *s)
+void cMenuSetupBase::Store(void)
 {
-  char buf[40]; // can't call tr() for more than one string at a time!
-  char *q = buf + snprintf(buf, sizeof(buf), "%s - ", tr("Setup"));
-  snprintf(q, sizeof(buf) - strlen(buf), "%s", tr(s));
-  SetTitle(buf);
-}
-
-eOSState cMenuSetupPage::ProcessKey(eKeys Key)
-{
-  eOSState state = cOsdMenu::ProcessKey(Key);
-
-  if (state == osUnknown) {
-     switch (Key) {
-       case kOk: state = (Setup.PrimaryDVB != data.PrimaryDVB) ? osSwitchDvb : osBack;
-                 cDvbApi::PrimaryDvbApi->SetVideoFormat(data.VideoFormat ? VIDEO_FORMAT_16_9 : VIDEO_FORMAT_4_3);
-                 Setup = data;
-                 Setup.Save();
-                 cDvbApi::SetCaCaps();
-                 break;
-       default: break;
-       }
-     }
-  if (data.OSDLanguage != osdLanguage) {
-     int OriginalOSDLanguage = Setup.OSDLanguage;
-     Setup.OSDLanguage = data.OSDLanguage;
-     Set();
-     Display();
-     osdLanguage = data.OSDLanguage;
-     Setup.OSDLanguage = OriginalOSDLanguage;
-     }
-  return state;
+  Setup = data;
+  Setup.Save();
 }
 
 // --- cMenuSetupOSD ---------------------------------------------------------
 
-class cMenuSetupOSD : public cMenuSetupPage {
+class cMenuSetupOSD : public cMenuSetupBase {
 private:
   virtual void Set(void);
 public:
   cMenuSetupOSD(void) { Set(); }
+  virtual eOSState ProcessKey(eKeys Key);
   };
 
 void cMenuSetupOSD::Set(void)
 {
   Clear();
-  SetupTitle("OSD");
-  Add(new cMenuEditStraItem(tr("Setup.OSD$Language"),               &data.OSDLanguage, NumLanguages, Languages()));
+  SetSection(tr("OSD"));
+  Add(new cMenuEditStraItem(tr("Setup.OSD$Language"),               &data.OSDLanguage, I18nNumLanguages, I18nLanguages()));
   Add(new cMenuEditIntItem( tr("Setup.OSD$Width"),                  &data.OSDwidth, MINOSDWIDTH, MAXOSDWIDTH));
   Add(new cMenuEditIntItem( tr("Setup.OSD$Height"),                 &data.OSDheight, MINOSDHEIGHT, MAXOSDHEIGHT));
   Add(new cMenuEditIntItem( tr("Setup.OSD$Message time (s)"),       &data.OSDMessageTime, 1, 60));
@@ -2106,19 +1999,31 @@ void cMenuSetupOSD::Set(void)
   Add(new cMenuEditBoolItem(tr("Setup.OSD$Recording directories"),  &data.RecordingDirs));
 }
 
+eOSState cMenuSetupOSD::ProcessKey(eKeys Key)
+{
+  int osdLanguage = data.OSDLanguage;
+  eOSState state = cMenuSetupBase::ProcessKey(Key);
+
+  if (data.OSDLanguage != osdLanguage) {
+     int OriginalOSDLanguage = Setup.OSDLanguage;
+     Setup.OSDLanguage = data.OSDLanguage;
+     Set();
+     Display();
+     Setup.OSDLanguage = OriginalOSDLanguage;
+     }
+  return state;
+}
+
 // --- cMenuSetupEPG ---------------------------------------------------------
 
-class cMenuSetupEPG : public cMenuSetupPage {
-private:
-  virtual void Set(void);
+class cMenuSetupEPG : public cMenuSetupBase {
 public:
-  cMenuSetupEPG(void) { Set(); }
+  cMenuSetupEPG(void);
   };
 
-void cMenuSetupEPG::Set(void)
+cMenuSetupEPG::cMenuSetupEPG(void)
 {
-  Clear();
-  SetupTitle("EPG");
+  SetSection(tr("EPG"));
   Add(new cMenuEditIntItem( tr("Setup.EPG$EPG scan timeout (h)"),      &data.EPGScanTimeout));
   Add(new cMenuEditIntItem( tr("Setup.EPG$EPG bugfix level"),          &data.EPGBugfixLevel, 0, MAXEPGBUGFIXLEVEL));
   Add(new cMenuEditBoolItem(tr("Setup.EPG$Set system time"),           &data.SetSystemTime));
@@ -2127,80 +2032,189 @@ void cMenuSetupEPG::Set(void)
 
 // --- cMenuSetupDVB ---------------------------------------------------------
 
-class cMenuSetupDVB : public cMenuSetupPage {
-private:
-  virtual void Set(void);
+class cMenuSetupDVB : public cMenuSetupBase {
 public:
-  cMenuSetupDVB(void) { Set(); }
+  cMenuSetupDVB(void);
+  virtual eOSState ProcessKey(eKeys Key);
   };
 
-void cMenuSetupDVB::Set(void)
+cMenuSetupDVB::cMenuSetupDVB(void)
 {
-  Clear();
-  SetupTitle("DVB");
-  Add(new cMenuEditIntItem( tr("Setup.DVB$Primary DVB interface"), &data.PrimaryDVB, 1, cDvbApi::NumDvbApis));
+  SetSection(tr("DVB"));
+  Add(new cMenuEditIntItem( tr("Setup.DVB$Primary DVB interface"), &data.PrimaryDVB, 1, cDevice::NumDevices()));
   Add(new cMenuEditBoolItem(tr("Setup.DVB$Video format"),          &data.VideoFormat, "4:3", "16:9"));
+}
+
+eOSState cMenuSetupDVB::ProcessKey(eKeys Key)
+{
+  int oldPrimaryDVB = Setup.PrimaryDVB;
+  bool oldVideoFormat = Setup.VideoFormat;
+  eOSState state = cMenuSetupBase::ProcessKey(Key);
+
+  if (state == osBack && Key == kOk) {
+     if (Setup.PrimaryDVB != oldPrimaryDVB)
+        state = osSwitchDvb;
+     if (Setup.VideoFormat != oldVideoFormat)
+        cDevice::PrimaryDevice()->SetVideoFormat(Setup.VideoFormat);
+     }
+  return state;
 }
 
 // --- cMenuSetupLNB ---------------------------------------------------------
 
-class cMenuSetupLNB : public cMenuSetupPage {
+class cMenuSetupLNB : public cMenuSetupBase {
 private:
-  virtual void Set(void);
+  void Setup(void);
 public:
-  cMenuSetupLNB(void) { Set(); }
+  cMenuSetupLNB(void);
+  virtual eOSState ProcessKey(eKeys Key);
   };
 
-void cMenuSetupLNB::Set(void)
+cMenuSetupLNB::cMenuSetupLNB(void)
 {
+  SetSection(tr("LNB"));
+  Setup();
+}
+
+void cMenuSetupLNB::Setup(void)
+{
+  int current = Current();
+
   Clear();
-  SetupTitle("LNB");
-  Add(new cMenuEditIntItem( tr("Setup.LNB$SLOF (MHz)"),               &data.LnbSLOF));
-  Add(new cMenuEditIntItem( tr("Setup.LNB$Low LNB frequency (MHz)"),  &data.LnbFrequLo));
-  Add(new cMenuEditIntItem( tr("Setup.LNB$High LNB frequency (MHz)"), &data.LnbFrequHi));
+
   Add(new cMenuEditBoolItem(tr("Setup.LNB$Use DiSEqC"),               &data.DiSEqC));
+  if (!data.DiSEqC) {
+     Add(new cMenuEditIntItem( tr("Setup.LNB$SLOF (MHz)"),               &data.LnbSLOF));
+     Add(new cMenuEditIntItem( tr("Setup.LNB$Low LNB frequency (MHz)"),  &data.LnbFrequLo));
+     Add(new cMenuEditIntItem( tr("Setup.LNB$High LNB frequency (MHz)"), &data.LnbFrequHi));
+     }
+
+  SetCurrent(Get(current));
+  Display();
+}
+
+eOSState cMenuSetupLNB::ProcessKey(eKeys Key)
+{
+  int oldDiSEqC = data.DiSEqC;
+  eOSState state = cMenuSetupBase::ProcessKey(Key);
+
+  if (Key != kNone && data.DiSEqC != oldDiSEqC)
+     Setup();
+  return state;
 }
 
 // --- cMenuSetupCICAM -------------------------------------------------------
 
-class cMenuSetupCICAM : public cMenuSetupPage {
+class cMenuSetupCICAM : public cMenuSetupBase {
 private:
-  virtual void Set(void);
+  int helpKeys;
+  void SetHelpKeys(void);
+  cCiHandler *GetCurrentCiHandler(int *Slot = NULL);
+  eOSState Menu(void);
+  eOSState Reset(void);
 public:
-  cMenuSetupCICAM(void) { Set(); }
+  cMenuSetupCICAM(void);
+  virtual eOSState ProcessKey(eKeys Key);
   };
 
-void cMenuSetupCICAM::Set(void)
+cMenuSetupCICAM::cMenuSetupCICAM(void)
 {
-  Clear();
-  SetupTitle("CICAM");
-  for (int d = 0; d < cDvbApi::NumDvbApis; d++) {
+  helpKeys = -1;
+  SetSection(tr("CICAM"));
+  for (int d = 0; d < cDevice::NumDevices(); d++) {
       for (int i = 0; i < 2; i++) {
           char buffer[32];
           snprintf(buffer, sizeof(buffer), "%s%d %d", tr("Setup.CICAM$CICAM DVB"), d + 1, i + 1);
           Add(new cMenuEditCaItem(buffer, &data.CaCaps[d][i]));
           }
       }
+  SetHelpKeys();
+}
+
+cCiHandler *cMenuSetupCICAM::GetCurrentCiHandler(int *Slot)
+{
+  cDevice *Device = cDevice::GetDevice(Current() / 2);
+  if (Slot)
+     *Slot = Current() % 2;
+  return Device ? Device->CiHandler() : NULL;
+}
+
+void cMenuSetupCICAM::SetHelpKeys(void)
+{
+  int NewHelpKeys = helpKeys;
+  NewHelpKeys = GetCurrentCiHandler() ? 1 : 0;
+  if (NewHelpKeys != helpKeys) {
+     switch (NewHelpKeys) {
+       case 0: SetHelp(NULL); break;
+       case 1: SetHelp(tr("Menu"), tr("Reset"));
+       }
+     helpKeys = NewHelpKeys;
+     }
+}
+
+eOSState cMenuSetupCICAM::Menu(void)
+{
+  int Slot = 0;
+  cCiHandler *CiHandler = GetCurrentCiHandler(&Slot);
+  if (CiHandler && CiHandler->EnterMenu(Slot))
+     return osEnd; // the CAM menu will be executed explicitly from the main loop
+  else
+     Interface->Error(tr("Can't open CAM menu!"));
+  return osContinue;
+}
+
+eOSState cMenuSetupCICAM::Reset(void)
+{
+  int Slot = 0;
+  cCiHandler *CiHandler = GetCurrentCiHandler(&Slot);
+  if (CiHandler && CiHandler->Reset(Slot)) {
+     Interface->Info(tr("CAM has been reset"));
+     return osEnd;
+     }
+  else
+     Interface->Error(tr("Can't reset CAM!"));
+  return osContinue;
+}
+
+eOSState cMenuSetupCICAM::ProcessKey(eKeys Key)
+{
+  eOSState state = cMenuSetupBase::ProcessKey(Key);
+
+  if (state == osBack && Key == kOk)
+     cDevice::SetCaCaps();
+  else if (state == osUnknown) {
+     switch (Key) {
+       case kRed:    if (helpKeys == 1)
+                        return Menu();
+                     break;
+       case kGreen:  if (helpKeys == 1)
+                        return Reset();
+                     break;
+       default: break;
+       }
+     }
+  if (Key != kNone)
+     SetHelpKeys();
+  return state;
 }
 
 // --- cMenuSetupRecord ------------------------------------------------------
 
-class cMenuSetupRecord : public cMenuSetupPage {
-private:
-  virtual void Set(void);
+class cMenuSetupRecord : public cMenuSetupBase {
 public:
-  cMenuSetupRecord(void) { Set(); }
+  cMenuSetupRecord(void);
   };
 
-void cMenuSetupRecord::Set(void)
+cMenuSetupRecord::cMenuSetupRecord(void)
 {
-  Clear();
-  SetupTitle("Recording");
+  SetSection(tr("Recording"));
   Add(new cMenuEditIntItem( tr("Setup.Recording$Margin at start (min)"),     &data.MarginStart));
   Add(new cMenuEditIntItem( tr("Setup.Recording$Margin at stop (min)"),      &data.MarginStop));
   Add(new cMenuEditIntItem( tr("Setup.Recording$Primary limit"),             &data.PrimaryLimit, 0, MAXPRIORITY));
   Add(new cMenuEditIntItem( tr("Setup.Recording$Default priority"),          &data.DefaultPriority, 0, MAXPRIORITY));
   Add(new cMenuEditIntItem( tr("Setup.Recording$Default lifetime (d)"),      &data.DefaultLifetime, 0, MAXLIFETIME));
+  Add(new cMenuEditIntItem( tr("Setup.Recording$Pause priority"),            &data.PausePriority, 0, MAXPRIORITY));
+  Add(new cMenuEditIntItem( tr("Setup.Recording$Pause lifetime (d)"),        &data.PauseLifetime, 0, MAXLIFETIME));
   Add(new cMenuEditBoolItem(tr("Setup.Recording$Use episode name"),          &data.UseSubtitle));
   Add(new cMenuEditBoolItem(tr("Setup.Recording$Mark instant recording"),    &data.MarkInstantRecord));
   Add(new cMenuEditStrItem( tr("Setup.Recording$Name instant recording"),     data.NameInstantRecord, sizeof(data.NameInstantRecord), tr(FileNameChars)));
@@ -2212,37 +2226,98 @@ void cMenuSetupRecord::Set(void)
 
 // --- cMenuSetupReplay ------------------------------------------------------
 
-class cMenuSetupReplay : public cMenuSetupPage {
-private:
-  virtual void Set(void);
+class cMenuSetupReplay : public cMenuSetupBase {
 public:
-  cMenuSetupReplay(void) { Set(); }
+  cMenuSetupReplay(void);
   };
 
-void cMenuSetupReplay::Set(void)
+cMenuSetupReplay::cMenuSetupReplay(void)
 {
-  Clear();
-  SetupTitle("Replay");
+  SetSection(tr("Replay"));
   Add(new cMenuEditBoolItem(tr("Setup.Replay$Multi speed mode"), &data.MultiSpeedMode));
   Add(new cMenuEditBoolItem(tr("Setup.Replay$Show replay mode"), &data.ShowReplayMode));
+  Add(new cMenuEditIntItem(tr("Setup.Replay$Resume ID"), &data.ResumeID, 0, 99));
 }
 
 // --- cMenuSetupMisc --------------------------------------------------------
 
-class cMenuSetupMisc : public cMenuSetupPage {
-private:
-  virtual void Set(void);
+class cMenuSetupMisc : public cMenuSetupBase {
 public:
-  cMenuSetupMisc(void) { Set(); }
+  cMenuSetupMisc(void);
   };
 
-void cMenuSetupMisc::Set(void)
+cMenuSetupMisc::cMenuSetupMisc(void)
 {
-  Clear();
-  SetupTitle("Miscellaneous");
+  SetSection(tr("Miscellaneous"));
   Add(new cMenuEditIntItem( tr("Setup.Miscellaneous$Min. event timeout (min)"),   &data.MinEventTimeout));
   Add(new cMenuEditIntItem( tr("Setup.Miscellaneous$Min. user inactivity (min)"), &data.MinUserInactivity));
   Add(new cMenuEditIntItem( tr("Setup.Miscellaneous$SVDRP timeout (s)"),          &data.SVDRPTimeout));
+}
+
+// --- cMenuSetupPluginItem --------------------------------------------------
+
+class cMenuSetupPluginItem : public cOsdItem {
+private:
+  int pluginIndex;
+public:
+  cMenuSetupPluginItem(const char *Name, int Index);
+  int PluginIndex(void) { return pluginIndex; }
+  };
+
+cMenuSetupPluginItem::cMenuSetupPluginItem(const char *Name, int Index)
+:cOsdItem(Name)
+{
+  pluginIndex = Index;
+}
+
+// --- cMenuSetupPlugins -----------------------------------------------------
+
+class cMenuSetupPlugins : public cMenuSetupBase {
+public:
+  cMenuSetupPlugins(void);
+  virtual eOSState ProcessKey(eKeys Key);
+  };
+
+cMenuSetupPlugins::cMenuSetupPlugins(void)
+{
+  SetSection(tr("Plugins"));
+  SetHasHotkeys();
+  for (int i = 0; ; i++) {
+      cPlugin *p = cPluginManager::GetPlugin(i);
+      if (p) {
+         char *buffer = NULL;
+         asprintf(&buffer, "%s (%s) - %s", p->Name(), p->Version(), p->Description());
+         Add(new cMenuSetupPluginItem(hk(buffer), i));
+         free(buffer);
+         }
+      else
+         break;
+      }
+}
+
+eOSState cMenuSetupPlugins::ProcessKey(eKeys Key)
+{
+  eOSState state = HasSubMenu() ? cMenuSetupBase::ProcessKey(Key) : cOsdMenu::ProcessKey(Key);
+
+  if (Key == kOk) {
+     if (state == osUnknown) {
+        cMenuSetupPluginItem *item = (cMenuSetupPluginItem *)Get(Current());
+        if (item) {
+           cPlugin *p = cPluginManager::GetPlugin(item->PluginIndex());
+           if (p) {
+              cMenuSetupPage *menu = p->SetupMenu();
+              if (menu) {
+                 menu->SetPlugin(p);
+                 return AddSubMenu(menu);
+                 }
+              Interface->Info(tr("This plugin has no setup parameters!"));
+              }
+           }
+        }
+     else if (state == osContinue)
+        Store();
+     }
+  return state;
 }
 
 // --- cMenuSetup ------------------------------------------------------------
@@ -2265,7 +2340,9 @@ cMenuSetup::cMenuSetup(void)
 void cMenuSetup::Set(void)
 {
   Clear();
-  SetTitle(tr("Setup"));
+  char buffer[64];
+  snprintf(buffer, sizeof(buffer), "%s - VDR %s", tr("Setup"), VDRVERSION);
+  SetTitle(buffer);
   SetHasHotkeys();
   Add(new cOsdItem(hk(tr("OSD")),           osUser1));
   Add(new cOsdItem(hk(tr("EPG")),           osUser2));
@@ -2275,7 +2352,9 @@ void cMenuSetup::Set(void)
   Add(new cOsdItem(hk(tr("Recording")),     osUser6));
   Add(new cOsdItem(hk(tr("Replay")),        osUser7));
   Add(new cOsdItem(hk(tr("Miscellaneous")), osUser8));
-  Add(new cOsdItem(hk(tr("Restart")),       osUser9));
+  if (cPluginManager::HasPlugins())
+  Add(new cOsdItem(hk(tr("Plugins")),       osUser9));
+  Add(new cOsdItem(hk(tr("Restart")),       osUser10));
 }
 
 eOSState cMenuSetup::Restart(void)
@@ -2301,7 +2380,8 @@ eOSState cMenuSetup::ProcessKey(eKeys Key)
     case osUser6: return AddSubMenu(new cMenuSetupRecord);
     case osUser7: return AddSubMenu(new cMenuSetupReplay);
     case osUser8: return AddSubMenu(new cMenuSetupMisc);
-    case osUser9: return Restart();
+    case osUser9: return AddSubMenu(new cMenuSetupPlugins);
+    case osUser10: return Restart();
     default: ;
     }
   if (Setup.OSDLanguage != osdLanguage) {
@@ -2312,56 +2392,20 @@ eOSState cMenuSetup::ProcessKey(eKeys Key)
   return state;
 }
 
-// --- cMenuCommands ---------------------------------------------------------
+// --- cMenuPluginItem -------------------------------------------------------
 
-class cMenuCommands : public cOsdMenu {
+class cMenuPluginItem : public cOsdItem {
 private:
-  eOSState Execute(void);
+  int pluginIndex;
 public:
-  cMenuCommands(void);
-  virtual eOSState ProcessKey(eKeys Key);
+  cMenuPluginItem(const char *Name, int Index);
+  int PluginIndex(void) { return pluginIndex; }
   };
 
-cMenuCommands::cMenuCommands(void)
-:cOsdMenu(tr("Commands"))
+cMenuPluginItem::cMenuPluginItem(const char *Name, int Index)
+:cOsdItem(Name, osPlugin)
 {
-  SetHasHotkeys();
-  int i = 0;
-  cCommand *command;
-
-  while ((command = Commands.Get(i)) != NULL) {
-        Add(new cOsdItem(hk(command->Title())));
-        i++;
-        }
-}
-
-eOSState cMenuCommands::Execute(void)
-{
-  cCommand *command = Commands.Get(Current());
-  if (command) {
-     char *buffer = NULL;
-     asprintf(&buffer, "%s...", command->Title());
-     Interface->Status(buffer);
-     Interface->Flush();
-     delete buffer;
-     const char *Result = command->Execute();
-     if (Result)
-        return AddSubMenu(new cMenuText(command->Title(), Result, fontFix));
-     }
-  return osContinue;
-}
-
-eOSState cMenuCommands::ProcessKey(eKeys Key)
-{
-  eOSState state = cOsdMenu::ProcessKey(Key);
-
-  if (state == osUnknown) {
-     switch (Key) {
-       case kOk:  return Execute();
-       default:   break;
-       }
-     }
-  return state;
+  pluginIndex = Index;
 }
 
 // --- cMenuMain -------------------------------------------------------------
@@ -2369,21 +2413,36 @@ eOSState cMenuCommands::ProcessKey(eKeys Key)
 #define STOP_RECORDING tr(" Stop recording ")
 #define ON_PRIMARY_INTERFACE tr("on primary interface")
 
-cMenuMain::cMenuMain(bool Replaying, eOSState State)
+cOsdObject *cMenuMain::pluginOsdObject = NULL;
+
+cMenuMain::cMenuMain(bool Replaying, eOSState State, const char *Plugin)
 :cOsdMenu("")
 {
   replaying = Replaying;
-  Set();
+  Set(Plugin);
 
   // Initial submenus:
 
   switch (State) {
+    case osSchedule:   AddSubMenu(new cMenuSchedule); break;
+    case osChannels:   AddSubMenu(new cMenuChannels); break;
+    case osTimers:     AddSubMenu(new cMenuTimers); break;
     case osRecordings: AddSubMenu(new cMenuRecordings(NULL, 0, true)); break;
+    case osSetup:      AddSubMenu(new cMenuSetup); break;
+    case osCommands:   AddSubMenu(new cMenuCommands(tr("Commands"), &Commands)); break;
+    case osPlugin:     break; // the actual work is done in Set()
     default: break;
     }
 }
 
-void cMenuMain::Set(void)
+cOsdObject *cMenuMain::PluginOsdObject(void)
+{
+  cOsdObject *o = pluginOsdObject;
+  pluginOsdObject = NULL;
+  return o;
+}
+
+void cMenuMain::Set(const char *Plugin)
 {
   Clear();
   //SetTitle("VDR"); // this is done below, including disk usage
@@ -2408,6 +2467,22 @@ void cMenuMain::Set(void)
   Add(new cOsdItem(hk(tr("Channels")),   osChannels));
   Add(new cOsdItem(hk(tr("Timers")),     osTimers));
   Add(new cOsdItem(hk(tr("Recordings")), osRecordings));
+
+  // Plugins:
+
+  for (int i = 0; ; i++) {
+      cPlugin *p = cPluginManager::GetPlugin(i);
+      if (p) {
+         const char *item = p->MainMenuEntry();
+         if (item)
+            Add(new cMenuPluginItem(hk(item), i), Plugin && strcmp(Plugin, p->Name()) == 0);
+         }
+      else
+         break;
+      }
+
+  // More basic menu items:
+
   Add(new cOsdItem(hk(tr("Setup")),      osSetup));
   if (Commands.Count())
      Add(new cOsdItem(hk(tr("Commands")),  osCommands));
@@ -2423,7 +2498,7 @@ void cMenuMain::Set(void)
      char *buffer = NULL;
      asprintf(&buffer, "%s%s", STOP_RECORDING, ON_PRIMARY_INTERFACE);
      Add(new cOsdItem(buffer, osStopRecord));
-     delete buffer;
+     free(buffer);
      }
 
   const char *s = NULL;
@@ -2431,25 +2506,27 @@ void cMenuMain::Set(void)
         char *buffer = NULL;
         asprintf(&buffer, "%s%s", STOP_RECORDING, s);
         Add(new cOsdItem(buffer, osStopRecord));
-        delete buffer;
+        free(buffer);
         }
 
   // Editing control:
 
-  if (cVideoCutter::Active())
+  if (cCutter::Active())
      Add(new cOsdItem(tr(" Cancel editing"), osCancelEdit));
 
   // Color buttons:
 
-  SetHelp(tr("Record"), cDvbApi::PrimaryDvbApi->CanToggleAudioTrack() ? tr("Language") : NULL, NULL, replaying ? tr("Button$Stop") : cReplayControl::LastReplayed() ? tr("Resume") : NULL);
+  SetHelp(!replaying ? tr("Record") : NULL, cDevice::PrimaryDevice()->NumAudioTracks() > 1 ? tr("Language") : NULL, replaying ? NULL : tr("Pause"), replaying ? tr("Button$Stop") : cReplayControl::LastReplayed() ? tr("Resume") : NULL);
   Display();
   lastActivity = time(NULL);
 }
 
 eOSState cMenuMain::ProcessKey(eKeys Key)
 {
+  bool HadSubMenu = HasSubMenu();
   int osdLanguage = Setup.OSDLanguage;
   eOSState state = cOsdMenu::ProcessKey(Key);
+  HadSubMenu |= HasSubMenu();
 
   switch (state) {
     case osSchedule:   return AddSubMenu(new cMenuSchedule);
@@ -2457,7 +2534,7 @@ eOSState cMenuMain::ProcessKey(eKeys Key)
     case osTimers:     return AddSubMenu(new cMenuTimers);
     case osRecordings: return AddSubMenu(new cMenuRecordings);
     case osSetup:      return AddSubMenu(new cMenuSetup);
-    case osCommands:   return AddSubMenu(new cMenuCommands);
+    case osCommands:   return AddSubMenu(new cMenuCommands(tr("Commands"), &Commands));
     case osStopRecord: if (Interface->Confirm(tr("Stop recording?"))) {
                           cOsdItem *item = Get(Current());
                           if (item) {
@@ -2471,25 +2548,53 @@ eOSState cMenuMain::ProcessKey(eKeys Key)
                           }
                        break;
     case osCancelEdit: if (Interface->Confirm(tr("Cancel editing?"))) {
-                          cVideoCutter::Stop();
+                          cCutter::Stop();
                           return osEnd;
                           }
                        break;
+    case osPlugin:     {
+                         cMenuPluginItem *item = (cMenuPluginItem *)Get(Current());
+                         if (item) {
+                            cPlugin *p = cPluginManager::GetPlugin(item->PluginIndex());
+                            if (p) {
+                               cOsdObject *menu = p->MainMenuAction();
+                               if (menu) {
+                                  if (menu->IsMenu())
+                                     return AddSubMenu((cOsdMenu *)menu);
+                                  else {
+                                     pluginOsdObject = menu;
+                                     return osPlugin;
+                                     }
+                                  }
+                               }
+                            }
+                         state = osEnd;
+                       }
+                       break;
     default: switch (Key) {
-               case kMenu:   state = osEnd;    break;
-               case kRed:    if (!HasSubMenu())
-                                state = osRecord;
+               case kRecord:
+               case kRed:    if (!HadSubMenu)
+                                state = replaying ? osContinue : osRecord;
                              break;
-               case kGreen:  if (!HasSubMenu()) {
-                                if (cDvbApi::PrimaryDvbApi->CanToggleAudioTrack()) {
+               case kGreen:  if (!HadSubMenu) {
+                                int CurrentAudioTrack = -1;
+                                const char **AudioTracks = cDevice::PrimaryDevice()->GetAudioTracks(&CurrentAudioTrack);
+                                if (AudioTracks) {
+                                   const char **at = &AudioTracks[CurrentAudioTrack];
+                                   if (!*++at)
+                                      at = AudioTracks;
                                    Interface->Clear();
-                                   cDvbApi::PrimaryDvbApi->ToggleAudioTrack();
+                                   cDevice::PrimaryDevice()->SetAudioTrack(at - AudioTracks);
+                                   //XXX Interface->Info(*at);
                                    state = osEnd;
                                    }
                                 }
                              break;
-               case kBlue:   if (!HasSubMenu())
-                                state = replaying ? osStopReplay : osReplay;
+               case kYellow: if (!HadSubMenu)
+                                state = replaying ? osContinue : osPause;
+                             break;
+               case kBlue:   if (!HadSubMenu)
+                                state = replaying ? osStopReplay : cReplayControl::LastReplayed() ? osReplay : osContinue;
                              break;
                default:      break;
                }
@@ -2513,13 +2618,13 @@ eOSState cMenuMain::ProcessKey(eKeys Key)
 #define INFOTIMEOUT          5000 //ms
 
 cDisplayChannel::cDisplayChannel(int Number, bool Switched)
-:cOsdBase(true)
+:cOsdObject(true)
 {
   group = -1;
   withInfo = !Switched || Setup.ShowInfoOnChSwitch;
   int EpgLines = withInfo ? 5 : 1;
   lines = 0;
-  oldNumber = number = 0;
+  number = 0;
   cChannel *channel = Channels.GetByNumber(Number);
   Interface->Open(Setup.OSDwidth, Setup.ChannelInfoPos ? EpgLines : -EpgLines);
   if (channel) {
@@ -2530,38 +2635,43 @@ cDisplayChannel::cDisplayChannel(int Number, bool Switched)
 }
 
 cDisplayChannel::cDisplayChannel(eKeys FirstKey)
-:cOsdBase(true)
+:cOsdObject(true)
 {
   group = -1;
-  oldNumber = cDvbApi::CurrentChannel();
+  lines = 0;
   number = 0;
   lastTime = time_ms();
-  int EpgLines = Setup.ShowInfoOnChSwitch ? 5 : 1;
+  withInfo = Setup.ShowInfoOnChSwitch;
+  int EpgLines = withInfo ? 5 : 1;
   Interface->Open(Setup.OSDwidth, Setup.ChannelInfoPos ? EpgLines : -EpgLines);
   ProcessKey(FirstKey);
 }
 
 cDisplayChannel::~cDisplayChannel()
 {
-  if (number < 0)
-     Interface->DisplayChannelNumber(oldNumber);
   Interface->Close();
 }
 
 void cDisplayChannel::DisplayChannel(const cChannel *Channel)
 {
-  if (Channel && Channel->number > 0)
-     Interface->DisplayChannelNumber(Channel->number);
   int BufSize = Width() + 1;
   char buffer[BufSize];
-  if (Channel && Channel->number > 0)
-     snprintf(buffer, BufSize, "%d%s  %s", Channel->number, number ? "-" : "", Channel->name);
+  *buffer = 0;
+  if (Channel) {
+     if (Channel->GroupSep())
+        snprintf(buffer, BufSize, "%s", Channel->Name());
+     else
+        snprintf(buffer, BufSize, "%d%s  %s", Channel->Number(), number ? "-" : "", Channel->Name());
+     }
+  else if (number)
+     snprintf(buffer, BufSize, "%d-", number);
   else
-     snprintf(buffer, BufSize, "%s", Channel ? Channel->name : tr("*** Invalid Channel ***"));
+     snprintf(buffer, BufSize, "%s", tr("*** Invalid Channel ***"));
   Interface->Fill(0, 0, Setup.OSDwidth, 1, clrBackground);
   Interface->Write(0, 0, buffer);
   const char *date = DayDateTime();
   Interface->Write(-strlen(date), 0, date);
+  cStatus::MsgOsdChannel(buffer);
 }
 
 void cDisplayChannel::DisplayInfo(void)
@@ -2615,10 +2725,19 @@ void cDisplayChannel::DisplayInfo(void)
               Interface->Flush();
               lines = Lines;
               lastTime = time_ms();
+              cStatus::MsgOsdProgramme(Present ? Present->GetTime() : 0, PresentTitle, PresentSubtitle, Following ? Following->GetTime() : 0, FollowingTitle, FollowingSubtitle);
               }
            }
         }
      }
+}
+
+void cDisplayChannel::Refresh(void)
+{
+  Interface->Clear();
+  DisplayChannel(Channels.GetByNumber(cDevice::CurrentChannel()));
+  lastTime = time_ms();
+  lines = 0;
 }
 
 eOSState cDisplayChannel::ProcessKey(eKeys Key)
@@ -2627,7 +2746,7 @@ eOSState cDisplayChannel::ProcessKey(eKeys Key)
     case k0:
          if (number == 0) {
             // keep the "Toggle channels" function working
-            Interface->PutKey(Key);
+            cRemote::Put(Key);
             return osEnd;
             }
     case k1 ... k9:
@@ -2637,10 +2756,6 @@ eOSState cDisplayChannel::ProcessKey(eKeys Key)
                cChannel *channel = Channels.GetByNumber(number);
                DisplayChannel(channel);
                lastTime = time_ms();
-               if (!channel) {
-                  number = -1;
-                  lastTime += 1000;
-                  }
                }
             }
          break;
@@ -2650,7 +2765,7 @@ eOSState cDisplayChannel::ProcessKey(eKeys Key)
     case kRight:
          withInfo = false;
          if (group < 0) {
-            cChannel *channel = Channels.GetByNumber(cDvbApi::CurrentChannel());
+            cChannel *channel = Channels.GetByNumber(cDevice::CurrentChannel());
             if (channel)
                group = channel->Index();
             }
@@ -2666,16 +2781,34 @@ eOSState cDisplayChannel::ProcessKey(eKeys Key)
             if (channel) {
                Interface->Clear();
                DisplayChannel(channel);
-               if (!channel->groupSep)
+               if (!channel->GroupSep())
                   group = -1;
                }
             }
          lastTime = time_ms();
          break;
+    case kUp|k_Repeat:
+    case kUp:
+    case kDown|k_Repeat:
+    case kDown:
+         cDevice::SwitchChannel(NORMALKEY(Key) == kUp ? 1 : -1);
+         // no break here
+    case kChanUp|k_Repeat:
+    case kChanUp:
+    case kChanDn|k_Repeat:
+    case kChanDn:
+         Refresh();
+         break;
     case kNone:
          if (number && time_ms() - lastTime > DIRECTCHANNELTIMEOUT) {
-            if (number > 0 && !Channels.SwitchTo(number))
-               number = -1;
+            if (Channels.GetByNumber(number))
+               Channels.SwitchTo(number);
+            else {
+               number = 0;
+               DisplayChannel(NULL);
+               lastTime = time_ms();
+               return osContinue;
+               }
             return osEnd;
             }
          break;
@@ -2683,10 +2816,10 @@ eOSState cDisplayChannel::ProcessKey(eKeys Key)
     //XXX case kGreen:  return osEventNow;
     //XXX case kYellow: return osEventNext;
     case kOk:     if (group >= 0)
-                     Channels.SwitchTo(Channels.Get(Channels.GetNextNormal(group))->number);
+                     Channels.SwitchTo(Channels.Get(Channels.GetNextNormal(group))->Number());
                   return osEnd;
-    default:      if (NORMALKEY(Key) == kUp || NORMALKEY(Key) == kDown || (Key & (k_Repeat | k_Release)) == 0) {
-                     Interface->PutKey(Key);
+    default:      if ((Key & (k_Repeat | k_Release)) == 0) {
+                     cRemote::Put(Key);
                      return osEnd;
                      }
     };
@@ -2722,10 +2855,10 @@ cVolumeBar::cVolumeBar(int Width, int Height, int Current, int Total, const char
 cDisplayVolume *cDisplayVolume::displayVolume = NULL;
 
 cDisplayVolume::cDisplayVolume(void)
-:cOsdBase(true)
+:cOsdObject(true)
 {
   displayVolume = this;
-  timeout = time_ms() + (cDvbApi::PrimaryDvbApi->IsMute() ? MUTETIMEOUT : VOLUMETIMEOUT);
+  timeout = time_ms() + (cDevice::PrimaryDevice()->IsMute() ? MUTETIMEOUT : VOLUMETIMEOUT);
   Interface->Open(Setup.OSDwidth, -1);
   Show();
 }
@@ -2738,13 +2871,13 @@ cDisplayVolume::~cDisplayVolume()
 
 void cDisplayVolume::Show(void)
 {
-  cDvbApi *dvbApi = cDvbApi::PrimaryDvbApi;
-  if (dvbApi->IsMute()) {
+  cDevice *device = cDevice::PrimaryDevice();
+  if (device->IsMute()) {
      Interface->Fill(0, 0, Width(), 1, clrTransparent);
      Interface->Write(0, 0, tr("Mute"), clrGreen);
      }
   else {
-     int Current = cDvbApi::CurrentVolume();
+     int Current = cDevice::CurrentVolume();
      int Total = MAXVOLUME;
      const char *Prompt = tr("Volume ");
 #ifdef DEBUG_OSD
@@ -2754,7 +2887,7 @@ void cDisplayVolume::Show(void)
      Interface->Fill(l, 0, p, 1, clrGreen);
      Interface->Fill(l + p, 0, Width() - l - p, 1, clrWhite);
 #else
-     cVolumeBar VolumeBar(Width() * dvbApi->CellWidth(), dvbApi->LineHeight(), Current, Total, Prompt);
+     cVolumeBar VolumeBar(Width() * cOsd::CellWidth(), cOsd::LineHeight(), Current, Total, Prompt);
      Interface->SetBitmap(0, 0, VolumeBar);
 #endif
      }
@@ -2784,7 +2917,7 @@ eOSState cDisplayVolume::ProcessKey(eKeys Key)
          timeout = time_ms() + VOLUMETIMEOUT;
          break;
     case kMute:
-         if (cDvbApi::PrimaryDvbApi->IsMute()) {
+         if (cDevice::PrimaryDevice()->IsMute()) {
             Show();
             timeout = time_ms() + MUTETIMEOUT;
             }
@@ -2793,7 +2926,7 @@ eOSState cDisplayVolume::ProcessKey(eKeys Key)
          break;
     case kNone: break;
     default: if ((Key & k_Release) == 0) {
-                Interface->PutKey(Key);
+                cRemote::Put(Key);
                 return osEnd;
                 }
     }
@@ -2802,137 +2935,164 @@ eOSState cDisplayVolume::ProcessKey(eKeys Key)
 
 // --- cRecordControl --------------------------------------------------------
 
-cRecordControl::cRecordControl(cDvbApi *DvbApi, cTimer *Timer)
+cRecordControl::cRecordControl(cDevice *Device, cTimer *Timer, bool Pause)
 {
   eventInfo = NULL;
   instantId = NULL;
   fileName = NULL;
-  dvbApi = DvbApi;
-  if (!dvbApi) dvbApi = cDvbApi::PrimaryDvbApi;//XXX
+  recorder = NULL;
+  device = Device;
+  if (!device) device = cDevice::PrimaryDevice();//XXX
   timer = Timer;
   if (!timer) {
-     timer = new cTimer(true);
+     timer = new cTimer(true, Pause);
      Timers.Add(timer);
      Timers.Save();
-     asprintf(&instantId, cDvbApi::NumDvbApis > 1 ? "%s - %d" : "%s", Channels.GetChannelNameByNumber(timer->channel), dvbApi->CardIndex() + 1);
+     asprintf(&instantId, cDevice::NumDevices() > 1 ? "%s - %d" : "%s", timer->Channel()->Name(), device->CardIndex() + 1);
      }
   timer->SetPending(true);
   timer->SetRecording(true);
-  if (Channels.SwitchTo(timer->channel, dvbApi)) {
-     const char *Title = NULL;
-     const char *Subtitle = NULL;
-     const char *Summary = NULL;
-     if (GetEventInfo()) {
-        Title = eventInfo->GetTitle();
-        Subtitle = eventInfo->GetSubtitle();
-        Summary = eventInfo->GetExtendedDescription();
-        dsyslog(LOG_INFO, "Title: '%s' Subtitle: '%s'", Title, Subtitle);
+
+  const char *Title = NULL;
+  const char *Subtitle = NULL;
+  const char *Summary = NULL;
+  if (GetEventInfo()) {
+     Title = eventInfo->GetTitle();
+     Subtitle = eventInfo->GetSubtitle();
+     Summary = eventInfo->GetExtendedDescription();
+     dsyslog("Title: '%s' Subtitle: '%s'", Title, Subtitle);
+     }
+  cRecording Recording(timer, Title, Subtitle, Summary);
+  fileName = strdup(Recording.FileName());
+
+  // crude attempt to avoid duplicate recordings:
+  if (cRecordControls::GetRecordControl(fileName)) {
+     isyslog("already recording: '%s'", fileName);
+     if (Timer) {
+        timer->SetPending(false);
+        timer->SetRecording(false);
+        timer->OnOff();
         }
-     cRecording Recording(timer, Title, Subtitle, Summary);
-     fileName = strdup(Recording.FileName());
-     cRecordingUserCommand::InvokeCommand(RUC_BEFORERECORDING, fileName);
-     if (dvbApi->StartRecord(fileName, Channels.GetByNumber(timer->channel)->ca, timer->priority))
-        Recording.WriteSummary();
-     Interface->DisplayRecording(dvbApi->CardIndex(), true);
+     else {
+        Timers.Del(timer);
+        Timers.Save();
+        }
+     timer = NULL;
+     return;
+     }
+
+  cRecordingUserCommand::InvokeCommand(RUC_BEFORERECORDING, fileName);
+  const cChannel *ch = timer->Channel();
+  recorder = new cRecorder(fileName, ch->Ca(), timer->Priority(), ch->Vpid(), ch->Apid1(), ch->Apid2(), ch->Dpid1(), ch->Dpid2());
+  if (device->AttachReceiver(recorder)) {
+     Recording.WriteSummary();
+     cStatus::MsgRecording(device, Recording.Name());
+     if (!Timer && !cReplayControl::LastReplayed()) // an instant recording, maybe from cRecordControls::PauseLiveVideo()
+        cReplayControl::SetRecording(fileName, Recording.Name());
      }
   else
-     cThread::EmergencyExit(true);
+     DELETENULL(recorder);
 }
 
 cRecordControl::~cRecordControl()
 {
   Stop(true);
-  delete instantId;
-  delete fileName;
+  free(instantId);
+  free(fileName);
 }
 
 #define INSTANT_REC_EPG_LOOKAHEAD 300 // seconds to look into the EPG data for an instant recording
 
 bool cRecordControl::GetEventInfo(void)
 {
-  cChannel *channel = Channels.GetByNumber(timer->channel);
-  time_t Time = timer->active == taActInst ? timer->StartTime() + INSTANT_REC_EPG_LOOKAHEAD : timer->StartTime() + (timer->StopTime() - timer->StartTime()) / 2;
+  const cChannel *channel = timer->Channel();
+  time_t Time = timer->Active() == taActInst ? timer->StartTime() + INSTANT_REC_EPG_LOOKAHEAD : timer->StartTime() + (timer->StopTime() - timer->StartTime()) / 2;
   for (int seconds = 0; seconds <= MAXWAIT4EPGINFO; seconds++) {
       {
         cMutexLock MutexLock;
         const cSchedules *Schedules = cSIProcessor::Schedules(MutexLock);
         if (Schedules) {
-           const cSchedule *Schedule = Schedules->GetSchedule(channel->pnr);
+           const cSchedule *Schedule = Schedules->GetSchedule(channel->GetChannelID());
            if (Schedule) {
               eventInfo = Schedule->GetEventAround(Time);
               if (eventInfo) {
                  if (seconds > 0)
-                    dsyslog(LOG_INFO, "got EPG info after %d seconds", seconds);
+                    dsyslog("got EPG info after %d seconds", seconds);
                  return true;
                  }
               }
            }
       }
       if (seconds == 0)
-         dsyslog(LOG_INFO, "waiting for EPG info...");
+         dsyslog("waiting for EPG info...");
       sleep(1);
       }
-  dsyslog(LOG_INFO, "no EPG info available");
+  dsyslog("no EPG info available");
   return false;
 }
 
 void cRecordControl::Stop(bool KeepInstant)
 {
   if (timer) {
-     dvbApi->StopRecord();
+     DELETENULL(recorder);
      timer->SetRecording(false);
-     if ((IsInstant() && !KeepInstant) || (timer->IsSingleEvent() && !timer->Matches())) {
-        // checking timer->Matches() to make sure we don't delete the timer
-        // if the program was cancelled before the timer's stop time!
-        isyslog(LOG_INFO, "deleting timer %d", timer->Index() + 1);
+     if ((IsInstant() && !KeepInstant) || (timer->IsSingleEvent() && timer->StopTime() <= time(NULL))) {
+        isyslog("deleting timer %d", timer->Index() + 1);
         Timers.Del(timer);
         Timers.Save();
         }
      timer = NULL;
-     Interface->DisplayRecording(dvbApi->CardIndex(), false);
+     cStatus::MsgRecording(device, NULL);
      cRecordingUserCommand::InvokeCommand(RUC_AFTERRECORDING, fileName);
      }
 }
 
 bool cRecordControl::Process(time_t t)
 {
-  if (!timer || !timer->Matches(t))
+  if (!recorder || !timer || !timer->Matches(t))
      return false;
-  AssertFreeDiskSpace(timer->priority);
+  AssertFreeDiskSpace(timer->Priority());
   return true;
 }
 
 // --- cRecordControls -------------------------------------------------------
 
-cRecordControl *cRecordControls::RecordControls[MAXDVBAPI] = { NULL };
+cRecordControl *cRecordControls::RecordControls[MAXRECORDCONTROLS] = { NULL };
 
-bool cRecordControls::Start(cTimer *Timer)
+bool cRecordControls::Start(cTimer *Timer, bool Pause)
 {
-  int ch = Timer ? Timer->channel : cDvbApi::CurrentChannel();
+  int ch = Timer ? Timer->Channel()->Number() : cDevice::CurrentChannel();
   cChannel *channel = Channels.GetByNumber(ch);
 
   if (channel) {
-     cDvbApi *dvbApi = cDvbApi::GetDvbApi(channel->ca, Timer ? Timer->priority : Setup.DefaultPriority);
-     if (dvbApi) {
-        Stop(dvbApi);
-        for (int i = 0; i < MAXDVBAPI; i++) {
+     bool NeedsDetachReceivers = false;
+     int Priority = Timer ? Timer->Priority() : Pause ? Setup.PausePriority : Setup.DefaultPriority;
+     cDevice *device = cDevice::GetDevice(channel, Priority, &NeedsDetachReceivers);
+     if (device) {
+        if (NeedsDetachReceivers)
+           Stop(device);
+        if (!device->SwitchChannel(channel, false)) {
+           cThread::EmergencyExit(true);
+           return false;
+           }
+        for (int i = 0; i < MAXRECORDCONTROLS; i++) {
             if (!RecordControls[i]) {
-               RecordControls[i] = new cRecordControl(dvbApi, Timer);
+               RecordControls[i] = new cRecordControl(device, Timer, Pause);
                return true;
                }
             }
         }
-     else if (!Timer || (Timer->priority >= Setup.PrimaryLimit && !Timer->pending))
-        isyslog(LOG_ERR, "no free DVB device to record channel %d!", ch);
+     else if (!Timer || (Timer->Priority() >= Setup.PrimaryLimit && !Timer->Pending()))
+        isyslog("no free DVB device to record channel %d!", ch);
      }
   else
-     esyslog(LOG_ERR, "ERROR: channel %d not defined!", ch);
+     esyslog("ERROR: channel %d not defined!", ch);
   return false;
 }
 
 void cRecordControls::Stop(const char *InstantId)
 {
-  for (int i = 0; i < MAXDVBAPI; i++) {
+  for (int i = 0; i < MAXRECORDCONTROLS; i++) {
       if (RecordControls[i]) {
          const char *id = RecordControls[i]->InstantId();
          if (id && strcmp(id, InstantId) == 0)
@@ -2941,12 +3101,12 @@ void cRecordControls::Stop(const char *InstantId)
       }
 }
 
-void cRecordControls::Stop(cDvbApi *DvbApi)
+void cRecordControls::Stop(cDevice *Device)
 {
-  for (int i = 0; i < MAXDVBAPI; i++) {
+  for (int i = 0; i < MAXRECORDCONTROLS; i++) {
       if (RecordControls[i]) {
-         if (RecordControls[i]->Uses(DvbApi)) {
-            isyslog(LOG_INFO, "stopping recording on DVB device %d due to higher priority", DvbApi->CardIndex() + 1);
+         if (RecordControls[i]->Uses(Device)) {
+            isyslog("stopping recording on DVB device %d due to higher priority", Device->CardIndex() + 1);
             RecordControls[i]->Stop(true);
             }
          }
@@ -2955,20 +3115,41 @@ void cRecordControls::Stop(cDvbApi *DvbApi)
 
 bool cRecordControls::StopPrimary(bool DoIt)
 {
-  if (cDvbApi::PrimaryDvbApi->Recording()) {
-     cDvbApi *dvbApi = cDvbApi::GetDvbApi(cDvbApi::PrimaryDvbApi->Ca(), 0);
-     if (dvbApi) {
+  if (cDevice::PrimaryDevice()->Receiving()) {
+     //XXX+ disabled for the moment - might become obsolete with DVB_DRIVER_VERSION >= 2002090101
+     cDevice *device = NULL;//XXX cDevice::GetDevice(cDevice::PrimaryDevice()->Ca(), 0);
+     if (device) {
         if (DoIt)
-           Stop(cDvbApi::PrimaryDvbApi);
+           Stop(cDevice::PrimaryDevice());
         return true;
         }
      }
   return false;
 }
 
+bool cRecordControls::PauseLiveVideo(void)
+{
+  Interface->Open(Setup.OSDwidth, -1);
+  Interface->Status(tr("Pausing live video..."));
+  Interface->Flush();
+  cReplayControl::SetRecording(NULL, NULL); // make sure the new cRecordControl will set cReplayControl::LastReplayed()
+  if (Start(NULL, true)) {
+     sleep(2); // allow recorded file to fill up enough to start replaying
+     cReplayControl *rc = new cReplayControl;
+     cControl::Launch(rc);
+     cControl::Attach();
+     sleep(1); // allow device to replay some frames, so we have a picture
+     Interface->Close();
+     rc->ProcessKey(kPause); // pause, allowing replay mode display
+     return true;
+     }
+  Interface->Close();
+  return false;
+}
+
 const char *cRecordControls::GetInstantId(const char *LastInstantId)
 {
-  for (int i = 0; i < MAXDVBAPI; i++) {
+  for (int i = 0; i < MAXRECORDCONTROLS; i++) {
       if (RecordControls[i]) {
          if (!LastInstantId && RecordControls[i]->InstantId())
             return RecordControls[i]->InstantId();
@@ -2981,7 +3162,7 @@ const char *cRecordControls::GetInstantId(const char *LastInstantId)
 
 cRecordControl *cRecordControls::GetRecordControl(const char *FileName)
 {
-  for (int i = 0; i < MAXDVBAPI; i++) {
+  for (int i = 0; i < MAXRECORDCONTROLS; i++) {
       if (RecordControls[i] && strcmp(RecordControls[i]->FileName(), FileName) == 0)
          return RecordControls[i];
       }
@@ -2990,7 +3171,7 @@ cRecordControl *cRecordControls::GetRecordControl(const char *FileName)
 
 void cRecordControls::Process(time_t t)
 {
-  for (int i = 0; i < MAXDVBAPI; i++) {
+  for (int i = 0; i < MAXRECORDCONTROLS; i++) {
       if (RecordControls[i]) {
          if (!RecordControls[i]->Process(t))
             DELETENULL(RecordControls[i]);
@@ -3000,11 +3181,17 @@ void cRecordControls::Process(time_t t)
 
 bool cRecordControls::Active(void)
 {
-  for (int i = 0; i < MAXDVBAPI; i++) {
+  for (int i = 0; i < MAXRECORDCONTROLS; i++) {
       if (RecordControls[i])
          return true;
       }
   return false;
+}
+
+void cRecordControls::Shutdown(void)
+{
+  for (int i = 0; i < MAXRECORDCONTROLS; i++)
+      DELETENULL(RecordControls[i]);
 }
 
 // --- cProgressBar ----------------------------------------------------------
@@ -3057,29 +3244,28 @@ char *cReplayControl::fileName = NULL;
 char *cReplayControl::title = NULL;
 
 cReplayControl::cReplayControl(void)
+:cDvbPlayerControl(fileName)
 {
-  dvbApi = cDvbApi::PrimaryDvbApi;
   visible = modeOnly = shown = displayFrames = false;
   lastCurrent = lastTotal = -1;
   timeoutShow = 0;
   timeSearchActive = false;
-  if (fileName) {
-     marks.Load(fileName);
-     if (!dvbApi->StartReplay(fileName))
-        Interface->Error(tr("Channel locked (recording)!"));
-     }
+  marks.Load(fileName);
+  cRecording Recording(fileName);
+  cStatus::MsgReplaying(this, Recording.Name());
 }
 
 cReplayControl::~cReplayControl()
 {
   Hide();
-  dvbApi->StopReplay();
+  cStatus::MsgReplaying(this, NULL);
+  Stop();
 }
 
 void cReplayControl::SetRecording(const char *FileName, const char *Title)
 {
-  delete fileName;
-  delete title;
+  free(fileName);
+  free(title);
   fileName = FileName ? strdup(FileName) : NULL;
   title = Title ? strdup(Title) : NULL;
 }
@@ -3092,12 +3278,12 @@ const char *cReplayControl::LastReplayed(void)
 void cReplayControl::ClearLastReplayed(const char *FileName)
 {
   if (fileName && FileName && strcmp(fileName, FileName) == 0) {
-     delete fileName;
+     free(fileName);
      fileName = NULL;
      }
 }
 
-void cReplayControl::Show(int Seconds)
+void cReplayControl::ShowTimed(int Seconds)
 {
   if (modeOnly)
      Hide();
@@ -3105,6 +3291,11 @@ void cReplayControl::Show(int Seconds)
      shown = ShowProgress(true);
      timeoutShow = (shown && Seconds > 0) ? time(NULL) + Seconds : 0;
      }
+}
+
+void cReplayControl::Show(void)
+{
+  ShowTimed();
 }
 
 void cReplayControl::Hide(void)
@@ -3119,7 +3310,7 @@ void cReplayControl::Hide(void)
 void cReplayControl::DisplayAtBottom(const char *s)
 {
   if (s) {
-     int w = dvbApi->WidthInCells(s);
+     int w = cOsd::WidthInCells(s);
      int d = max(Width() - w, 0) / 2;
      if (modeOnly) //XXX remove when displaying replay mode differently
         Interface->Fill(0, -1, Interface->Width(), 1, clrTransparent); //XXX remove when displaying replay mode differently
@@ -3135,7 +3326,7 @@ void cReplayControl::ShowMode(void)
   if (Setup.ShowReplayMode && !timeSearchActive) {
      bool Play, Forward;
      int Speed;
-     if (dvbApi->GetReplayMode(Play, Forward, Speed)) {
+     if (GetReplayMode(Play, Forward, Speed)) {
         bool NormalPlay = (Play && Speed == -1);
 
         if (!visible) {
@@ -3173,7 +3364,7 @@ bool cReplayControl::ShowProgress(bool Initial)
 {
   int Current, Total;
 
-  if (dvbApi->GetIndex(Current, Total) && Total > 0) {
+  if (GetIndex(Current, Total) && Total > 0) {
      if (!visible) {
         Interface->Open(Setup.OSDwidth, -3);
         needsFastResponse = visible = true;
@@ -3195,8 +3386,8 @@ bool cReplayControl::ShowProgress(bool Initial)
         Interface->Fill(0, 1, p, 1, clrGreen);
         Interface->Fill(p, 1, Width() - p, 1, clrWhite);
 #else
-        cProgressBar ProgressBar(Width() * dvbApi->CellWidth(), dvbApi->LineHeight(), Current, Total, marks);
-        Interface->SetBitmap(0, dvbApi->LineHeight(), ProgressBar);
+        cProgressBar ProgressBar(Width() * cOsd::CellWidth(), cOsd::LineHeight(), Current, Total, marks);
+        Interface->SetBitmap(0, cOsd::LineHeight(), ProgressBar);
         if (!Initial)
            Interface->Flush();
 #endif
@@ -3243,19 +3434,23 @@ void cReplayControl::TimeSearchProcess(eKeys Key)
             TimeSearchDisplay();
             }
          break;
+    case kFastRew:
     case kLeft:
+    case kFastFwd:
     case kRight: {
-         int dir = (Key == kRight ? 1 : -1);
+         int dir = ((Key == kRight || Key == kFastFwd) ? 1 : -1);
          if (dir > 0)
             Seconds = min(Total - Current - STAY_SECONDS_OFF_END, Seconds);
-         dvbApi->SkipSeconds(Seconds * dir);
+         SkipSeconds(Seconds * dir);
          timeSearchActive = false;
          }
          break;
+    case kPlay:
     case kUp:
+    case kPause:
     case kDown:
          Seconds = min(Total - STAY_SECONDS_OFF_END, Seconds);
-         dvbApi->Goto(Seconds * FRAMESPERSEC, Key == kDown);
+         Goto(Seconds * FRAMESPERSEC, Key == kDown || Key == kPause);
          timeSearchActive = false;
          break;
     default:
@@ -3293,14 +3488,14 @@ void cReplayControl::TimeSearch(void)
 void cReplayControl::MarkToggle(void)
 {
   int Current, Total;
-  if (dvbApi->GetIndex(Current, Total, true)) {
+  if (GetIndex(Current, Total, true)) {
      cMark *m = marks.Get(Current);
      lastCurrent = -1; // triggers redisplay
      if (m)
         marks.Del(m);
      else {
         marks.Add(Current);
-        Show(2);
+        ShowTimed(2);
         }
      marks.Save();
      }
@@ -3310,10 +3505,10 @@ void cReplayControl::MarkJump(bool Forward)
 {
   if (marks.Count()) {
      int Current, Total;
-     if (dvbApi->GetIndex(Current, Total)) {
+     if (GetIndex(Current, Total)) {
         cMark *m = Forward ? marks.GetNext(Current) : marks.GetPrev(Current);
         if (m)
-           dvbApi->Goto(m->position, true);
+           Goto(m->position, true);
         }
      displayFrames = true;
      }
@@ -3322,11 +3517,11 @@ void cReplayControl::MarkJump(bool Forward)
 void cReplayControl::MarkMove(bool Forward)
 {
   int Current, Total;
-  if (dvbApi->GetIndex(Current, Total)) {
+  if (GetIndex(Current, Total)) {
      cMark *m = marks.Get(Current);
      if (m) {
         displayFrames = true;
-        int p = dvbApi->SkipFrames(Forward ? 1 : -1);
+        int p = SkipFrames(Forward ? 1 : -1);
         cMark *m2;
         if (Forward) {
            if ((m2 = marks.Next(m)) != NULL && m2->position <= p)
@@ -3336,7 +3531,7 @@ void cReplayControl::MarkMove(bool Forward)
            if ((m2 = marks.Prev(m)) != NULL && m2->position >= p)
               return;
            }
-        dvbApi->Goto(m->position = p, true);
+        Goto(m->position = p, true);
         marks.Save();
         }
      }
@@ -3346,8 +3541,10 @@ void cReplayControl::EditCut(void)
 {
   if (fileName) {
      Hide();
-     if (!cVideoCutter::Active()) {
-        if (!cVideoCutter::Start(fileName))
+     if (!cCutter::Active()) {
+        if (!marks.Count())
+           Interface->Error(tr("No editing marks defined!"));
+        else if (!cCutter::Start(fileName))
            Interface->Error(tr("Can't start editing process!"));
         else
            Interface->Info(tr("Editing process started"));
@@ -3361,7 +3558,7 @@ void cReplayControl::EditCut(void)
 void cReplayControl::EditTest(void)
 {
   int Current, Total;
-  if (dvbApi->GetIndex(Current, Total)) {
+  if (GetIndex(Current, Total)) {
      cMark *m = marks.Get(Current);
      if (!m)
         m = marks.GetNext(Current);
@@ -3369,8 +3566,8 @@ void cReplayControl::EditTest(void)
         if ((m->Index() & 0x01) != 0)
            m = marks.Next(m);
         if (m) {
-           dvbApi->Goto(m->position - dvbApi->SecondsToFrames(3));
-           dvbApi->Play();
+           Goto(m->position - SecondsToFrames(3));
+           Play();
            }
         }
      }
@@ -3378,7 +3575,7 @@ void cReplayControl::EditTest(void)
 
 eOSState cReplayControl::ProcessKey(eKeys Key)
 {
-  if (!dvbApi->Replaying())
+  if (!Active())
      return osEnd;
   if (visible) {
      if (timeoutShow && time(NULL) > timeoutShow) {
@@ -3400,21 +3597,28 @@ eOSState cReplayControl::ProcessKey(eKeys Key)
   bool DoShowMode = true;
   switch (Key) {
     // Positioning:
-    case kUp:      dvbApi->Play(); break;
-    case kDown:    dvbApi->Pause(); break;
+    case kPlay:
+    case kUp:      Play(); break;
+    case kPause:
+    case kDown:    Pause(); break;
+    case kFastRew|k_Release:
     case kLeft|k_Release:
                    if (Setup.MultiSpeedMode) break;
-    case kLeft:    dvbApi->Backward(); break;
+    case kFastRew:
+    case kLeft:    Backward(); break;
+    case kFastFwd|k_Release:
     case kRight|k_Release:
                    if (Setup.MultiSpeedMode) break;
-    case kRight:   dvbApi->Forward(); break;
+    case kFastFwd:
+    case kRight:   Forward(); break;
     case kRed:     TimeSearch(); break;
     case kGreen|k_Repeat:
-    case kGreen:   dvbApi->SkipSeconds(-60); break;
+    case kGreen:   SkipSeconds(-60); break;
     case kYellow|k_Repeat:
-    case kYellow:  dvbApi->SkipSeconds( 60); break;
+    case kYellow:  SkipSeconds( 60); break;
+    case kStop:
     case kBlue:    Hide();
-                   dvbApi->StopReplay();
+                   Stop();
                    return osEnd;
     default: {
       DoShowMode = false;
@@ -3434,7 +3638,6 @@ eOSState cReplayControl::ProcessKey(eKeys Key)
           displayFrames = DisplayedFrames;
           switch (Key) {
             // Menu control:
-            case kMenu:    Hide(); return osMenu; // allow direct switching to menu
             case kOk:      if (visible && !modeOnly) {
                               Hide();
                               DoShowMode = true;

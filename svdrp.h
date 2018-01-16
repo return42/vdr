@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: svdrp.h 1.15 2002/03/08 16:40:23 kls Exp $
+ * $Id: svdrp.h 1.19 2003/04/27 14:09:59 kls Exp $
  */
 
 #ifndef __SVDRP_H
@@ -53,6 +53,7 @@ private:
   bool Send(const char *s, int length = -1);
   void Reply(int Code, const char *fmt, ...);
   void CmdCHAN(const char *Option);
+  void CmdCLRE(const char *Option);
   void CmdDELC(const char *Option);
   void CmdDELR(const char *Option);
   void CmdDELT(const char *Option);
@@ -72,13 +73,15 @@ private:
   void CmdNEWT(const char *Option);
   void CmdNEXT(const char *Option);
   void CmdPUTE(const char *Option);
+  void CmdSTAT(const char *Option);
   void CmdUPDT(const char *Option);
   void CmdVOLU(const char *Option);
   void Execute(char *Cmd);
 public:
   cSVDRP(int Port);
   ~cSVDRP();
-  void Process(void);
+  bool HasConnection(void) { return file.IsOpen(); }
+  bool Process(void);
   char *GetMessage(void);
   };
 

@@ -1,35 +1,29 @@
 /*
- * ringbuffer.h: A threaded ring buffer
+ * ringbuffer.h: A ring buffer
  *
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: ringbuffer.h 1.5 2001/11/03 10:41:33 kls Exp $
+ * $Id: ringbuffer.h 1.12 2003/05/12 17:35:10 kls Exp $
  */
 
 #ifndef __RINGBUFFER_H
 #define __RINGBUFFER_H
 
 #include "thread.h"
-
-typedef unsigned char uchar;
-
-class cRingBufferInputThread;
-class cRingBufferOutputThread;
+#include "tools.h"
 
 class cRingBuffer {
-  friend class cRingBufferInputThread;
-  friend class cRingBufferOutputThread;
 private:
-  cRingBufferInputThread *inputThread;
-  cRingBufferOutputThread *outputThread;
   cMutex mutex;
   cCondVar readyForPut, readyForGet;
   cMutex putMutex, getMutex;
+  int putTimeout;
+  int getTimeout;
   int size;
-  bool busy;
 protected:
   int maxFill;//XXX
+  int lastPercent;
   bool statistics;//XXX
   void WaitForPut(void);
   void WaitForGet(void);
@@ -41,38 +35,39 @@ protected:
   void Lock(void) { mutex.Lock(); }
   void Unlock(void) { mutex.Unlock(); }
   int Size(void) { return size; }
-  bool Busy(void) { return busy; }
-  virtual void Input(void) = 0;
-    // Runs as a separate thread and shall continuously read data from
-    // a source and call Put() to store the data in the ring buffer.
-  virtual void Output(void) = 0;
-    // Runs as a separate thread and shall continuously call Get() to
-    // retrieve data from the ring buffer and write it to a destination.
 public:
   cRingBuffer(int Size, bool Statistics = false);
   virtual ~cRingBuffer();
-  bool Start(void);
-  bool Active(void);
-  void Stop(void);
+  void SetTimeouts(int PutTimeout, int GetTimeout);
   };
 
 class cRingBufferLinear : public cRingBuffer {
 private:
-  int head, tail;
+  int margin, head, tail;
+  int lastGet;
   uchar *buffer;
-protected:
+  pid_t getThreadPid;
+public:
+  cRingBufferLinear(int Size, int Margin = 0, bool Statistics = false);
+    ///< Creates a linear ring buffer.
+    ///< The buffer will be able to hold at most Size bytes of data, and will
+    ///< be guaranteed to return at least Margin bytes in one consecutive block.
+  virtual ~cRingBufferLinear();
   virtual int Available(void);
   virtual void Clear(void);
-    // Immediately clears the ring buffer.
+    ///< Immediately clears the ring buffer.
   int Put(const uchar *Data, int Count);
-    // Puts at most Count bytes of Data into the ring buffer.
-    // Returns the number of bytes actually stored.
-  int Get(uchar *Data, int Count);
-    // Gets at most Count bytes of Data from the ring buffer.
-    // Returns the number of bytes actually retrieved.
-public:
-  cRingBufferLinear(int Size, bool Statistics = false);
-  virtual ~cRingBufferLinear();
+    ///< Puts at most Count bytes of Data into the ring buffer.
+    ///< \return Returns the number of bytes actually stored.
+  uchar *Get(int &Count);
+    ///< Gets data from the ring buffer.
+    ///< The data will remain in the buffer until a call to Del() deletes it.
+    ///< \return Returns a pointer to the data, and stores the number of bytes
+    ///< actually retrieved in Count. If the returned pointer is NULL, Count has no meaning.
+  void Del(int Count);
+    ///< Deletes at most Count bytes from the ring buffer.
+    ///< Count must be less or equal to the number that was returned by a previous
+    ///< call to Get().
   };
 
 enum eFrameType { ftUnknown, ftVideo, ftAudio, ftDolby };
@@ -87,8 +82,11 @@ private:
   int index;
 public:
   cFrame(const uchar *Data, int Count, eFrameType = ftUnknown, int Index = -1);
+    ///< Creates a new cFrame object.
+    ///< If Count is negative, the cFrame object will take ownership of the given
+    ///< Data. Otherwise it will allocate Count bytes of memory and copy Data.
   ~cFrame();
-  const uchar *Data(void) const { return data; }
+  uchar *Data(void) const { return data; }
   int Count(void) const { return count; }
   eFrameType Type(void) const { return type; }
   int Index(void) const { return index; }
@@ -98,22 +96,21 @@ class cRingBufferFrame : public cRingBuffer {
 private:
   cFrame *head;
   int currentFill;
-  void Delete(const cFrame *Frame);
-protected:
+  void Delete(cFrame *Frame);
+public:
+  cRingBufferFrame(int Size, bool Statistics = false);
+  virtual ~cRingBufferFrame();
   virtual int Available(void);
   virtual void Clear(void);
     // Immediately clears the ring buffer.
   bool Put(cFrame *Frame);
     // Puts the Frame into the ring buffer.
     // Returns true if this was possible.
-  const cFrame *Get(bool Wait = true);
+  cFrame *Get(void);
     // Gets the next frame from the ring buffer.
     // The actual data still remains in the buffer until Drop() is called.
-  void Drop(const cFrame *Frame);
+  void Drop(cFrame *Frame);
     // Drops the Frame that has just been fetched with Get().
-public:
-  cRingBufferFrame(int Size, bool Statistics = false);
-  virtual ~cRingBufferFrame();
   };
 
 #endif // __RINGBUFFER_H

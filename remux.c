@@ -8,7 +8,7 @@
  * the Linux DVB driver's 'tuxplayer' example and were rewritten to suit
  * VDR's needs.
  *
- * $Id: remux.c 1.8 2002/02/03 16:20:37 kls Exp $
+ * $Id: remux.c 1.15 2003/04/26 15:07:41 kls Exp $
  */
 
 /* The calling interface of the 'cRemux::Process()' function is defined
@@ -66,6 +66,7 @@
 */
 
 #include "remux.h"
+#include <stdlib.h>
 #include "thread.h"
 #include "tools.h"
 
@@ -96,14 +97,16 @@
 #define PTS_ONLY         0x80
 
 #define TS_SIZE        188
-#define PAY_START      0x40
 #define PID_MASK_HI    0x1F
-//flags
-#define ADAPT_FIELD    0x20
-//XXX TODO
+#define CONT_CNT_MASK  0x0F
 
-#define MAX_PLENGTH 0xFFFF
-#define MMAX_PLENGTH (4*MAX_PLENGTH)
+// Flags:
+#define PAY_START      0x40
+#define TS_ERROR       0x80
+#define ADAPT_FIELD    0x20
+
+#define MAX_PLENGTH  0xFFFF          // the maximum PES packet length (theoretically)
+#define MMAX_PLENGTH (8*MAX_PLENGTH) // some stations send PES packets that are extremely large, e.g. DVB-T in Finland
 
 #define IPACKS 2048
 
@@ -131,6 +134,9 @@ private:
   bool done;
   uint8_t *resultBuffer;
   int *resultCount;
+  int tsErrors;
+  int ccErrors;
+  int ccCounter;
   static uint8_t headr[];
   void store(uint8_t *Data, int Count);
   void reset_ipack(void);
@@ -153,15 +159,21 @@ cTS2PES::cTS2PES(uint8_t *ResultBuffer, int *ResultCount, int Size, uint8_t Audi
   size = Size;
   audioCid = AudioCid;
 
-  if (!(buf = new uint8_t[size]))
-     esyslog(LOG_ERR, "Not enough memory for ts_transform");
+  tsErrors = 0;
+  ccErrors = 0;
+  ccCounter = -1;
+
+  if (!(buf = MALLOC(uint8_t, size)))
+     esyslog("Not enough memory for ts_transform");
 
   reset_ipack();
 }
 
 cTS2PES::~cTS2PES()
 {
-  delete buf;
+  if (tsErrors || ccErrors)
+     dsyslog("cTS2PES got %d TS errors, %d TS continuity errors", tsErrors, ccErrors);
+  free(buf);
 }
 
 void cTS2PES::Clear(void)
@@ -172,7 +184,7 @@ void cTS2PES::Clear(void)
 void cTS2PES::store(uint8_t *Data, int Count)
 {
   if (*resultCount + Count > RESULTBUFFERSIZE) {
-     esyslog(LOG_ERR, "ERROR: result buffer overflow (%d + %d > %d)", *resultCount, Count, RESULTBUFFERSIZE);
+     esyslog("ERROR: result buffer overflow (%d + %d > %d)", *resultCount, Count, RESULTBUFFERSIZE);
      Count = RESULTBUFFERSIZE - *resultCount;
      }
   memcpy(resultBuffer + *resultCount, Data, Count);
@@ -309,7 +321,7 @@ void cTS2PES::instant_repack(const uint8_t *Buf, int Count)
                      if ((flag1 & 0xC0) == 0x80 )
                         mpeg = 2;
                      else {
-                        esyslog(LOG_INFO, "ERROR: can't record MPEG1!");
+                        esyslog("ERROR: error in data stream!");
                         hlength = 0;
                         which = 0;
                         mpeg = 1;
@@ -383,6 +395,8 @@ void cTS2PES::instant_repack(const uint8_t *Buf, int Count)
         }
 
      if (plength && found == plength + 6) {
+        if (plength == MMAX_PLENGTH - 6)
+           esyslog("ERROR: PES packet length overflow in remuxer (stream corruption)");
         send_ipack();
         reset_ipack();
         if (c < Count)
@@ -396,6 +410,22 @@ void cTS2PES::ts_to_pes(const uint8_t *Buf) // don't need count (=188)
 {
   if (!Buf)
      return;
+
+  if (Buf[1] & TS_ERROR)
+     tsErrors++;
+  if ((Buf[3] ^ ccCounter) & CONT_CNT_MASK) {
+     // This should check duplicates and packets which do not increase the counter.
+     // But as the errors usually come in bursts this should be enough to
+     // show you there is something wrong with signal quality.
+     if (ccCounter != -1 && ((Buf[3] ^ (ccCounter + 1)) & CONT_CNT_MASK)) {
+        ccErrors++;
+        // Enable this if you are having problems with signal quality.
+        // These are the errors I used to get with Nova-T when antenna
+        // was not positioned correcly (not transport errors). //tvr
+        //dsyslog("TS continuity error (%d)", ccCounter);
+        }
+     ccCounter = Buf[3] & CONT_CNT_MASK;
+     }
 
   if (Buf[1] & PAY_START) {
      if (plength == MMAX_PLENGTH - 6 && found > 6) {
@@ -481,17 +511,9 @@ int cRemux::ScanVideoPacket(const uchar *Data, int Count, int Offset, uchar &Pic
   return -1;
 }
 
-void cRemux::SetAudioPid(int APid)
-{
-  aPid1 = APid;
-  vTS2PES->Clear();
-  aTS2PES1->Clear();
-  resultCount = resultDelivered = 0;
-}
-
 #define TS_SYNC_BYTE 0x47
 
-const uchar *cRemux::Process(const uchar *Data, int &Count, int &Result, uchar *PictureType)
+uchar *cRemux::Process(const uchar *Data, int &Count, int &Result, uchar *PictureType)
 {
   uchar dummyPictureType;
   if (!PictureType)
@@ -525,7 +547,7 @@ XXX*/
         used++;
         }
   if (used)
-     esyslog(LOG_ERR, "ERROR: skipped %d byte to sync on TS packet", used);
+     esyslog("ERROR: skipped %d byte to sync on TS packet", used);
 
   // Convert incoming TS data into multiplexed PES:
 
@@ -570,7 +592,7 @@ XXX*/
 
   if (!synced && skipped >= 0) {
      if (skipped > MAXNONUSEFULDATA) {
-        esyslog(LOG_ERR, "ERROR: no useful data seen within %d byte of video stream", skipped);
+        esyslog("ERROR: no useful data seen within %d byte of video stream", skipped);
         skipped = -1;
         if (exitOnFailure)
            cThread::EmergencyExit(true);
@@ -595,10 +617,11 @@ XXX*/
                         return NULL; // no useful data found, wait for more
                      if (pt != NO_PICTURE) {
                         if (pt < I_FRAME || B_FRAME < pt)
-                           esyslog(LOG_ERR, "ERROR: unknown picture type '%d'", pt);
+                           esyslog("ERROR: unknown picture type '%d'", pt);
                         else if (!synced) {
                            if (pt == I_FRAME) {
                               resultDelivered = i; // will drop everything before this position
+                              SetBrokenLink(resultBuffer + i, l);
                               synced = true;
                               }
                            else {
@@ -610,7 +633,7 @@ XXX*/
                      if (synced) {
                         *PictureType = pt;
                         Result = l;
-                        const uchar *p = resultBuffer + resultDelivered;
+                        uchar *p = resultBuffer + resultDelivered;
                         resultDelivered += l;
                         return p;
                         }
@@ -628,7 +651,7 @@ XXX*/
                         return NULL; // no useful data found, wait for more
                      if (synced) {
                         Result = l;
-                        const uchar *p = resultBuffer + resultDelivered;
+                        uchar *p = resultBuffer + resultDelivered;
                         resultDelivered += l;
                         return p;
                         }
@@ -645,3 +668,18 @@ XXX*/
   return NULL; // no useful data found, wait for more
 }
 
+void cRemux::SetBrokenLink(uchar *Data, int Length)
+{
+  if (Length > 9 && Data[0] == 0 && Data[1] == 0 && Data[2] == 1 && (Data[3] & VIDEO_STREAM_S) == VIDEO_STREAM_S) {
+     for (int i = Data[8] + 9; i < Length - 7; i++) { // +9 to skip video packet header
+         if (Data[i] == 0 && Data[i + 1] == 0 && Data[i + 2] == 1 && Data[i + 3] == 0xB8) {
+            if (!(Data[i + 7] & 0x40)) // set flag only if GOP is not closed
+               Data[i + 7] |= 0x20;
+            return;
+            }
+         }
+     dsyslog("SetBrokenLink: no GOP header found in video packet");
+     }
+  else
+     dsyslog("SetBrokenLink: no video packet in frame");
+}

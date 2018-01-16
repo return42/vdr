@@ -1,102 +1,98 @@
 /*
- * remote.h: Interface to the Remote Control Unit
+ * remote.h: General Remote Control handling
  *
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: remote.h 1.15 2001/07/22 14:42:59 kls Exp $
+ * $Id: remote.h 1.28 2003/05/02 10:41:35 kls Exp $
  */
 
 #ifndef __REMOTE_H
 #define __REMOTE_H
 
 #include <stdio.h>
+#include <termios.h>
 #include <time.h>
+#include "keys.h"
 #include "thread.h"
 #include "tools.h"
 
-class cRcIoBase {
+class cRemote : public cListObject {
+private:
+  enum { MaxKeys = MAXKEYSINMACRO };
+  static eKeys keys[MaxKeys];
+  static int in;
+  static int out;
+  static cRemote *learning;
+  static char *unknownCode;
+  static cMutex mutex;
+  static cCondVar keyPressed;
+  static const char *plugin;
+  char *name;
 protected:
-  time_t t;
+  cRemote(const char *Name);
+  const char *GetSetup(void);
+  void PutSetup(const char *Setup);
+  bool Put(uint64 Code, bool Repeat = false, bool Release = false);
+  bool Put(const char *Code, bool Repeat = false, bool Release = false);
 public:
-  enum { modeH = 'h', modeB = 'b', modeS = 's' };
-  cRcIoBase(void);
-  virtual ~cRcIoBase();
-  virtual bool SetCode(unsigned char Code, unsigned short Address) { return true; }
-  virtual bool SetMode(unsigned char Mode) { return true; }
-  virtual bool Number(int n, bool Hex = false) { return true; }
-  virtual void SetPoints(unsigned char Dp, bool On) {}
-  virtual bool String(char *s) { return true; }
-  virtual bool DetectCode(unsigned char *Code, unsigned short *Address) { return true; }
-  virtual void Flush(int WaitMs = 0) {}
-  virtual bool InputAvailable(void) { return false; }
-  virtual bool GetCommand(unsigned int *Command = NULL, bool *Repeat = NULL, bool *Release = NULL) { return false; }
+  virtual ~cRemote();
+  virtual bool Ready(void) { return true; }
+  virtual bool Initialize(void) { return true; }
+  const char *Name(void) { return name; }
+  static void SetLearning(cRemote *Learning) { learning = Learning; }
+  static void Clear(void);
+  static bool Put(eKeys Key, bool AtFront = false);
+  static bool PutMacro(eKeys Key);
+  static const char *GetPlugin(void) { return plugin; }
+  static bool HasKeys(void);
+  static eKeys Get(int WaitMs = 1000, char **UnknownCode = NULL);
   };
 
-#if defined REMOTE_KBD
+class cRemotes : public cList<cRemote> {};
 
-class cRcIoKBD : public cRcIoBase {
-private:
-  cFile f;
-public:
-  cRcIoKBD(void);
-  virtual ~cRcIoKBD();
-  virtual void Flush(int WaitMs = 0);
-  virtual bool InputAvailable(void);
-  virtual bool GetCommand(unsigned int *Command = NULL, bool *Repeat = NULL, bool *Release = NULL);
+extern cRemotes Remotes;
+
+enum eKbdFunc {
+  kfNone,
+  kfF1 = 0x100,
+  kfF2,
+  kfF3,
+  kfF4,
+  kfF5,
+  kfF6,
+  kfF7,
+  kfF8,
+  kfF9,
+  kfF10,
+  kfF11,
+  kfF12,
+  kfUp,
+  kfDown,
+  kfLeft,
+  kfRight,
+  kfHome,
+  kfEnd,
+  kfPgUp,
+  kfPgDown,
+  kfIns,
+  kfDel,
   };
 
-#elif defined REMOTE_RCU
-
-class cRcIoRCU : public cRcIoBase, private cThread {
+class cKbdRemote : public cRemote, private cThread {
 private:
-  int f;
-  unsigned char dp, code, mode;
-  unsigned short address;
-  unsigned short receivedAddress;
-  unsigned int receivedCommand;
-  bool receivedData, receivedRepeat, receivedRelease;
-  int lastNumber;
-  bool SendCommand(unsigned char Cmd);
-  int ReceiveByte(int TimeoutMs = 0);
-  bool SendByteHandshake(unsigned char c);
-  bool SendByte(unsigned char c);
-  bool Digit(int n, int v);
+  bool active;
+  static bool kbdAvailable;
+  static bool rawMode;
+  struct termios savedTm;
   virtual void Action(void);
+  int MapCodeToFunc(uint64 Code);
 public:
-  cRcIoRCU(char *DeviceName);
-  virtual ~cRcIoRCU();
-  virtual bool SetCode(unsigned char Code, unsigned short Address);
-  virtual bool SetMode(unsigned char Mode);
-  virtual bool Number(int n, bool Hex = false);
-  virtual void SetPoints(unsigned char Dp, bool On);
-  virtual bool String(char *s);
-  virtual bool DetectCode(unsigned char *Code, unsigned short *Address);
-  virtual void Flush(int WaitMs = 0);
-  virtual bool InputAvailable(void) { return receivedData; }
-  virtual bool GetCommand(unsigned int *Command = NULL, bool *Repeat = NULL, bool *Release = NULL);
+  cKbdRemote(void);
+  virtual ~cKbdRemote();
+  static bool KbdAvailable(void) { return kbdAvailable; }
+  static uint64 MapFuncToCode(int Func);
+  static void SetRawMode(bool RawMode);
   };
-
-#elif defined REMOTE_LIRC
-
-class cRcIoLIRC : public cRcIoBase, private cThread {
-private:
-  enum { LIRC_KEY_BUF = 30, LIRC_BUFFER_SIZE = 128 };
-  int f;
-  char keyName[LIRC_KEY_BUF];
-  bool receivedData, receivedRepeat, receivedRelease;
-  virtual void Action(void);
-public:
-  cRcIoLIRC(char *DeviceName);
-  virtual ~cRcIoLIRC();
-  virtual bool InputAvailable(void) { return receivedData; }
-  virtual bool GetCommand(unsigned int *Command = NULL, bool *Repeat = NULL, bool *Release = NULL);
-  };
-
-#elif !defined REMOTE_NONE
-
-#error Please define a remote control mode!
-
-#endif
 
 #endif //__REMOTE_H

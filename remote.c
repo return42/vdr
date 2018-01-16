@@ -1,12 +1,10 @@
 /*
- * remote.c: Interface to the Remote Control Unit
+ * remote.c: General Remote Control handling
  *
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * Ported to LIRC by Carsten Koch <Carsten.Koch@icem.de>  2000-06-16.
- *
- * $Id: remote.c 1.25 2001/09/30 11:39:49 kls Exp $
+ * $Id: remote.c 1.38 2003/05/02 10:49:50 kls Exp $
  */
 
 #include "remote.h"
@@ -15,486 +13,277 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/time.h>
-#include <termios.h>
 #include <unistd.h>
-
-#if defined REMOTE_LIRC
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/un.h>
-#endif
-
-#include "config.h"
 #include "tools.h"
 
-// --- cRcIoBase -------------------------------------------------------------
+// --- cRemote ---------------------------------------------------------------
 
-cRcIoBase::cRcIoBase(void)
+eKeys cRemote::keys[MaxKeys];
+int cRemote::in = 0;
+int cRemote::out = 0;
+cRemote *cRemote::learning = NULL;
+char *cRemote::unknownCode = NULL;
+cMutex cRemote::mutex;
+cCondVar cRemote::keyPressed;
+const char *cRemote::plugin = NULL;
+
+cRemote::cRemote(const char *Name)
 {
-  t = 0;
+  name = Name ? strdup(Name) : NULL;
+  Remotes.Add(this);
 }
 
-cRcIoBase::~cRcIoBase()
+cRemote::~cRemote()
 {
+  free(name);
 }
 
-// --- cRcIoKBD --------------------------------------------------------------
-
-#if defined REMOTE_KBD
-
-cRcIoKBD::cRcIoKBD(void)
+const char *cRemote::GetSetup(void)
 {
-  f.Open(0); // stdin
+  return Keys.GetSetup(Name());
 }
 
-cRcIoKBD::~cRcIoKBD()
+void cRemote::PutSetup(const char *Setup)
 {
+  Keys.PutSetup(Name(), Setup);
 }
 
-void cRcIoKBD::Flush(int WaitMs)
+void cRemote::Clear(void)
 {
-  int t0 = time_ms();
-
-  timeout(10);
-  for (;;) {
-      while (getch() > 0)
-            t0 = time_ms();
-      if (time_ms() - t0 >= WaitMs)
-         break;
-      }
-}
-
-bool cRcIoKBD::InputAvailable(void)
-{
-  return f.Ready(false);
-}
-
-bool cRcIoKBD::GetCommand(unsigned int *Command, bool *Repeat, bool *Release)
-{
-  if (Command) {
-     *Command = getch();
-     return int(*Command) > 0;
+  cMutexLock MutexLock(&mutex);
+  in = out = 0;
+  if (learning) {
+     free(unknownCode);
+     unknownCode = NULL;
      }
-  return false;
 }
 
-// --- cRcIoRCU --------------------------------------------------------------
-
-#elif defined REMOTE_RCU
-
-#define REPEATLIMIT  20 // ms
-#define REPEATDELAY 350 // ms
-
-cRcIoRCU::cRcIoRCU(char *DeviceName)
+bool cRemote::Put(eKeys Key, bool AtFront)
 {
-  dp = 0;
-  mode = modeB;
-  code = 0;
-  address = 0xFFFF;
-  receivedAddress = 0;
-  receivedCommand = 0;
-  receivedData = receivedRepeat = receivedRelease = false;
-  lastNumber = 0;
-  if ((f = open(DeviceName, O_RDWR | O_NONBLOCK)) >= 0) {
-     struct termios t;
-     if (tcgetattr(f, &t) == 0) {
-        cfsetspeed(&t, B9600);
-        cfmakeraw(&t);
-        if (tcsetattr(f, TCSAFLUSH, &t) == 0) {
-           Start();
-           return;
+  if (Key != kNone) {
+     cMutexLock MutexLock(&mutex);
+     if (in != out && (keys[out] & k_Repeat) && (Key & k_Release))
+        Clear();
+     int d = out - in;
+     if (d <= 0)
+        d = MaxKeys + d;
+     if (d - 1 > 0) {
+        if (AtFront) {
+           if (--out < 0)
+              out = MaxKeys - 1;
+           keys[out] = Key;
            }
-        }
-     LOG_ERROR_STR(DeviceName);
-     close(f);
-     }
-  else
-     LOG_ERROR_STR(DeviceName);
-  f = -1;
-}
-
-cRcIoRCU::~cRcIoRCU()
-{
-  Cancel();
-}
-
-void cRcIoRCU::Action(void)
-{
-#pragma pack(1)
-  union {
-    struct {
-      unsigned short address;
-      unsigned int command;
-      } data;
-    unsigned char raw[6];
-    } buffer;
-#pragma pack()
-
-  dsyslog(LOG_INFO, "RCU remote control thread started (pid=%d)", getpid());
-
-  int FirstTime = 0;
-  unsigned int LastCommand = 0;
-
-  for (; f >= 0;) {
-
-      LOCK_THREAD;
-
-      if (ReceiveByte(REPEATLIMIT) == 'X') {
-         for (int i = 0; i < 6; i++) {
-             int b = ReceiveByte();
-             if (b >= 0) {
-                buffer.raw[i] = b;
-                if (i == 5) {
-                   unsigned short Address = ntohs(buffer.data.address); // the PIC sends bytes in "network order"
-                   unsigned int   Command = ntohl(buffer.data.command);
-                   if (code == 'B' && address == 0x0000 && Command == 0x00004000)
-                      // Well, well, if it isn't the "d-box"...
-                      // This remote control sends the above command before and after
-                      // each keypress - let's just drop this:
-                      break;
-                   if (!receivedData) { // only accept new data the previous data has been fetched
-                      int Now = time_ms();
-                      if (Command != LastCommand) {
-                         receivedAddress = Address;
-                         receivedCommand = Command;
-                         receivedData = true;
-                         receivedRepeat = receivedRelease = false;
-                         FirstTime = Now;
-                         }
-                      else {
-                         if (Now - FirstTime < REPEATDELAY)
-                            break; // repeat function kicks in after a short delay
-                         receivedData = receivedRepeat = true;
-                         }
-                      LastCommand = Command;
-                      WakeUp();
-                      }
-                   }
-                }
-             else
-                break;
-             }
-         }
-      else if (receivedData) { // the last data before releasing the key hasn't been fetched yet
-         if (receivedRepeat) { // it was a repeat, so let's make it a release
-            receivedRepeat = false;
-            receivedRelease = true;
-            LastCommand = 0;
-            WakeUp();
-            }
-         }
-      else if (receivedRepeat) { // all data has already been fetched, but the last one was a repeat, so let's generate a release
-         receivedData = receivedRelease = true;
-         receivedRepeat = false;
-         LastCommand = 0;
-         WakeUp();
-         }
-      else
-         LastCommand = 0;
-      }
-}
-
-int cRcIoRCU::ReceiveByte(int TimeoutMs)
-{
-  // Returns the byte if one was received within a timeout, -1 otherwise
-  if (cFile::FileReady(f, TimeoutMs)) {
-     unsigned char b;
-     if (safe_read(f, &b, 1) == 1)
-        return b;
-     else
-        LOG_ERROR;
-     }
-  return -1;
-}
-
-bool cRcIoRCU::SendByteHandshake(unsigned char c)
-{
-  if (f >= 0) {
-     int w = write(f, &c, 1);
-     if (w == 1) {
-        for (int reply = ReceiveByte(REPEATLIMIT); reply >= 0;) {
-            if (reply == c)
-               return true;
-            else if (reply == 'X') {
-               // skip any incoming RC code - it will come again
-               for (int i = 6; i--;) {
-                   if (ReceiveByte() < 0)
-                      return false;
-                   }
-               }
-            else
-               return false;
-            }
-        }
-     LOG_ERROR;
-     }
-  return false;
-}
-
-bool cRcIoRCU::SendByte(unsigned char c)
-{
-  LOCK_THREAD;
-
-  for (int retry = 5; retry--;) {
-      if (SendByteHandshake(c))
-         return true;
-      }
-  return false;
-}
-
-bool cRcIoRCU::SetCode(unsigned char Code, unsigned short Address)
-{
-  code = Code;
-  address = Address;
-  return SendCommand(code);
-}
-
-bool cRcIoRCU::SetMode(unsigned char Mode)
-{
-  mode = Mode;
-  return SendCommand(mode);
-}
-
-void cRcIoRCU::Flush(int WaitMs)
-{
-  LOCK_THREAD;
-
-  int t0 = time_ms();
-  for (;;) {
-      while (ReceiveByte() >= 0)
-            t0 = time_ms();
-      if (time_ms() - t0 >= WaitMs)
-         break;
-      }
-  receivedData = receivedRepeat = false;
-}
-
-bool cRcIoRCU::GetCommand(unsigned int *Command, bool *Repeat, bool *Release)
-{
-  if (receivedData) { // first we check the boolean flag without a lock, to avoid delays
-
-     LOCK_THREAD;
-
-     if (receivedData) { // need to check again, since the status might have changed while waiting for the lock
-        if (Command)
-           *Command = receivedCommand;
-        if (Repeat)
-           *Repeat = receivedRepeat;
-        if (Release)
-           *Release = receivedRelease;
-        receivedData = false;
+        else {
+           keys[in] = Key;
+           if (++in >= MaxKeys)
+              in = 0;
+           }
+        keyPressed.Broadcast();
         return true;
         }
-     }
-  if (time(NULL) - t > 60) {
-     SendCommand(code); // in case the PIC listens to the wrong code
-     t = time(NULL);
-     }
-  return false;
-}
-
-bool cRcIoRCU::SendCommand(unsigned char Cmd)
-{ 
-  return SendByte(Cmd | 0x80);
-}
-
-bool cRcIoRCU::Digit(int n, int v)
-{ 
-  return SendByte(((n & 0x03) << 5) | (v & 0x0F) | (((dp >> n) & 0x01) << 4));
-}
-
-bool cRcIoRCU::Number(int n, bool Hex)
-{
-  LOCK_THREAD;
-
-  if (!Hex) {
-     char buf[8];
-     sprintf(buf, "%4d", n & 0xFFFF);
-     n = 0;
-     for (char *d = buf; *d; d++) {
-         if (*d == ' ')
-            *d = 0xF;
-         n = (n << 4) | ((*d - '0') & 0x0F);
-         }
-     }
-  lastNumber = n;
-  for (int i = 0; i < 4; i++) {
-      if (!Digit(i, n))
-         return false;
-      n >>= 4;
-      }
-  return SendCommand(mode);
-}
-
-bool cRcIoRCU::String(char *s)
-{
-  LOCK_THREAD;
-
-  const char *chars = mode == modeH ? "0123456789ABCDEF" : "0123456789-EHLP ";
-  int n = 0;
-
-  for (int i = 0; *s && i < 4; s++, i++) {
-      n <<= 4;
-      for (const char *c = chars; *c; c++) {
-          if (*c == *s) {
-             n |= c - chars;
-             break;
-             }
-          }
-      }
-  return Number(n, true);
-}
-
-void cRcIoRCU::SetPoints(unsigned char Dp, bool On)
-{ 
-  if (On)
-     dp |= Dp;
-  else
-     dp &= ~Dp;
-  Number(lastNumber, true);
-}
-
-bool cRcIoRCU::DetectCode(unsigned char *Code, unsigned short *Address)
-{
-  // Caller should initialize 'Code' to 0 and call DetectCode()
-  // until it returns true. Whenever DetectCode() returns false
-  // and 'Code' is not 0, the caller can use 'Code' to display
-  // a message like "Trying code '%c'". If false is returned and
-  // 'Code' is 0, all possible codes have been tried and the caller
-  // can either stop calling DetectCode() (and give some error
-  // message), or start all over again.
-  if (*Code < 'A' || *Code > 'D') {
-     *Code = 'A';
      return false;
      }
-  if (*Code <= 'D') {
-     SetMode(modeH);
-     char buf[5];
-     sprintf(buf, "C0D%c", *Code);
-     String(buf);
-     SetCode(*Code, 0);
-     delay_ms(REPEATDELAY);
-     receivedData = receivedRepeat = 0;
-     delay_ms(REPEATDELAY);
-     if (GetCommand()) {
-        *Address = receivedAddress;
-        SetMode(modeB);
-        String("----");
-        return true;
-        }
-     if (*Code < 'D') {
-        (*Code)++;
-        return false;
-        }
+  return true; // only a real key shall report an overflow!
+}
+
+bool cRemote::PutMacro(eKeys Key)
+{
+  const cKeyMacro *km = KeyMacros.Get(Key);
+  if (km) {
+     plugin = km->Plugin();
+     for (int i = 1; i < MAXKEYSINMACRO; i++) {
+         if (km->Macro()[i] != kNone) {
+            if (!Put(km->Macro()[i]))
+               return false;
+            }
+         else
+            break;
+         }
      }
-  *Code = 0;
+  return true;
+}
+
+bool cRemote::Put(uint64 Code, bool Repeat, bool Release)
+{
+  char buffer[32];
+  snprintf(buffer, sizeof(buffer), "%016LX", Code);
+  return Put(buffer, Repeat, Release);
+}
+
+bool cRemote::Put(const char *Code, bool Repeat, bool Release)
+{
+  if (learning && this != learning)
+     return false;
+  eKeys Key = Keys.Get(Name(), Code);
+  if (Key != kNone) {
+     if (Repeat)
+        Key = eKeys(Key | k_Repeat);
+     if (Release)
+        Key = eKeys(Key | k_Release);
+     return Put(Key);
+     }
+  if (learning) {
+     free(unknownCode);
+     unknownCode = strdup(Code);
+     keyPressed.Broadcast();
+     }
   return false;
 }
 
-// --- cRcIoLIRC -------------------------------------------------------------
-
-#elif defined REMOTE_LIRC
-
-#define REPEATLIMIT  20 // ms
-#define REPEATDELAY 350 // ms
-
-cRcIoLIRC::cRcIoLIRC(char *DeviceName)
+bool cRemote::HasKeys(void)
 {
-  *keyName = 0;
-  receivedData = receivedRepeat = false;
-  struct sockaddr_un addr;
-  addr.sun_family = AF_UNIX;
-  strcpy(addr.sun_path, DeviceName);
-  if ((f = socket(AF_UNIX, SOCK_STREAM, 0)) >= 0) {
-     if (connect(f, (struct sockaddr *)&addr, sizeof(addr)) >= 0) {
-        Start();
-        return;
-        }
-     LOG_ERROR_STR(DeviceName);
-     close(f);
-     }
-  else
-     LOG_ERROR_STR(DeviceName);
-  f = -1;
+  return in != out && !(keys[out] & k_Repeat);
 }
 
-cRcIoLIRC::~cRcIoLIRC()
+eKeys cRemote::Get(int WaitMs, char **UnknownCode)
 {
-  Cancel();
-}
-
-void cRcIoLIRC::Action(void)
-{
-  dsyslog(LOG_INFO, "LIRC remote control thread started (pid=%d)", getpid());
-
-  int FirstTime = 0;
-  int LastTime = 0;
-  char buf[LIRC_BUFFER_SIZE];
-  char LastKeyName[LIRC_KEY_BUF];
-
-  for (; f >= 0;) {
-
-      LOCK_THREAD;
-
-      if (cFile::FileReady(f, REPEATLIMIT) && safe_read(f, buf, sizeof(buf)) > 21) {
-         if (!receivedData) { // only accept new data the previous data has been fetched
-            int count;
-            sscanf(buf, "%*x %x %29s", &count, LastKeyName); // '29' in '%29s' is LIRC_KEY_BUF-1!
-            int Now = time_ms();
-            if (count == 0) {
-               strcpy(keyName, LastKeyName);
-               receivedData = true;
-               receivedRepeat = receivedRelease = false;
-               FirstTime = Now;
-               }
-            else {
-               if (Now - FirstTime < REPEATDELAY)
-                  continue; // repeat function kicks in after a short delay
-               receivedData = receivedRepeat = true;
-               receivedRelease = false;
-               }
-            LastTime = Now;
-            WakeUp();
-            }
+  for (;;) {
+      cMutexLock MutexLock(&mutex);
+      if (in != out) {
+         eKeys k = keys[out];
+         if (++out >= MaxKeys)
+            out = 0;
+         return k;
          }
-      else if (receivedData) { // the last data before releasing the key hasn't been fetched yet
-         if (receivedRepeat) { // it was a repeat, so let's make it a release
-            if (time_ms() - LastTime > REPEATDELAY) {
-               receivedRepeat = false;
-               receivedRelease = true;
-               WakeUp();
-               }
+      else if (!WaitMs || !keyPressed.TimedWait(mutex, WaitMs)) {
+         if (learning && UnknownCode) {
+            *UnknownCode = unknownCode;
+            unknownCode = NULL;
             }
-         }
-      else if (receivedRepeat) { // all data has already been fetched, but the last one was a repeat, so let's generate a release
-         if (time_ms() - LastTime > REPEATDELAY) {
-            receivedData = receivedRelease = true;
-            receivedRepeat = false;
-            WakeUp();
-            }
+         return kNone;
          }
       }
 }
 
-bool cRcIoLIRC::GetCommand(unsigned int *Command, bool *Repeat, bool *Release)
+// --- cRemotes --------------------------------------------------------------
+
+cRemotes Remotes;
+
+// --- cKbdRemote ------------------------------------------------------------
+
+struct tKbdMap {
+  eKbdFunc func;
+  uint64 code;
+  };
+
+static tKbdMap KbdMap[] = {
+  { kfF1,     0x0000001B5B31317EULL },
+  { kfF2,     0x0000001B5B31327EULL },
+  { kfF3,     0x0000001B5B31337EULL },
+  { kfF4,     0x0000001B5B31347EULL },
+  { kfF5,     0x0000001B5B31357EULL },
+  { kfF6,     0x0000001B5B31377EULL },
+  { kfF7,     0x0000001B5B31387EULL },
+  { kfF8,     0x0000001B5B31397EULL },
+  { kfF9,     0x0000001B5B32307EULL },
+  { kfF10,    0x0000001B5B32317EULL },
+  { kfF11,    0x0000001B5B32327EULL },
+  { kfF12,    0x0000001B5B32337EULL },
+  { kfUp,     0x00000000001B5B41ULL },
+  { kfDown,   0x00000000001B5B42ULL },
+  { kfLeft,   0x00000000001B5B44ULL },
+  { kfRight,  0x00000000001B5B43ULL },
+  { kfHome,   0x00000000001B5B48ULL },
+  { kfEnd,    0x00000000001B5B46ULL },
+  { kfPgUp,   0x000000001B5B357EULL },
+  { kfPgDown, 0x000000001B5B367EULL },
+  { kfIns,    0x000000001B5B327EULL },
+  { kfDel,    0x000000001B5B337EULL },
+  { kfNone,   0x0000000000000000ULL }
+  };
+
+bool cKbdRemote::kbdAvailable = false;
+bool cKbdRemote::rawMode = false;
+
+cKbdRemote::cKbdRemote(void)
+:cRemote("KBD")
 {
-  if (receivedData) { // first we check the boolean flag without a lock, to avoid delays
-
-     LOCK_THREAD;
-
-     if (receivedData) { // need to check again, since the status might have changed while waiting for the lock
-        if (Command)
-           *Command = Keys.Encode(keyName);
-        if (Repeat)
-           *Repeat = receivedRepeat;
-        if (Release)
-           *Release = receivedRelease;
-        receivedData = false;
-        return true;
-        }
+  active = false;
+  tcgetattr(STDIN_FILENO, &savedTm);
+  struct termios tm;
+  if (tcgetattr(STDIN_FILENO, &tm) == 0) {
+     tm.c_iflag = 0;
+     tm.c_lflag &= ~(ICANON | ECHO);
+     tm.c_cc[VMIN] = 0;
+     tm.c_cc[VTIME] = 0;
+     tcsetattr(STDIN_FILENO, TCSANOW, &tm);
      }
-  return false;
+  kbdAvailable = true;
+  Start();
 }
 
-#endif
+cKbdRemote::~cKbdRemote()
+{
+  kbdAvailable = false;
+  active = false;
+  Cancel(3);
+  tcsetattr(STDIN_FILENO, TCSANOW, &savedTm);
+}
 
+void cKbdRemote::SetRawMode(bool RawMode)
+{
+  rawMode = RawMode;
+}
+
+uint64 cKbdRemote::MapFuncToCode(int Func)
+{
+  for (tKbdMap *p = KbdMap; p->func != kfNone; p++) {
+      if (p->func == Func)
+         return p->code;
+      }
+  return (Func <= 0xFF) ? Func : 0;
+}
+
+int cKbdRemote::MapCodeToFunc(uint64 Code)
+{
+  for (tKbdMap *p = KbdMap; p->func != kfNone; p++) {
+      if (p->code == Code)
+         return p->func;
+      }
+  return (Code <= 0xFF) ? Code : kfNone;
+}
+
+void cKbdRemote::Action(void)
+{
+  dsyslog("KBD remote control thread started (pid=%d)", getpid());
+  cPoller Poller(STDIN_FILENO);
+  active = true;
+  while (active) {
+        if (Poller.Poll(100)) {
+           uint64 Command = 0;
+           uint i = 0;
+           int t0 = time_ms();
+           while (active && i < sizeof(Command)) {
+                 uchar ch;
+                 int r = read(STDIN_FILENO, &ch, 1);
+                 if (r == 1) {
+                    Command <<= 8;
+                    Command |= ch;
+                    i++;
+                    }
+                 else if (r == 0) {
+                    // don't know why, but sometimes special keys that start with
+                    // 0x1B ('ESC') cause a short gap between the 0x1B and the rest
+                    // of their codes, so we'll need to wait some 100ms to see if
+                    // there is more coming up - or whether this really is the 'ESC'
+                    // key (if somebody knows how to clean this up, please let me know):
+                    if (Command == 0x1B && time_ms() - t0 < 100)
+                       continue;
+                    if (Command) {
+                       if (rawMode || !Put(Command)) {
+                          int func = MapCodeToFunc(Command);
+                          if (func)
+                             Put(KBDKEY(func));
+                          }
+                       }
+                    break;
+                    }
+                 else {
+                    LOG_ERROR;
+                    break;
+                    }
+                 }
+           }
+        }
+  dsyslog("KBD remote control thread ended (pid=%d)", getpid());
+}

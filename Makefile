@@ -4,34 +4,45 @@
 # See the main source file 'vdr.c' for copyright information and
 # how to reach the author.
 #
-# $Id: Makefile 1.33.1.1 2002/06/10 16:04:46 kls Exp $
+# $Id: Makefile 1.56 2003/01/06 12:28:09 kls Exp $
 
 .DELETE_ON_ERROR:
+
+CC       ?= gcc
+CFLAGS   ?= -O2
+
+CXX      ?= g++
+CXXFLAGS ?= -g -O2 -Wall -Woverloaded-virtual
 
 DVBDIR   = ../DVB
 DTVDIR   = ./libdtv
 MANDIR   = /usr/local/man
 BINDIR   = /usr/local/bin
 
+PLUGINDIR= ./PLUGINS
+
 VIDEODIR = /video
 
-INCLUDES = -I$(DVBDIR)/ost/include
+DOXYGEN  = /usr/bin/doxygen
+DOXYFILE = Doxyfile
+
+-include Make.config
+
+INCLUDES = -I$(DVBDIR)/include
 
 DTVLIB   = $(DTVDIR)/libdtv.a
 
-OBJS = config.o dvbapi.o dvbosd.o eit.o font.o i18n.o interface.o menu.o osd.o\
-       recording.o remote.o remux.o ringbuffer.o svdrp.o thread.o tools.o vdr.o\
-       videodir.o
+OBJS = audio.o channels.o ci.o config.o cutter.o device.o diseqc.o dvbdevice.o dvbosd.o\
+       dvbplayer.o dvbspu.o eit.o eitscan.o font.o i18n.o interface.o keys.o\
+       lirc.o menu.o menuitems.o osdbase.o osd.o player.o plugin.o rcu.o\
+       receiver.o recorder.o recording.o remote.o remux.o ringbuffer.o sources.o\
+       spu.o status.o svdrp.o thread.o timers.o tools.o transfer.o vdr.o videodir.o
 
 OSDFONT = -adobe-helvetica-medium-r-normal--23-*-100-100-p-*-iso8859-1
 FIXFONT = -adobe-courier-bold-r-normal--25-*-100-100-m-*-iso8859-1
 
-ifndef REMOTE
-REMOTE = KBD
-endif
-
-ifeq ($(REMOTE), KBD)
-NCURSESLIB = -lncurses
+ifndef NO_KBD
+DEFINES += -DREMOTE_KBD
 endif
 
 DEFINES += -DREMOTE_$(REMOTE)
@@ -55,21 +66,21 @@ font: genfontfile fontfix.c fontosd.c
 # Implicit rules:
 
 %.o: %.c
-	g++ -g -O2 -Wall -Woverloaded-virtual -c $(DEFINES) $(INCLUDES) $<
+	$(CXX) $(CXXFLAGS) -c $(DEFINES) $(INCLUDES) $<
 
 # Dependencies:
 
-MAKEDEP = g++ -MM -MG
+MAKEDEP = $(CXX) -MM -MG
 DEPFILE = .dependencies
 $(DEPFILE): Makefile
 	@$(MAKEDEP) $(DEFINES) $(INCLUDES) $(OBJS:%.o=%.c) > $@
 
-include $(DEPFILE)
+-include $(DEPFILE)
 
 # The main program:
 
 vdr: $(OBJS) $(DTVLIB)
-	g++ -g -O2 $(OBJS) $(NCURSESLIB) -ljpeg -lpthread $(LIBDIRS) $(DTVLIB) -o vdr
+	$(CXX) $(CXXFLAGS) -rdynamic $(OBJS) $(NCURSESLIB) -ljpeg -lpthread -ldl $(LIBDIRS) $(DTVLIB) -o vdr
 
 # The font files:
 
@@ -81,12 +92,27 @@ fontosd.c:
 # The font file generator:
 
 genfontfile: genfontfile.c
-	gcc -o $@ -O2 -L/usr/X11R6/lib $< -lX11
+	$(CC) $(CFLAGS) -o $@ -L/usr/X11R6/lib $< -lX11
 
 # The libdtv library:
 
 $(DTVLIB) $(DTVDIR)/libdtv.h:
-	make -C $(DTVDIR) all
+	$(MAKE) -C $(DTVDIR) all
+
+# The 'include' directory (for plugins):
+
+include-dir:
+	@mkdir -p include/vdr
+	@(cd include/vdr; for i in ../../*.h; do ln -fs $$i .; done)
+
+# Plugins:
+
+plugins: include-dir
+	@for i in `ls $(PLUGINDIR)/src | grep -v '[^a-z0-9]'`; do $(MAKE) -C "$(PLUGINDIR)/src/$$i" all; done
+
+plugins-clean:
+	@for i in `ls $(PLUGINDIR)/src | grep -v '[^a-z0-9]'`; do $(MAKE) -C "$(PLUGINDIR)/src/$$i" clean; done
+	@-rm -f $(PLUGINDIR)/lib/*
 
 # Install the files:
 
@@ -99,11 +125,21 @@ install:
             cp *.conf $(VIDEODIR);\
             fi
 
+# Source documentation:
+
+srcdoc:
+	@cp $(DOXYFILE) $(DOXYFILE).tmp
+	@echo PROJECT_NUMBER = `grep VDRVERSION config.h | awk '{ print $$3 }'` >> $(DOXYFILE).tmp
+	$(DOXYGEN) $(DOXYFILE).tmp
+	@rm $(DOXYFILE).tmp
+
 # Housekeeping:
 
 clean:
-	make -C $(DTVDIR) clean
+	$(MAKE) -C $(DTVDIR) clean
 	-rm -f $(OBJS) $(DEPFILE) vdr genfontfile genfontfile.o core* *~
+	-rm -rf include
+	-rm -rf srcdoc
 fontclean:
 	-rm -f fontfix.c fontosd.c
 CLEAN: clean fontclean

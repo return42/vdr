@@ -4,13 +4,14 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: thread.c 1.19 2002/03/09 12:05:44 kls Exp $
+ * $Id: thread.c 1.25 2003/05/18 12:45:13 kls Exp $
  */
 
 #include "thread.h"
 #include <errno.h>
 #include <signal.h>
 #include <sys/resource.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include "tools.h"
@@ -27,17 +28,44 @@ cCondVar::~cCondVar()
   pthread_cond_destroy(&cond);
 }
 
-bool cCondVar::Wait(cMutex &Mutex)
+void cCondVar::Wait(cMutex &Mutex)
 {
-  return pthread_cond_wait(&cond, &Mutex.mutex);
+  if (Mutex.locked && Mutex.lockingPid == getpid()) {
+     int locked = Mutex.locked;
+     Mutex.locked = 0; // have to clear the locked count here, as pthread_cond_wait
+                       // does an implizit unlock of the mutex
+     pthread_cond_wait(&cond, &Mutex.mutex);
+     Mutex.locked = locked;
+     }
 }
 
-/*
-bool cCondVar::TimedWait(cMutex &Mutex, unsigned long tmout)
+bool cCondVar::TimedWait(cMutex &Mutex, int TimeoutMs)
 {
-  return pthread_cond_timedwait(&cond, &Mutex.mutex, tmout);
+  bool r = true; // true = condition signaled false = timeout
+
+  if (Mutex.locked && Mutex.lockingPid == getpid()) {
+     struct timeval now;                   // unfortunately timedwait needs the absolute time, not the delta :-(
+     if (gettimeofday(&now, NULL) == 0) {  // get current time
+        now.tv_usec += TimeoutMs * 1000;   // add the timeout
+        while (now.tv_usec >= 1000000) {   // take care of an overflow
+              now.tv_sec++;
+              now.tv_usec -= 1000000;
+              }
+        struct timespec abstime;              // build timespec for timedwait
+        abstime.tv_sec = now.tv_sec;          // seconds
+        abstime.tv_nsec = now.tv_usec * 1000; // nano seconds
+
+        int locked = Mutex.locked;
+        Mutex.locked = 0; // have to clear the locked count here, as pthread_cond_timedwait
+                          // does an implizit unlock of the mutex.
+        if (pthread_cond_timedwait(&cond, &Mutex.mutex, &abstime) == ETIMEDOUT)
+           r = false;
+        Mutex.locked = locked;
+        Mutex.lockingPid = getpid();
+        }
+     }
+  return r;
 }
-*/
 
 void cCondVar::Broadcast(void)
 {
@@ -87,8 +115,6 @@ void cMutex::Unlock(void)
 // The signal handler is necessary to be able to use SIGIO to wake up any
 // pending 'select()' call.
 
-time_t cThread::lastPanic = 0;
-int cThread::panicLevel = 0;
 bool cThread::signalHandlerInstalled = false;
 bool cThread::emergencyExitRequested = false;
 
@@ -147,13 +173,14 @@ bool cThread::Active(void)
 
 void cThread::Cancel(int WaitSeconds)
 {
+  running = false;
   if (WaitSeconds > 0) {
      for (time_t t0 = time(NULL) + WaitSeconds; time(NULL) < t0; ) {
          if (!Active())
             return;
          usleep(10000);
          }
-     esyslog(LOG_ERR, "ERROR: thread %d won't end (waited %d seconds) - cancelling it...", threadPid, WaitSeconds);
+     esyslog("ERROR: thread %d won't end (waited %d seconds) - cancelling it...", threadPid, WaitSeconds);
      }
   pthread_cancel(thread);
 }
@@ -163,30 +190,11 @@ void cThread::WakeUp(void)
   kill(parentPid, SIGIO); // makes any waiting 'select()' call return immediately
 }
 
-#define MAXPANICLEVEL 10
-
-void cThread::RaisePanic(void)
-{
-  if (lastPanic > 0) {
-     if (time(NULL) - lastPanic < 5)
-        panicLevel++;
-     else if (panicLevel > 0)
-        panicLevel--;
-     }
-  lastPanic = time(NULL);
-  if (panicLevel > MAXPANICLEVEL) {
-     esyslog(LOG_ERR, "ERROR: max. panic level exceeded");
-     EmergencyExit(true);
-     }
-  else
-     dsyslog(LOG_INFO, "panic level: %d", panicLevel);
-}
-
 bool cThread::EmergencyExit(bool Request)
 {
   if (!Request)
      return emergencyExitRequested;
-  esyslog(LOG_ERR, "initiating emergency exit");
+  esyslog("initiating emergency exit");
   return emergencyExitRequested = true; // yes, it's an assignment, not a comparison!
 }
 
@@ -303,11 +311,9 @@ bool cPipe::Open(const char *Command, const char *Mode)
         _exit(-1);
         }
      else {
-        for (int i = 0; i <= fd[1]; i++) {
-            if (i == STDIN_FILENO || i == STDOUT_FILENO || i == STDERR_FILENO)
-               continue;
-            close(i); // close all dup'ed filedescriptors
-            }
+        int MaxPossibleFileDescriptors = getdtablesize();
+        for (int i = STDERR_FILENO + 1; i < MaxPossibleFileDescriptors; i++)
+            close(i); //close all dup'ed filedescriptors
         if (execl("/bin/sh", "sh", "-c", Command, NULL) == -1) {
            LOG_ERROR_STR(Command);
            close(fd[1 - iopipe]);
@@ -343,7 +349,6 @@ int cPipe::Close(void)
            i--;
            usleep(100000);
            }
-   
      if (!i) {
         kill(pid, SIGKILL);
         ret = -1;

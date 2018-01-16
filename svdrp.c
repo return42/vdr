@@ -10,7 +10,7 @@
  * and interact with the Video Disk Recorder - or write a full featured
  * graphical interface that sits on top of an SVDRP connection.
  *
- * $Id: svdrp.c 1.35 2002/03/23 16:17:39 kls Exp $
+ * $Id: svdrp.c 1.51 2003/04/27 14:21:07 kls Exp $
  */
 
 #include "svdrp.h"
@@ -26,10 +26,14 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include "channels.h"
 #include "config.h"
-#include "dvbapi.h"
-#include "interface.h"
+#include "device.h"
+#include "keys.h"
+#include "remote.h"
+#include "timers.h"
 #include "tools.h"
+#include "videodir.h"
 
 // --- cSocket ---------------------------------------------------------------
 
@@ -37,6 +41,7 @@ cSocket::cSocket(int Port, int Queue)
 {
   port = Port;
   sock = -1;
+  queue = Queue;
 }
 
 cSocket::~cSocket()
@@ -109,7 +114,7 @@ int cSocket::Accept(void)
            close(newsock);
            newsock = -1;
            }
-        isyslog(LOG_INFO, "connect from %s, port %hd - %s", inet_ntoa(clientname.sin_addr), ntohs(clientname.sin_port), accepted ? "accepted" : "DENIED");
+        isyslog("connect from %s, port %hd - %s", inet_ntoa(clientname.sin_addr), ntohs(clientname.sin_port), accepted ? "accepted" : "DENIED");
         }
      else if (errno != EINTR && errno != EAGAIN)
         LOG_ERROR;
@@ -150,6 +155,7 @@ bool cPUTEhandler::Process(const char *s)
      else {
         rewind(f);
         if (cSchedules::Read(f)) {
+           cSIProcessor::TriggerDump();
            status = 250;
            message = "EPG data processed";
            }
@@ -169,10 +175,12 @@ bool cPUTEhandler::Process(const char *s)
 #define MAXHELPTOPIC 10
 
 const char *HelpPages[] = {
-  "CHAN [ + | - | <number> | <name> ]\n"
-  "    Switch channel up, down or to the given channel number or name.\n"
+  "CHAN [ + | - | <number> | <name> | <id> ]\n"
+  "    Switch channel up, down or to the given channel number, name or id.\n"
   "    Without option (or after successfully switching to the channel)\n"
   "    it returns the current channel number and name.",
+  "CLRE\n"
+  "    Clear the entire EPG list.",
   "DELC <number>\n"
   "    Delete channel.",
   "DELR <number>\n"
@@ -240,9 +248,11 @@ const char *HelpPages[] = {
   "    of the timer.",
   "PUTE\n"
   "    Put data into the EPG list. The data entered has to strictly follow the\n"
-  "    format defined in VDR/FORMATS for the 'epg.data' file.  A '.' on a line\n"
+  "    format defined in vdr(5) for the 'epg.data' file.  A '.' on a line\n"
   "    by itself terminates the input and starts processing of the data (all\n"
   "    entered data is buffered until the terminating '.' is seen).",
+  "STAT disk\n"
+  "    Return information about disk usage (total, free, percent).",
   "UPDT <settings>\n"
   "    Updates a timer. Settings must be in the same format as returned\n"
   "    by the LSTT command. If a timer with the same channel, day, start\n"
@@ -314,13 +324,13 @@ cSVDRP::cSVDRP(int Port)
   numChars = 0;
   message = NULL;
   lastActivity = 0;
-  isyslog(LOG_INFO, "SVDRP listening on port %d", Port);
+  isyslog("SVDRP listening on port %d", Port);
 }
 
 cSVDRP::~cSVDRP()
 {
   Close();
-  delete message;
+  free(message);
 }
 
 void cSVDRP::Close(bool Timeout)
@@ -330,7 +340,7 @@ void cSVDRP::Close(bool Timeout)
      char buffer[BUFSIZ];
      gethostname(buffer, sizeof(buffer));
      Reply(221, "%s closing connection%s", buffer, Timeout ? " (timeout)" : "");
-     isyslog(LOG_INFO, "closing SVDRP connection"); //TODO store IP#???
+     isyslog("closing SVDRP connection"); //TODO store IP#???
      file.Close();
      DELETENULL(PUTEhandler);
      }
@@ -370,12 +380,12 @@ void cSVDRP::Reply(int Code, const char *fmt, ...)
                  }
               s = n ? n + 1 : NULL;
               }
-        delete buffer;
+        free(buffer);
         va_end(ap);
         }
      else {
         Reply(451, "Zero return code - looks like a programming error!");
-        esyslog(LOG_ERR, "SVDRP: zero return code!");
+        esyslog("SVDRP: zero return code!");
         }
      }
 }
@@ -384,57 +394,72 @@ void cSVDRP::CmdCHAN(const char *Option)
 {
   if (*Option) {
      int n = -1;
+     int d = 0;
      if (isnumber(Option)) {
         int o = strtol(Option, NULL, 10);
         if (o >= 1 && o <= Channels.MaxNumber())
            n = o;
         }
      else if (strcmp(Option, "-") == 0) {
-        n = cDvbApi::CurrentChannel();
-        if (n > 1)
+        n = cDevice::CurrentChannel();
+        if (n > 1) {
            n--;
+           d = -1;
+           }
         }
      else if (strcmp(Option, "+") == 0) {
-        n = cDvbApi::CurrentChannel();
-        if (n < Channels.MaxNumber())
+        n = cDevice::CurrentChannel();
+        if (n < Channels.MaxNumber()) {
            n++;
+           d = 1;
+           }
         }
      else {
-        int i = 1;
-        cChannel *channel;
-        while ((channel = Channels.GetByNumber(i)) != NULL) {
-              if (strcasecmp(channel->name, Option) == 0) {
-                 n = i;
-                 break;
+        cChannel *channel = Channels.GetByChannelID(tChannelID::FromString(Option));
+        if (channel)
+           n = channel->Number();
+        else {
+           int i = 1;
+           while ((channel = Channels.GetByNumber(i, 1)) != NULL) {
+                 if (strcasecmp(channel->Name(), Option) == 0) {
+                    n = channel->Number();
+                    break;
+                    }
+                 i = channel->Number() + 1;
                  }
-              i++;
-              }
+           }
         }
      if (n < 0) {
         Reply(501, "Undefined channel \"%s\"", Option);
         return;
         }
-     if (Interface->Recording()) {
-        Reply(550, "Can't switch channel, interface is recording");
-        return;
-        }
-     cChannel *channel = Channels.GetByNumber(n);
-     if (channel) {
-        if (!channel->Switch()) {
-           Reply(554, "Error switching to channel \"%d\"", channel->number);
+     if (!d) {
+        cChannel *channel = Channels.GetByNumber(n);
+        if (channel) {
+           if (!cDevice::PrimaryDevice()->SwitchChannel(channel, true)) {
+              Reply(554, "Error switching to channel \"%d\"", channel->Number());
+              return;
+              }
+           }
+        else {
+           Reply(550, "Unable to find channel \"%s\"", Option);
            return;
            }
         }
-     else {
-        Reply(550, "Unable to find channel \"%s\"", Option);
-        return;
-        }
+     else
+        cDevice::SwitchChannel(d);
      }
-  cChannel *channel = Channels.GetByNumber(cDvbApi::CurrentChannel());
+  cChannel *channel = Channels.GetByNumber(cDevice::CurrentChannel());
   if (channel)
-     Reply(250, "%d %s", channel->number, channel->name);
+     Reply(250, "%d %s", channel->Number(), channel->Name());
   else
-     Reply(550, "Unable to find channel \"%d\"", cDvbApi::CurrentChannel());
+     Reply(550, "Unable to find channel \"%d\"", cDevice::CurrentChannel());
+}
+
+void cSVDRP::CmdCLRE(const char *Option)
+{
+  cSIProcessor::Clear();
+  Reply(250, "EPG data cleared");
 }
 
 void cSVDRP::CmdDELC(const char *Option)
@@ -470,10 +495,10 @@ void cSVDRP::CmdDELT(const char *Option)
      if (isnumber(Option)) {
         cTimer *timer = Timers.Get(strtol(Option, NULL, 10) - 1);
         if (timer) {
-           if (!timer->recording) {
+           if (!timer->Recording()) {
               Timers.Del(timer);
               Timers.Save();
-              isyslog(LOG_INFO, "timer %s deleted", Option);
+              isyslog("timer %s deleted", Option);
               Reply(250, "Timer \"%s\" deleted", Option);
               }
            else
@@ -541,7 +566,7 @@ void cSVDRP::CmdGRAB(const char *Option)
         Reply(501, "Unexpected parameter \"%s\"", p);
         return;
         }
-     if (cDvbApi::PrimaryDvbApi->GrabImage(FileName, Jpeg, Quality, SizeX, SizeY))
+     if (cDevice::PrimaryDevice()->GrabImage(FileName, Jpeg, Quality, SizeX, SizeY))
         Reply(250, "Grabbed image %s", Option);
      else
         Reply(451, "Grab image failed");
@@ -592,9 +617,9 @@ void cSVDRP::CmdHELP(const char *Option)
 void cSVDRP::CmdHITK(const char *Option)
 {
   if (*Option) {
-     eKeys k = Keys.Translate(Option);
+     eKeys k = cKey::FromString(Option);
      if (k != kNone) {
-        Interface->PutKey(k);
+        cRemote::Put(k);
         Reply(250, "Key \"%s\" accepted", Option);
         }
      else
@@ -603,7 +628,7 @@ void cSVDRP::CmdHITK(const char *Option)
   else {
      Reply(-214, "Valid <key> names for the HITK command:");
      for (int i = 0; i < kNone; i++) {
-         Reply(-214, "    %s", Keys.keys[i].name);
+         Reply(-214, "    %s", cKey::ToString(eKeys(i)));
          }
      Reply(214, "End of key list");
      }
@@ -615,7 +640,7 @@ void cSVDRP::CmdLSTC(const char *Option)
      if (isnumber(Option)) {
         cChannel *channel = Channels.GetByNumber(strtol(Option, NULL, 10));
         if (channel)
-           Reply(250, "%d %s", channel->number, channel->ToText());
+           Reply(250, "%d %s", channel->Number(), channel->ToText());
         else
            Reply(501, "Channel \"%s\" not defined", Option);
         }
@@ -623,11 +648,11 @@ void cSVDRP::CmdLSTC(const char *Option)
         int i = 1;
         cChannel *next = NULL;
         while (i <= Channels.MaxNumber()) {
-              cChannel *channel = Channels.GetByNumber(i);
+              cChannel *channel = Channels.GetByNumber(i, 1);
               if (channel) {
-                 if (strcasestr(channel->name, Option)) {
+                 if (strcasestr(channel->Name(), Option)) {
                     if (next)
-                       Reply(-250, "%d %s", next->number, next->ToText());
+                       Reply(-250, "%d %s", next->Number(), next->ToText());
                     next = channel;
                     }
                  }
@@ -635,22 +660,24 @@ void cSVDRP::CmdLSTC(const char *Option)
                  Reply(501, "Channel \"%d\" not found", i);
                  return;
                  }
-              i++;
+              i = channel->Number() + 1;
               }
         if (next)
-           Reply(250, "%d %s", next->number, next->ToText());
+           Reply(250, "%d %s", next->Number(), next->ToText());
         else
            Reply(501, "Channel \"%s\" not defined", Option);
         }
      }
   else if (Channels.MaxNumber() >= 1) {
-     for (int i = 1; i <= Channels.MaxNumber(); i++) {
-         cChannel *channel = Channels.GetByNumber(i);
-        if (channel)
-           Reply(i < Channels.MaxNumber() ? -250 : 250, "%d %s", channel->number, channel->ToText());
-        else
-           Reply(501, "Channel \"%d\" not found", i);
-         }
+     int i = 1;
+     while (i <= Channels.MaxNumber()) {
+           cChannel *channel = Channels.GetByNumber(i, 1);
+           if (channel)
+              Reply(channel->Number() < Channels.MaxNumber() ? -250 : 250, "%d %s", channel->Number(), channel->ToText());
+           else
+              Reply(501, "Channel \"%d\" not found", i);
+           i = channel->Number() + 1;
+           }
      }
   else
      Reply(550, "No channels defined");
@@ -685,7 +712,7 @@ void cSVDRP::CmdLSTR(const char *Option)
            if (recording->Summary()) {
               char *summary = strdup(recording->Summary());
               Reply(250, "%s", strreplace(summary,'\n','|'));
-              delete summary;
+              free(summary);
               }
            else
               Reply(550, "No summary availabe");
@@ -736,9 +763,9 @@ void cSVDRP::CmdLSTT(const char *Option)
 void cSVDRP::CmdMESG(const char *Option)
 {
   if (*Option) {
-     delete message;
+     free(message);
      message = strdup(Option);
-     isyslog(LOG_INFO, "SVDRP message: '%s'", message);
+     isyslog("SVDRP message: '%s'", message);
      Reply(250, "Message stored");
      }
   else if (message)
@@ -756,15 +783,20 @@ void cSVDRP::CmdMODC(const char *Option)
         tail = skipspace(tail);
         cChannel *channel = Channels.GetByNumber(n);
         if (channel) {
-           cChannel c = *channel;
-           if (!c.Parse(tail)) {
-              Reply(501, "Error in channel settings");
-              return;
+           cChannel ch;
+           if (ch.Parse(tail, true)) {
+              if (Channels.HasUniqueChannelID(&ch, channel)) {
+                 *channel = ch;
+                 Channels.ReNumber();
+                 Channels.Save();
+                 isyslog("modifed channel %d %s", channel->Number(), channel->ToText());
+                 Reply(250, "%d %s", channel->Number(), channel->ToText());
+                 }
+              else
+                 Reply(501, "Channel settings are not unique");
               }
-           *channel = c;
-           Channels.Save();
-           isyslog(LOG_INFO, "channel %d modified", channel->number);
-           Reply(250, "%d %s", channel->number, channel->ToText());
+           else
+              Reply(501, "Error in channel settings");
            }
         else
            Reply(501, "Channel \"%d\" not defined", n);
@@ -787,16 +819,16 @@ void cSVDRP::CmdMODT(const char *Option)
         if (timer) {
            cTimer t = *timer;
            if (strcasecmp(tail, "ON") == 0)
-              t.active = 1;
+              t.SetActive(taActive);
            else if (strcasecmp(tail, "OFF") == 0)
-              t.active = 0;
+              t.SetActive(taInactive);
            else if (!t.Parse(tail)) {
               Reply(501, "Error in timer settings");
               return;
               }
            *timer = t;
            Timers.Save();
-           isyslog(LOG_INFO, "timer %d modified (%s)", timer->Index() + 1, timer->active ? "active" : "inactive");
+           isyslog("timer %d modified (%s)", timer->Index() + 1, timer->Active() ? "active" : "inactive");
            Reply(250, "%d %s", timer->Index() + 1, timer->ToText());
            }
         else
@@ -824,13 +856,19 @@ void cSVDRP::CmdMOVT(const char *Option)
 void cSVDRP::CmdNEWC(const char *Option)
 {
   if (*Option) {
-     cChannel *channel = new cChannel;
-     if (channel->Parse(Option)) {
-        Channels.Add(channel);
-        Channels.ReNumber();
-        Channels.Save();
-        isyslog(LOG_INFO, "channel %d added", channel->number);
-        Reply(250, "%d %s", channel->number, channel->ToText());
+     cChannel ch;
+     if (ch.Parse(Option, true)) {
+        if (Channels.HasUniqueChannelID(&ch)) {
+           cChannel *channel = new cChannel;
+           *channel = ch;
+           Channels.Add(channel);
+           Channels.ReNumber();
+           Channels.Save();
+           isyslog("new channel %d %s", channel->Number(), channel->ToText());
+           Reply(250, "%d %s", channel->Number(), channel->ToText());
+           }
+        else
+           Reply(501, "Channel settings are not unique");
         }
      else
         Reply(501, "Error in channel settings");
@@ -848,7 +886,7 @@ void cSVDRP::CmdNEWT(const char *Option)
         if (!t) {
            Timers.Add(timer);
            Timers.Save();
-           isyslog(LOG_INFO, "timer %d added", timer->Index() + 1);
+           isyslog("timer %d added", timer->Index() + 1);
            Reply(250, "%d %s", timer->Index() + 1, timer->ToText());
            return;
            }
@@ -894,6 +932,22 @@ void cSVDRP::CmdPUTE(const char *Option)
      DELETENULL(PUTEhandler);
 }
 
+void cSVDRP::CmdSTAT(const char *Option)
+{
+  if (*Option) {
+     if (strcasecmp(Option, "DISK") == 0) {
+        int FreeMB;
+        int Percent = VideoDiskSpace(&FreeMB);
+        int Total = (FreeMB / (100 - Percent)) * 100;
+        Reply(250, "%dMB %dMB %d%%", Total, FreeMB, Percent);
+        }
+     else
+        Reply(501, "Invalid Option \"%s\"", Option);
+     }
+  else
+     Reply(501, "No option given");
+}
+
 void cSVDRP::CmdUPDT(const char *Option)
 {
   if (*Option) {
@@ -904,11 +958,11 @@ void cSVDRP::CmdUPDT(const char *Option)
            t->Parse(Option);
            delete timer;
            timer = t;
-           isyslog(LOG_INFO, "timer %d updated", timer->Index() + 1);
+           isyslog("timer %d updated", timer->Index() + 1);
            }
         else {
            Timers.Add(timer);
-           isyslog(LOG_INFO, "timer %d added", timer->Index() + 1);
+           isyslog("timer %d added", timer->Index() + 1);
            }
         Timers.Save();
         Reply(250, "%d %s", timer->Index() + 1, timer->ToText());
@@ -926,22 +980,22 @@ void cSVDRP::CmdVOLU(const char *Option)
 {
   if (*Option) {
      if (isnumber(Option))
-        cDvbApi::PrimaryDvbApi->SetVolume(strtol(Option, NULL, 10), true);
+        cDevice::PrimaryDevice()->SetVolume(strtol(Option, NULL, 10), true);
      else if (strcmp(Option, "+") == 0)
-        cDvbApi::PrimaryDvbApi->SetVolume(VOLUMEDELTA);
+        cDevice::PrimaryDevice()->SetVolume(VOLUMEDELTA);
      else if (strcmp(Option, "-") == 0)
-        cDvbApi::PrimaryDvbApi->SetVolume(-VOLUMEDELTA);
+        cDevice::PrimaryDevice()->SetVolume(-VOLUMEDELTA);
      else if (strcasecmp(Option, "MUTE") == 0)
-        cDvbApi::PrimaryDvbApi->ToggleMute();
+        cDevice::PrimaryDevice()->ToggleMute();
      else {
         Reply(501, "Unknown option: \"%s\"", Option);
         return;
         }
      }
-  if (cDvbApi::PrimaryDvbApi->IsMute())
+  if (cDevice::PrimaryDevice()->IsMute())
      Reply(250, "Audio is mute");
   else
-     Reply(250, "Audio volume is %d", cDvbApi::CurrentVolume());
+     Reply(250, "Audio volume is %d", cDevice::CurrentVolume());
 }
 
 #define CMD(c) (strcasecmp(Cmd, c) == 0)
@@ -966,6 +1020,7 @@ void cSVDRP::Execute(char *Cmd)
      *s++ = 0;
   s = skipspace(s);
   if      (CMD("CHAN"))  CmdCHAN(s);
+  else if (CMD("CLRE"))  CmdCLRE(s);
   else if (CMD("DELC"))  CmdDELC(s);
   else if (CMD("DELR"))  CmdDELR(s);
   else if (CMD("DELT"))  CmdDELT(s);
@@ -985,13 +1040,14 @@ void cSVDRP::Execute(char *Cmd)
   else if (CMD("NEWT"))  CmdNEWT(s);
   else if (CMD("NEXT"))  CmdNEXT(s);
   else if (CMD("PUTE"))  CmdPUTE(s);
+  else if (CMD("STAT"))  CmdSTAT(s);
   else if (CMD("UPDT"))  CmdUPDT(s);
   else if (CMD("VOLU"))  CmdVOLU(s);
   else if (CMD("QUIT"))  Close();
   else                   Reply(500, "Command unrecognized: \"%s\"", Cmd);
 }
 
-void cSVDRP::Process(void)
+bool cSVDRP::Process(void)
 {
   bool NewConnection = !file.IsOpen();
   bool SendGreeting = NewConnection;
@@ -1038,21 +1094,23 @@ void cSVDRP::Process(void)
                  }
               else {
                  Reply(501, "Command line too long");
-                 esyslog(LOG_ERR, "SVDRP: command line too long: '%s'", cmdLine);
+                 esyslog("SVDRP: command line too long: '%s'", cmdLine);
                  numChars = 0;
                  }
               lastActivity = time(NULL);
               }
            else if (r <= 0) {
-              isyslog(LOG_INFO, "lost connection to SVDRP client");
+              isyslog("lost connection to SVDRP client");
               Close();
               }
            }
      if (Setup.SVDRPTimeout && time(NULL) - lastActivity > Setup.SVDRPTimeout) {
-        isyslog(LOG_INFO, "timeout on SVDRP connection");
+        isyslog("timeout on SVDRP connection");
         Close(true);
         }
+     return true;
      }
+  return false;
 }
 
 char *cSVDRP::GetMessage(void)

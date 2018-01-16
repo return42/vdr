@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: thread.h 1.12 2002/02/23 13:53:38 kls Exp $
+ * $Id: thread.h 1.15 2003/05/03 14:03:36 kls Exp $
  */
 
 #ifndef __THREAD_H
@@ -22,8 +22,8 @@ private:
 public:
   cCondVar(void);
   ~cCondVar();
-  bool Wait(cMutex &Mutex);
-  //bool TimedWait(cMutex &Mutex, unsigned long tmout);
+  void Wait(cMutex &Mutex);
+  bool TimedWait(cMutex &Mutex, int TimeoutMs);
   void Broadcast(void);
   //void Signal(void);
   };
@@ -48,15 +48,13 @@ private:
   cMutex mutex;
   pid_t parentPid, threadPid;
   bool running;
-  static time_t lastPanic;
-  static int panicLevel;
   static bool emergencyExitRequested;
   static bool signalHandlerInstalled;
   static void SignalHandler(int signum);
   static void *StartThread(cThread *Thread);
+protected:
   void Lock(void) { mutex.Lock(); }
   void Unlock(void) { mutex.Unlock(); }
-protected:
   void WakeUp(void);
   virtual void Action(void) = 0;
   void Cancel(int WaitSeconds = 0);
@@ -65,7 +63,6 @@ public:
   virtual ~cThread();
   bool Start(void);
   bool Active(void);
-  static void RaisePanic(void);
   static bool EmergencyExit(bool Request = false);
   };
 

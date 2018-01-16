@@ -1,5 +1,5 @@
 /*
- * ringbuffer.c: A threaded ring buffer
+ * ringbuffer.c: A ring buffer
  *
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
@@ -7,130 +7,88 @@
  * Parts of this file were inspired by the 'ringbuffy.c' from the
  * LinuxDVB driver (see linuxtv.org).
  *
- * $Id: ringbuffer.c 1.6.1.1 2002/05/18 08:45:09 kls Exp $
+ * $Id: ringbuffer.c 1.17 2003/05/12 17:38:11 kls Exp $
  */
 
 #include "ringbuffer.h"
+#include <stdlib.h>
+#include <unistd.h>
 #include "tools.h"
 
-// --- cRingBufferInputThread -------------------------------------------------
-
-class cRingBufferInputThread : public cThread {
-private:
-  cRingBuffer *ringBuffer;
-protected:
-  virtual void Action(void) { ringBuffer->Input(); }
-public:
-  cRingBufferInputThread(cRingBuffer *RingBuffer) { ringBuffer = RingBuffer; }
-  };
-
-// --- cRingBufferOutputThread ------------------------------------------------
-
-class cRingBufferOutputThread : public cThread {
-private:
-  cRingBuffer *ringBuffer;
-protected:
-  virtual void Action(void) { ringBuffer->Output(); }
-public:
-  cRingBufferOutputThread(cRingBuffer *RingBuffer) { ringBuffer = RingBuffer; }
-  };
-
-// --- cRingBuffer ------------------------------------------------------------
+// --- cRingBuffer -----------------------------------------------------------
 
 cRingBuffer::cRingBuffer(int Size, bool Statistics)
 {
   size = Size;
   statistics = Statistics;
-  inputThread = NULL;
-  outputThread = NULL;
-  busy = false;
   maxFill = 0;
+  lastPercent = 0;
+  putTimeout = getTimeout = 0;
 }
 
 cRingBuffer::~cRingBuffer()
 {
-  delete inputThread;
-  delete outputThread;
   if (statistics)
-     dsyslog(LOG_INFO, "buffer stats: %d (%d%%) used", maxFill, maxFill * 100 / (size - 1));
+     dsyslog("buffer stats: %d (%d%%) used", maxFill, maxFill * 100 / (size - 1));
 }
 
 void cRingBuffer::WaitForPut(void)
 {
-  putMutex.Lock();
-  readyForPut.Wait(putMutex);
-  putMutex.Unlock();
+  if (putTimeout) {
+     putMutex.Lock();
+     readyForPut.TimedWait(putMutex, putTimeout);
+     putMutex.Unlock();
+     }
 }
 
 void cRingBuffer::WaitForGet(void)
 {
-  getMutex.Lock();
-  readyForGet.Wait(getMutex);
-  getMutex.Unlock();
+  if (getTimeout) {
+     getMutex.Lock();
+     readyForGet.TimedWait(getMutex, getTimeout);
+     getMutex.Unlock();
+     }
 }
 
 void cRingBuffer::EnablePut(void)
 {
-  readyForPut.Broadcast();
+  if (putTimeout)
+     readyForPut.Broadcast();
 }
 
 void cRingBuffer::EnableGet(void)
 {
-  readyForGet.Broadcast();
+  if (getTimeout)
+     readyForGet.Broadcast();
 }
 
-bool cRingBuffer::Start(void)
+void cRingBuffer::SetTimeouts(int PutTimeout, int GetTimeout)
 {
-  if (!busy) {
-     busy = true;
-     outputThread = new cRingBufferOutputThread(this);
-     if (!outputThread->Start())
-        DELETENULL(outputThread);
-     inputThread = new cRingBufferInputThread(this);
-     if (!inputThread->Start()) {
-        DELETENULL(inputThread);
-        DELETENULL(outputThread);
-        }
-     busy = outputThread && inputThread;
-     }
-  return busy;
+  putTimeout = PutTimeout;
+  getTimeout = GetTimeout;
 }
 
-bool cRingBuffer::Active(void)
-{
-  return outputThread && outputThread->Active() && inputThread && inputThread->Active();
-}
+// --- cRingBufferLinear -----------------------------------------------------
 
-void cRingBuffer::Stop(void)
-{
-  busy = false;
-  for (time_t t0 = time(NULL) + 3; time(NULL) < t0; ) {
-      if (!((outputThread && outputThread->Active()) || (inputThread && inputThread->Active())))
-         break;
-      }
-  DELETENULL(inputThread);
-  DELETENULL(outputThread);
-}
-
-// --- cRingBufferLinear ----------------------------------------------------
-
-cRingBufferLinear::cRingBufferLinear(int Size, bool Statistics)
+cRingBufferLinear::cRingBufferLinear(int Size, int Margin, bool Statistics)
 :cRingBuffer(Size, Statistics)
 {
+  margin = Margin;
   buffer = NULL;
+  getThreadPid = -1;
   if (Size > 1) { // 'Size - 1' must not be 0!
-     buffer = new uchar[Size];
+     buffer = MALLOC(uchar, Size);
      if (!buffer)
-        esyslog(LOG_ERR, "ERROR: can't allocate ring buffer (size=%d)", Size);
+        esyslog("ERROR: can't allocate ring buffer (size=%d)", Size);
      Clear();
      }
   else
-     esyslog(LOG_ERR, "ERROR: illegal size for ring buffer (%d)", Size);
+     esyslog("ERROR: illegal size for ring buffer (%d)", Size);
 }
 
 cRingBufferLinear::~cRingBufferLinear()
 {
-  delete buffer;
+  free(buffer);
 }
 
 int cRingBufferLinear::Available(void)
@@ -138,14 +96,17 @@ int cRingBufferLinear::Available(void)
   Lock();
   int diff = head - tail;
   Unlock();
-  return (diff >= 0) ? diff : Size() + diff;
+  return (diff >= 0) ? diff : Size() + diff - margin;
 }
 
 void cRingBufferLinear::Clear(void)
 {
   Lock();
-  head = tail = 0;
+  head = tail = margin;
+  lastGet = -1;
   Unlock();
+  EnablePut();
+  EnableGet();
 }
 
 int cRingBufferLinear::Put(const uchar *Data, int Count)
@@ -154,16 +115,18 @@ int cRingBufferLinear::Put(const uchar *Data, int Count)
      Lock();
      int rest = Size() - head;
      int diff = tail - head;
-     int free = (diff > 0) ? diff - 1 : Size() + diff - 1;
+     int free = ((tail < margin) ? rest : (diff > 0) ? diff : Size() + diff - margin) - 1;
      if (statistics) {
         int fill = Size() - free - 1 + Count;
         if (fill >= Size())
            fill = Size() - 1;
-        if (fill > maxFill) {
+        if (fill > maxFill)
            maxFill = fill;
-           int percent = maxFill * 100 / (Size() - 1);
+        int percent = maxFill * 100 / (Size() - 1) / 5 * 5;
+        if (abs(lastPercent - percent) >= 5) {
            if (percent > 75)
-              dsyslog(LOG_INFO, "buffer usage: %d%%", percent);
+              dsyslog("buffer usage: %d%% (pid=%d)", percent, getThreadPid);
+           lastPercent = percent;
            }
         }
      if (free > 0) {
@@ -174,8 +137,8 @@ int cRingBufferLinear::Put(const uchar *Data, int Count)
         if (Count >= rest) {
            memcpy(buffer + head, Data, rest);
            if (Count - rest)
-              memcpy(buffer, Data + rest, Count - rest);
-           head = Count - rest;
+              memcpy(buffer + margin, Data + rest, Count - rest);
+           head = margin + Count - rest;
            }
         else {
            memcpy(buffer + head, Data, Count);
@@ -185,56 +148,76 @@ int cRingBufferLinear::Put(const uchar *Data, int Count)
      else
         Count = 0;
      Unlock();
+     EnableGet();
+     if (Count == 0)
+        WaitForPut();
      }
   return Count;
 }
 
-int cRingBufferLinear::Get(uchar *Data, int Count)
+uchar *cRingBufferLinear::Get(int &Count)
 {
-  if (Count > 0) {
-     Lock();
-     int rest = Size() - tail;
-     int diff = head - tail;
-     int cont = (diff >= 0) ? diff : Size() + diff;
-     if (rest > 0) {
-        if (cont < Count)
-           Count = cont;
-        if (Count >= rest) {
-           memcpy(Data, buffer + tail, rest);
-           if (Count - rest)
-              memcpy(Data + rest, buffer, Count - rest);
-           tail = Count - rest;
-           }
-        else {
-           memcpy(Data, buffer + tail, Count);
-           tail += Count;
-           }
-        }
-     else
-        Count = 0;
-     Unlock();
+  uchar *p = NULL;
+  Lock();
+  if (getThreadPid < 0)
+     getThreadPid = getpid();
+  int rest = Size() - tail;
+  if (rest < margin && head < tail) {
+     int t = margin - rest;
+     memcpy(buffer + t, buffer + tail, rest);
+     tail = t;
      }
-  return Count;
+  int diff = head - tail;
+  int cont = (diff >= 0) ? diff : Size() + diff - margin;
+  if (cont > rest)
+     cont = rest;
+  if (cont >= margin) {
+     p = buffer + tail;
+     Count = lastGet = cont;
+     }
+  Unlock();
+  if (!p)
+     WaitForGet();
+  return p;
+}
+
+void cRingBufferLinear::Del(int Count)
+{
+  if (Count > 0 && Count <= lastGet) {
+     Lock();
+     tail += Count;
+     lastGet -= Count;
+     if (tail >= Size())
+        tail = margin;
+     Unlock();
+     EnablePut();
+     }
+  else
+     esyslog("ERROR: invalid Count in cRingBufferLinear::Del: %d", Count);
 }
 
 // --- cFrame ----------------------------------------------------------------
 
 cFrame::cFrame(const uchar *Data, int Count, eFrameType Type, int Index)
 {
-  count = Count;
+  count = abs(Count);
   type = Type;
   index = Index;
-  data = new uchar[count];
-  if (data)
-     memcpy(data, Data, count);
-  else
-     esyslog(LOG_ERR, "ERROR: can't allocate frame buffer (count=%d)", count);
+  if (Count < 0)
+     data = (uchar *)Data;
+  else {
+     data = MALLOC(uchar, count);
+     if (data)
+        memcpy(data, Data, count);
+     else
+        esyslog("ERROR: can't allocate frame buffer (count=%d)", count);
+     }
   next = NULL;
 }
 
 cFrame::~cFrame()
 {
-  delete data;
+  free(data);
 }
 
 // --- cRingBufferFrame ------------------------------------------------------
@@ -254,8 +237,8 @@ cRingBufferFrame::~cRingBufferFrame()
 void cRingBufferFrame::Clear(void)
 {
   Lock();
-  const cFrame *p;
-  while ((p = Get(false)) != NULL)
+  cFrame *p;
+  while ((p = Get()) != NULL)
         Drop(p);
   Unlock();
   EnablePut();
@@ -279,27 +262,24 @@ bool cRingBufferFrame::Put(cFrame *Frame)
      EnableGet();
      return true;
      }
-  WaitForPut();
   return false;
 }
 
-const cFrame *cRingBufferFrame::Get(bool Wait)
+cFrame *cRingBufferFrame::Get(void)
 {
   Lock();
   cFrame *p = head ? head->next : NULL;
   Unlock();
-  if (!p && Wait)
-     WaitForGet();
   return p;
 }
 
-void cRingBufferFrame::Delete(const cFrame *Frame)
+void cRingBufferFrame::Delete(cFrame *Frame)
 {
   currentFill -= Frame->Count();
   delete Frame;
 }
 
-void cRingBufferFrame::Drop(const cFrame *Frame)
+void cRingBufferFrame::Drop(cFrame *Frame)
 {
   Lock();
   if (head) {
@@ -314,7 +294,7 @@ void cRingBufferFrame::Drop(const cFrame *Frame)
            }
         }
      else
-        esyslog(LOG_ERR, "ERROR: attempt to drop wrong frame from ring buffer!");
+        esyslog("ERROR: attempt to drop wrong frame from ring buffer!");
      }
   Unlock();
   EnablePut();

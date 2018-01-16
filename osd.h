@@ -4,27 +4,33 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: osd.h 1.27 2002/03/10 16:18:11 kls Exp $
+ * $Id: osd.h 1.39 2003/04/21 10:27:41 kls Exp $
  */
 
 #ifndef __OSD_H
 #define __OSD_H
 
+#if defined(DEBUG_OSD)
+#include <ncurses.h>
+#endif
 #include "config.h"
+#include "osdbase.h"
 #include "interface.h"
+#include "osdbase.h"
 #include "tools.h"
 
 #define MAXOSDITEMS (Setup.OSDheight - 4)
 
 enum eOSState { osUnknown,
-                osMenu,
                 osContinue,
                 osSchedule,
                 osChannels,
                 osTimers,
                 osRecordings,
+                osPlugin,
                 osSetup,
                 osCommands,
+                osPause,
                 osRecord,
                 osReplay,
                 osStopRecord,
@@ -43,11 +49,48 @@ enum eOSState { osUnknown,
                 osUser7,
                 osUser8,
                 osUser9,
+                osUser10,
               };
+
+class cOsd {
+private:
+  enum { charWidth  = 12, // average character width
+         lineHeight = 27  // smallest text height
+       };
+#ifdef DEBUG_OSD
+  static WINDOW *window;
+  enum { MaxColorPairs = 16 };
+  static int colorPairs[MaxColorPairs];
+  static void SetColor(eDvbColor colorFg, eDvbColor colorBg = clrBackground);
+#else
+  static cOsdBase *osd;
+#endif
+  static int cols, rows;
+public:
+  static void Initialize(void);
+  static void Shutdown(void);
+  static cOsdBase *OpenRaw(int x, int y);
+       // Returns a raw OSD without any predefined windows or colors.
+       // If the "normal" OSD is currently in use, NULL will be returned.
+       // The caller must delete this object before the "normal" OSD is used again!
+  static void Open(int w, int h);
+  static void Close(void);
+  static void Clear(void);
+  static void Fill(int x, int y, int w, int h, eDvbColor color = clrBackground);
+  static void SetBitmap(int x, int y, const cBitmap &Bitmap);
+  static void ClrEol(int x, int y, eDvbColor color = clrBackground);
+  static int CellWidth(void);
+  static int LineHeight(void);
+  static int Width(unsigned char c);
+  static int WidthInCells(const char *s);
+  static eDvbFont SetFont(eDvbFont Font);
+  static void Text(int x, int y, const char *s, eDvbColor colorFg = clrWhite, eDvbColor colorBg = clrBackground);
+  static void Flush(void);
+  };
 
 class cOsdItem : public cListObject {
 private:
-  const char *text;
+  char *text;
   int offset;
   eOSState state;
 protected:
@@ -65,28 +108,33 @@ public:
   virtual void Display(int Offset = -1, eDvbColor FgColor = clrWhite, eDvbColor BgColor = clrBackground);
   virtual void Set(void) {}
   virtual eOSState ProcessKey(eKeys Key);
-};
+  };
 
-class cOsdBase {
+class cOsdObject {
+  friend class cOsdMenu;
+private:
+  bool isMenu;
 protected:
   bool needsFastResponse;
 public:
-  cOsdBase(bool FastResponse = false) { needsFastResponse = FastResponse; }
-  virtual ~cOsdBase() {}
+  cOsdObject(bool FastResponse = false) { isMenu = false; needsFastResponse = FastResponse; }
+  virtual ~cOsdObject() {}
   int Width(void) { return Interface->Width(); }
   int Height(void) { return Interface->Height(); }
   bool NeedsFastResponse(void) { return needsFastResponse; }
-  virtual eOSState ProcessKey(eKeys Key) = 0;
-};
+  bool IsMenu(void) { return isMenu; }
+  virtual void Show(void) {}
+  virtual eOSState ProcessKey(eKeys Key) { return osUnknown; }
+  };
 
-class cOsdMenu : public cOsdBase, public cList<cOsdItem> {
+class cOsdMenu : public cOsdObject, public cList<cOsdItem> {
 private:
   char *title;
   int cols[cInterface::MaxCols];
   int first, current, marked;
   cOsdMenu *subMenu;
   const char *helpRed, *helpGreen, *helpYellow, *helpBlue;
-  const char *status;
+  char *status;
   int digit;
   bool hasHotkeys;
 protected:
@@ -105,6 +153,7 @@ protected:
   void Mark(void);
   eOSState HotKey(eKeys Key);
   eOSState AddSubMenu(cOsdMenu *SubMenu);
+  eOSState CloseSubMenu();
   bool HasSubMenu(void) { return subMenu; }
   void SetStatus(const char *s);
   void SetTitle(const char *Title, bool ShowDate = true);
@@ -114,7 +163,8 @@ public:
   cOsdMenu(const char *Title, int c0 = 0, int c1 = 0, int c2 = 0, int c3 = 0, int c4 = 0);
   virtual ~cOsdMenu();
   int Current(void) { return current; }
-  void Add(cOsdItem *Item, bool Current = false);
+  void Add(cOsdItem *Item, bool Current = false, cOsdItem *After = NULL);
+  void Ins(cOsdItem *Item, bool Current = false, cOsdItem *Before = NULL);
   void Display(void);
   virtual eOSState ProcessKey(eKeys Key);
   };

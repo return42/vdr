@@ -4,13 +4,16 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: interface.c 1.47 2002/01/27 15:48:46 kls Exp $
+ * $Id: interface.c 1.64 2003/04/27 12:08:52 kls Exp $
  */
 
 #include "interface.h"
 #include <ctype.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include "i18n.h"
+#include "osd.h"
+#include "status.h"
 
 cInterface *Interface = NULL;
 
@@ -19,27 +22,14 @@ cInterface::cInterface(int SVDRPport)
   open = 0;
   cols[0] = 0;
   width = height = 0;
-  keyFromWait = kNone;
   interrupted = false;
-  rcIo = NULL;
   SVDRP = NULL;
-#if defined(REMOTE_RCU)
-  rcIo = new cRcIoRCU("/dev/ttyS1");
-#elif defined(REMOTE_LIRC)
-  rcIo = new cRcIoLIRC("/dev/lircd");
-#elif defined(REMOTE_KBD)
-  rcIo = new cRcIoKBD;
-#else
-  rcIo = new cRcIoBase; // acts as a dummy device
-#endif
-  rcIo->SetCode(Keys.code, Keys.address);
   if (SVDRPport)
      SVDRP = new cSVDRP(SVDRPport);
 }
 
 cInterface::~cInterface()
 {
-  delete rcIo;
   delete SVDRP;
 }
 
@@ -50,7 +40,7 @@ void cInterface::Open(int NumCols, int NumLines)
         NumCols = Setup.OSDwidth;
      if (NumLines == 0)
         NumLines = Setup.OSDheight;
-     cDvbApi::PrimaryDvbApi->Open(width = NumCols, height = NumLines);
+     cOsd::Open(width = NumCols, height = NumLines);
      }
 }
 
@@ -59,49 +49,27 @@ void cInterface::Close(void)
   if (open == 1)
      Clear();
   if (!--open) {
-     cDvbApi::PrimaryDvbApi->Close();
+     cOsd::Close();
      width = height = 0;
      }
 }
 
-unsigned int cInterface::GetCh(bool Wait, bool *Repeat, bool *Release)
-{
-  Flush();
-  if (!rcIo->InputAvailable())
-     cFile::AnyFileReady(-1, Wait ? 1000 : 0);
-  unsigned int Command;
-  return rcIo->GetCommand(&Command, Repeat, Release) ? Command : 0;
-}
-
 eKeys cInterface::GetKey(bool Wait)
 {
-  Flush();
+  if (!cRemote::HasKeys())
+     Flush();
   if (SVDRP) {
-     SVDRP->Process();
+     if (SVDRP->Process())
+        Wait = false;
      if (!open) {
         char *message = SVDRP->GetMessage();
         if (message) {
            Info(message);
-           delete message;
+           free(message);
            }
         }
      }
-  eKeys Key = keyFromWait;
-  if (Key == kNone) {
-     bool Repeat = false, Release = false;
-     Key = Keys.Get(GetCh(Wait, &Repeat, &Release));
-     if (Repeat)
-        Key = eKeys(Key | k_Repeat);
-     if (Release)
-        Key = eKeys(Key | k_Release);
-     }
-  keyFromWait = kNone;
-  return Key;
-}
-
-void cInterface::PutKey(eKeys Key)
-{
-  keyFromWait = Key;
+  return cRemote::Get(Wait ? 1000 : 10);
 }
 
 eKeys cInterface::Wait(int Seconds, bool KeepChar)
@@ -117,7 +85,7 @@ eKeys cInterface::Wait(int Seconds, bool KeepChar)
          break;
       }
   if (KeepChar && ISRAWKEY(Key))
-     keyFromWait = Key;
+     cRemote::Put(Key);
   interrupted = false;
   return Key;
 }
@@ -125,31 +93,32 @@ eKeys cInterface::Wait(int Seconds, bool KeepChar)
 void cInterface::Clear(void)
 {
   if (open)
-     cDvbApi::PrimaryDvbApi->Clear();
+     cOsd::Clear();
+  cStatus::MsgOsdClear();
 }
 
 void cInterface::ClearEol(int x, int y, eDvbColor Color)
 {
   if (open)
-     cDvbApi::PrimaryDvbApi->ClrEol(x, y, Color);
+     cOsd::ClrEol(x, y, Color);
 }
 
 void cInterface::Fill(int x, int y, int w, int h, eDvbColor Color)
 {
   if (open)
-     cDvbApi::PrimaryDvbApi->Fill(x, y, w, h, Color);
+     cOsd::Fill(x, y, w, h, Color);
 }
 
 void cInterface::SetBitmap(int x, int y, const cBitmap &Bitmap)
 {
   if (open)
-     cDvbApi::PrimaryDvbApi->SetBitmap(x, y, Bitmap);
+     cOsd::SetBitmap(x, y, Bitmap);
 }
 
 void cInterface::Flush(void)
 {
   if (open)
-     cDvbApi::PrimaryDvbApi->Flush();
+     cOsd::Flush();
 }
 
 void cInterface::SetCols(int *c)
@@ -163,7 +132,7 @@ void cInterface::SetCols(int *c)
 
 eDvbFont cInterface::SetFont(eDvbFont Font)
 {
-  return cDvbApi::PrimaryDvbApi->SetFont(Font);
+  return cOsd::SetFont(Font);
 }
 
 char *cInterface::WrapText(const char *Text, int Width, int *Height)
@@ -183,12 +152,14 @@ char *cInterface::WrapText(const char *Text, int Width, int *Height)
   char *Delim = NULL;
   int w = 0;
 
-  Width *= cDvbApi::PrimaryDvbApi->CellWidth();
+  Width *= cOsd::CellWidth();
 
   while (*t && t[strlen(t) - 1] == '\n')
         t[strlen(t) - 1] = 0; // skips trailing newlines
 
   for (char *p = t; *p; ) {
+      if (*p == '|')
+         *p = '\n';
       if (*p == '\n') {
          Lines++;
          w = 0;
@@ -198,7 +169,7 @@ char *cInterface::WrapText(const char *Text, int Width, int *Height)
          }
       else if (isspace(*p))
          Blank = p;
-      int cw = cDvbApi::PrimaryDvbApi->Width(*p);
+      int cw = cOsd::Width(*p);
       if (w + cw > Width) {
          if (Blank) {
             *Blank = '\n';
@@ -210,12 +181,12 @@ char *cInterface::WrapText(const char *Text, int Width, int *Height)
             // punch in a newline, so we need to make room for it:
             if (Delim)
                p = Delim + 1; // let's fall back to the most recent delimiter
-            char *s = new char[strlen(t) + 2]; // The additional '\n' plus the terminating '\0'
+            char *s = MALLOC(char, strlen(t) + 2); // The additional '\n' plus the terminating '\0'
             int l = p - t;
             strncpy(s, t, l);
             s[l] = '\n';
             strcpy(s + l + 1, p);
-            delete t;
+            free(t);
             t = s;
             p = t + l;
             continue;
@@ -237,7 +208,7 @@ char *cInterface::WrapText(const char *Text, int Width, int *Height)
 void cInterface::Write(int x, int y, const char *s, eDvbColor FgColor, eDvbColor BgColor)
 {
   if (open)
-     cDvbApi::PrimaryDvbApi->Text(x, y, s, FgColor, BgColor);
+     cOsd::Text(x, y, s, FgColor, BgColor);
 }
 
 void cInterface::WriteText(int x, int y, const char *s, eDvbColor FgColor, eDvbColor BgColor)
@@ -278,7 +249,7 @@ void cInterface::Title(const char *s)
      strn0cpy(buffer, s, n + 1);
      Write(1, 0, buffer, clrBlack, clrCyan);
      t++;
-     Write(-(cDvbApi::PrimaryDvbApi->WidthInCells(t) + 1), 0, t, clrBlack, clrCyan);
+     Write(-(cOsd::WidthInCells(t) + 1), 0, t, clrBlack, clrCyan);
      }
   else {
      int x = (Width() - strlen(s)) / 2;
@@ -286,6 +257,7 @@ void cInterface::Title(const char *s)
         x = 0;
      Write(x, 0, s, clrBlack, clrCyan);
      }
+  cStatus::MsgOsdTitle(s);
 }
 
 void cInterface::Status(const char *s, eDvbColor FgColor, eDvbColor BgColor)
@@ -293,17 +265,18 @@ void cInterface::Status(const char *s, eDvbColor FgColor, eDvbColor BgColor)
   int Line = (abs(height) == 1) ? 0 : -2;
   ClearEol(0, Line, s ? BgColor : clrBackground);
   if (s) {
-     int x = (Width() - strlen(s)) / 2;
+     int x = (Width() - int(strlen(s))) / 2;
      if (x < 0)
         x = 0;
      Write(x, Line, s, FgColor, BgColor);
      }
+  cStatus::MsgOsdStatusMessage(s);
 }
 
 void cInterface::Info(const char *s)
 {
   Open(Setup.OSDwidth, -1);
-  isyslog(LOG_INFO, "info: %s", s);
+  isyslog("info: %s", s);
   Status(s, clrBlack, clrGreen);
   Wait();
   Status(NULL);
@@ -313,7 +286,7 @@ void cInterface::Info(const char *s)
 void cInterface::Error(const char *s)
 {
   Open(Setup.OSDwidth, -1);
-  esyslog(LOG_ERR, "ERROR: %s", s);
+  esyslog("ERROR: %s", s);
   Status(s, clrWhite, clrRed);
   Wait();
   Status(NULL);
@@ -323,13 +296,13 @@ void cInterface::Error(const char *s)
 bool cInterface::Confirm(const char *s, int Seconds, bool WaitForTimeout)
 {
   Open(Setup.OSDwidth, -1);
-  isyslog(LOG_INFO, "confirm: %s", s);
+  isyslog("confirm: %s", s);
   Status(s, clrBlack, clrYellow);
   eKeys k = Wait(Seconds);
   bool result = WaitForTimeout ? k == kNone : k == kOk;
   Status(NULL);
   Close();
-  isyslog(LOG_INFO, "%sconfirmed", result ? "" : "not ");
+  isyslog("%sconfirmed", result ? "" : "not ");
   return result;
 }
 
@@ -337,12 +310,12 @@ void cInterface::HelpButton(int Index, const char *Text, eDvbColor FgColor, eDvb
 {
   if (open) {
      const int w = Width() / 4;
-     cDvbApi::PrimaryDvbApi->Fill(Index * w, -1, w, 1, Text ? BgColor : clrBackground);
+     cOsd::Fill(Index * w, -1, w, 1, Text ? BgColor : clrBackground);
      if (Text) {
         int l = (w - int(strlen(Text))) / 2;
         if (l < 0)
            l = 0;
-        cDvbApi::PrimaryDvbApi->Text(Index * w + l, -1, Text, FgColor, BgColor);
+        cOsd::Text(Index * w + l, -1, Text, FgColor, BgColor);
         }
      }
 }
@@ -353,131 +326,125 @@ void cInterface::Help(const char *Red, const char *Green, const char *Yellow, co
   HelpButton(1, Green,  clrBlack, clrGreen);
   HelpButton(2, Yellow, clrBlack, clrYellow);
   HelpButton(3, Blue,   clrWhite, clrBlue);
+  cStatus::MsgOsdHelpKeys(Red, Green, Yellow, Blue);
 }
 
-void cInterface::QueryKeys(void)
+void cInterface::QueryKeys(cRemote *Remote)
 {
-  Keys.Clear();
-  Clear();
-  WriteText(1, 1, tr("Learning Remote Control Keys"));
   WriteText(1, 3, tr("Phase 1: Detecting RC code type"));
   WriteText(1, 5, tr("Press any key on the RC unit"));
   Flush();
-#ifndef REMOTE_KBD
-  unsigned char Code = '0';
-  unsigned short Address;
-#endif
-  for (;;) {
-#ifdef REMOTE_KBD
-      if (GetCh())
-         break;
-#else
-      //TODO on screen display...
-      if (rcIo->DetectCode(&Code, &Address)) {
-         Keys.code = Code;
-         Keys.address = Address;
-         WriteText(1, 5, tr("RC code detected!"));
-         WriteText(1, 6, tr("Do not press any key..."));
-         Flush();
-         rcIo->Flush(3000);
-         ClearEol(0, 5);
-         ClearEol(0, 6);
-         Flush();
-         break;
-         }
-#endif
-      }
-  WriteText(1, 3, tr("Phase 2: Learning specific key codes"));
-  tKey *k = Keys.keys;
-  while (k->type != kNone) {
-        char *Prompt;
-        asprintf(&Prompt, tr("Press key for '%s'"), tr(k->name));
-        WriteText(1, 5, Prompt);
-        delete Prompt;
-        for (;;) {
-            unsigned int ch = GetCh();
-            if (ch != 0) {
-               switch (Keys.Get(ch)) {
-                 case kUp:   if (k > Keys.keys) {
-                                k--;
-                                break;
+  if (Remote->Initialize()) {
+     WriteText(1, 5, tr("RC code detected!"));
+     WriteText(1, 6, tr("Do not press any key..."));
+     Flush();
+     sleep(3);
+     ClearEol(0, 5);
+     ClearEol(0, 6);
+
+     WriteText(1, 3, tr("Phase 2: Learning specific key codes"));
+     eKeys NewKey = kUp;
+     while (NewKey != kNone) {
+           char *Prompt;
+           asprintf(&Prompt, tr("Press key for '%s'"), tr(cKey::ToString(NewKey)));
+           WriteText(1, 5, Prompt);
+           free(Prompt);
+           cRemote::Clear();
+           Flush();
+           for (eKeys k = NewKey; k == NewKey; ) {
+               char *NewCode = NULL;
+               eKeys Key = cRemote::Get(100, &NewCode);
+               switch (Key) {
+                 case kUp:   if (NewKey > kUp) {
+                                NewKey = eKeys(NewKey - 1);
+                                cKey *last = Keys.Last();
+                                if (last && last->Key() == NewKey)
+                                   Keys.Del(last);
                                 }
-                 case kDown: if (k > Keys.keys + 1) {
-                                WriteText(1, 5, tr("Press 'Up' to confirm"));
-                                WriteText(1, 6, tr("Press 'Down' to continue"));
-                                ClearEol(0, 7);
-                                ClearEol(0, 8);
-                                for (;;) {
-                                    eKeys key = GetKey();
-                                    if (key == kUp) {
-                                       Clear();
-                                       return;
-                                       }
-                                    else if (key == kDown) {
-                                       ClearEol(0, 6);
-                                       break;
-                                       }
+                             break;
+                 case kDown: WriteText(1, 5, tr("Press 'Up' to confirm"));
+                             WriteText(1, 6, tr("Press 'Down' to continue"));
+                             ClearEol(0, 7);
+                             ClearEol(0, 8);
+                             ClearEol(0, 9);
+                             Flush();
+                             for (;;) {
+                                 Key = cRemote::Get(100);
+                                 if (Key == kUp) {
+                                    Clear();
+                                    return;
                                     }
-                                break;
+                                 else if (Key == kDown) {
+                                    ClearEol(0, 6);
+                                    k = kNone; // breaks the outer for() loop
+                                    break;
+                                    }
+                                 }
+                             break;
+                 case kMenu: NewKey = eKeys(NewKey + 1);
+                             break;
+                 case kNone: if (NewCode) {
+                                dsyslog("new %s code: %s = %s", Remote->Name(), NewCode, cKey::ToString(NewKey));
+                                Keys.Add(new cKey(Remote->Name(), NewCode, NewKey));
+                                NewKey = eKeys(NewKey + 1);
+                                free(NewCode);
                                 }
-                 case kNone: k->code = ch;
-                             k++;
                              break;
                  default:    break;
                  }
-               break;
                }
-            }
-        if (k > Keys.keys)
-           WriteText(1, 7, tr("(press 'Up' to go back)"));
-        else
-           ClearEol(0, 7);
-        if (k > Keys.keys + 1)
-           WriteText(1, 8, tr("(press 'Down' to end key definition)"));
-        else
-           ClearEol(0, 8);
-        }
+           if (NewKey > kUp)
+              WriteText(1, 7, tr("(press 'Up' to go back)"));
+           else
+              ClearEol(0, 7);
+           if (NewKey > kDown)
+              WriteText(1, 8, tr("(press 'Down' to end key definition)"));
+           else
+              ClearEol(0, 8);
+           if (NewKey > kMenu)
+              WriteText(1, 9, tr("(press 'Menu' to skip this key)"));
+           else
+              ClearEol(0, 9);
+           }
+     }
 }
 
 void cInterface::LearnKeys(void)
 {
-  isyslog(LOG_INFO, "learning keys");
-  Open();
-  for (;;) {
-      Clear();
-      QueryKeys();
-      Clear();
-      WriteText(1, 1, tr("Learning Remote Control Keys"));
-      WriteText(1, 3, tr("Phase 3: Saving key codes"));
-      WriteText(1, 5, tr("Press 'Up' to save, 'Down' to cancel"));
-      for (;;) {
-          eKeys key = GetKey();
-          if (key == kUp) {
-             Keys.Save();
-             Close();
-             return;
+  for (cRemote *Remote = Remotes.First(); Remote; Remote = Remotes.Next(Remote)) {
+      if (!Remote->Ready()) {
+         esyslog("ERROR: remote control %s not ready!", Remote->Name());
+         continue;
+         }
+      bool known = Keys.KnowsRemote(Remote->Name());
+      dsyslog("remote control %s - %s", Remote->Name(), known ? "keys known" : "learning keys");
+      if (!known) {
+         Open();
+         char Headline[Width()];
+         snprintf(Headline, sizeof(Headline), tr("Learning Remote Control Keys (%s)"), Remote->Name());
+         Clear();
+         cRemote::Clear();
+         WriteText(1, 1, Headline);
+         cRemote::SetLearning(Remote);
+         QueryKeys(Remote);
+         cRemote::SetLearning(NULL);
+         Clear();
+         WriteText(1, 1, Headline);
+         WriteText(1, 3, tr("Phase 3: Saving key codes"));
+         WriteText(1, 5, tr("Press 'Up' to save, 'Down' to cancel"));
+         for (;;) {
+             eKeys key = GetKey();
+             if (key == kUp) {
+                Keys.Save();
+                Close();
+                break;
+                }
+             else if (key == kDown) {
+                Keys.Load();
+                Close();
+                break;
+                }
              }
-          else if (key == kDown) {
-             Keys.Load();
-             Close();
-             return;
-             }
-          }
+         }
       }
-}
-
-void cInterface::DisplayChannelNumber(int Number)
-{
-  rcIo->Number(Number);
-}
-
-void cInterface::DisplayRecording(int Index, bool On)
-{
-  rcIo->SetPoints(1 << Index, On);
-}
-
-bool cInterface::Recording(void)
-{
-  // This is located here because the Interface has to do with the "PrimaryDvbApi" anyway
-  return cDvbApi::PrimaryDvbApi->Recording();
 }

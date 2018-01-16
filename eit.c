@@ -16,16 +16,14 @@
  *   the Free Software Foundation; either version 2 of the License, or     *
  *   (at your option) any later version.                                   *
  *                                                                         *
- * $Id: eit.c 1.44 2002/04/06 13:58:59 kls Exp $
+ * $Id: eit.c 1.79 2003/05/29 15:04:10 kls Exp $
  ***************************************************************************/
 
 #include "eit.h"
 #include <ctype.h>
 #include <fcntl.h>
-#include <fstream.h>
-#include <iomanip.h>
-#include <iostream.h>
 #include <limits.h>
+#include <linux/dvb/dmx.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,6 +33,7 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+#include "channels.h"
 #include "config.h"
 #include "libdtv/libdtv.h"
 #include "videodir.h"
@@ -117,7 +116,7 @@ void cMJD::ConvertToTime()
 
    mjdtime = timegm(&t);
 
-   //isyslog(LOG_INFO, "Time parsed = %s\n", ctime(&mjdtime));
+   //isyslog("Time parsed = %s\n", ctime(&mjdtime));
 }
 
 /**  */
@@ -132,10 +131,10 @@ bool cMJD::SetSystemTime()
 
    if (abs(mjdtime - loctim) > 2)
    {
-      isyslog(LOG_INFO, "System Time = %s (%ld)\n", ctime(&loctim), loctim);
-      isyslog(LOG_INFO, "Local Time  = %s (%ld)\n", ctime(&mjdtime), mjdtime);
+      isyslog("System Time = %s (%ld)\n", ctime(&loctim), loctim);
+      isyslog("Local Time  = %s (%ld)\n", ctime(&mjdtime), mjdtime);
       if (stime(&mjdtime) < 0)
-         esyslog(LOG_ERR, "ERROR while setting system time: %m");
+         esyslog("ERROR while setting system time: %m");
       return true;
    }
 
@@ -181,7 +180,7 @@ bool cTDT::SetSystemTime()
 
 // --- cEventInfo ------------------------------------------------------------
 
-cEventInfo::cEventInfo(unsigned short serviceid, unsigned short eventid)
+cEventInfo::cEventInfo(tChannelID channelid, unsigned short eventid)
 {
    pTitle = NULL;
    pSubtitle = NULL;
@@ -191,15 +190,15 @@ cEventInfo::cEventInfo(unsigned short serviceid, unsigned short eventid)
    tTime = 0;
    uTableID = 0;
    uEventID = eventid;
-   uServiceID = serviceid;
+   channelID = channelid;
    nChannelNumber = 0;
 }
 
 cEventInfo::~cEventInfo()
 {
-   delete pTitle;
-   delete pSubtitle;
-   delete pExtendedDescription;
+   free(pTitle);
+   free(pSubtitle);
+   free(pExtendedDescription);
 }
 
 /**  */
@@ -326,15 +325,15 @@ void cEventInfo::SetEventID(unsigned short evid)
    uEventID = evid;
 }
 /**  */
-void cEventInfo::SetServiceID(unsigned short servid)
+void cEventInfo::SetChannelID(tChannelID channelid)
 {
-   uServiceID = servid;
+   channelID = channelid;
 }
 
 /**  */
-unsigned short cEventInfo::GetServiceID() const
+tChannelID cEventInfo::GetChannelID() const
 {
-   return uServiceID;
+   return channelID;
 }
 
 /**  */
@@ -369,7 +368,7 @@ bool cEventInfo::Read(FILE *f, cSchedule *Schedule)
                           if (n == 3 || n == 4) {
                              pEvent = (cEventInfo *)Schedule->GetEvent(uEventID, tTime);
                              if (!pEvent)
-                                pEvent = Schedule->AddEvent(new cEventInfo(Schedule->GetServiceID(), uEventID));
+                                pEvent = Schedule->AddEvent(new cEventInfo(Schedule->GetChannelID(), uEventID));
                              if (pEvent) {
                                 pEvent->SetTableID(uTableID);
                                 pEvent->SetTime(tTime);
@@ -391,38 +390,38 @@ bool cEventInfo::Read(FILE *f, cSchedule *Schedule)
                        break;
              case 'c': // to keep things simple we react on 'c' here
                        return true;
-             default:  esyslog(LOG_ERR, "ERROR: unexpected tag while reading EPG data: %s", s);
+             default:  esyslog("ERROR: unexpected tag while reading EPG data: %s", s);
                        return false;
              }
            }
-     esyslog(LOG_ERR, "ERROR: unexpected end of file while reading EPG data");
+     esyslog("ERROR: unexpected end of file while reading EPG data");
      }
   return false;
 }
 
-#define MAXEPGBUGFIXSTATS 5
-#define MAXEPGBUGFIXCHANS 50
+#define MAXEPGBUGFIXSTATS 7
+#define MAXEPGBUGFIXCHANS 100
 struct tEpgBugFixStats {
   int hits;
   int n;
-  unsigned short serviceIDs[MAXEPGBUGFIXCHANS];
+  tChannelID channelIDs[MAXEPGBUGFIXCHANS];
   tEpgBugFixStats(void) { hits = n = 0; }
   };
 
 tEpgBugFixStats EpgBugFixStats[MAXEPGBUGFIXSTATS];
 
-static void EpgBugFixStat(int Number, unsigned int ServiceID)
+static void EpgBugFixStat(int Number, tChannelID ChannelID)
 {
   if (0 <= Number && Number < MAXEPGBUGFIXSTATS) {
      tEpgBugFixStats *p = &EpgBugFixStats[Number];
      p->hits++;
      int i = 0;
      for (; i < p->n; i++) {
-         if (p->serviceIDs[i] == ServiceID)
+         if (p->channelIDs[i] == ChannelID)
             break;
          }
      if (i == p->n && p->n < MAXEPGBUGFIXCHANS)
-        p->serviceIDs[p->n++] = ServiceID;
+        p->channelIDs[p->n++] = ChannelID;
      }
 }
 
@@ -435,33 +434,39 @@ static void ReportEpgBugFixStats(bool Reset = false)
          const char *delim = "\t";
          tEpgBugFixStats *p = &EpgBugFixStats[i];
          if (p->hits) {
-            if (!GotHits) {
-               dsyslog(LOG_INFO, "=====================");
-               dsyslog(LOG_INFO, "EPG bugfix statistics");
-               dsyslog(LOG_INFO, "=====================");
-               dsyslog(LOG_INFO, "IF SOMEBODY WHO IS IN CHARGE OF THE EPG DATA FOR ONE OF THE LISTED");
-               dsyslog(LOG_INFO, "CHANNELS READS THIS: PLEASE TAKE A LOOK AT THE FUNCTION cEventInfo::FixEpgBugs()");
-               dsyslog(LOG_INFO, "IN VDR/eit.c TO LEARN WHAT'S WRONG WITH YOUR DATA, AND FIX IT!");
-               dsyslog(LOG_INFO, "=====================");
-               dsyslog(LOG_INFO, "Fix\tHits\tChannels");
-               GotHits = true;
-               }
+            bool PrintedStats = false;
             char *q = buffer;
-            q += snprintf(q, sizeof(buffer) - (q - buffer), "%d\t%d", i, p->hits);
+            *buffer = 0;
             for (int c = 0; c < p->n; c++) {
-                cChannel *channel = Channels.GetByServiceID(p->serviceIDs[c]);
+                cChannel *channel = Channels.GetByChannelID(p->channelIDs[c], true);
                 if (channel) {
-                   q += snprintf(q, sizeof(buffer) - (q - buffer), "%s%s", delim, channel->name);
+                   if (!GotHits) {
+                      dsyslog("=====================");
+                      dsyslog("EPG bugfix statistics");
+                      dsyslog("=====================");
+                      dsyslog("IF SOMEBODY WHO IS IN CHARGE OF THE EPG DATA FOR ONE OF THE LISTED");
+                      dsyslog("CHANNELS READS THIS: PLEASE TAKE A LOOK AT THE FUNCTION cEventInfo::FixEpgBugs()");
+                      dsyslog("IN VDR/eit.c TO LEARN WHAT'S WRONG WITH YOUR DATA, AND FIX IT!");
+                      dsyslog("=====================");
+                      dsyslog("Fix\tHits\tChannels");
+                      GotHits = true;
+                      }
+                   if (!PrintedStats) {
+                      q += snprintf(q, sizeof(buffer) - (q - buffer), "%d\t%d", i, p->hits);
+                      PrintedStats = true;
+                      }
+                   q += snprintf(q, sizeof(buffer) - (q - buffer), "%s%s", delim, channel->Name());
                    delim = ", ";
                    }
                 }
-            dsyslog(LOG_INFO, "%s", buffer);
+            if (*buffer)
+               dsyslog("%s", buffer);
             }
          if (Reset)
             p->hits = p->n = 0;
          }
      if (GotHits)
-        dsyslog(LOG_INFO, "=====================");
+        dsyslog("=====================");
      }
 }
 
@@ -480,6 +485,32 @@ void cEventInfo::FixEpgBugs(void)
   // EPG data. Let's fix their bugs as good as we can:
   if (pTitle) {
 
+     // VOX puts too much information into the Subtitle and leaves the Extended
+     // Description empty:
+     //
+     // Title
+     // (NAT, Year Min')[ ["Subtitle". ]Extended Description]
+     //
+     if (pSubtitle && !pExtendedDescription) {
+        if (*pSubtitle == '(') {
+           char *e = strchr(pSubtitle + 1, ')');
+           if (e) {
+              if (*(e + 1)) {
+                 if (*++e == ' ')
+                    if (*(e + 1) == '"')
+                       e++;
+                 }
+              else
+                 e = NULL;
+              char *s = e ? strdup(e) : NULL;
+              free(pSubtitle);
+              pSubtitle = s;
+              EpgBugFixStat(0, GetChannelID());
+              // now the fixes #1 and #2 below will handle the rest
+              }
+           }
+        }
+
      // VOX and VIVA put the Subtitle in quotes and use either the Subtitle
      // or the Extended Description field, depending on how long the string is:
      //
@@ -495,11 +526,11 @@ void cEventInfo::FixEpgBugs(void)
               *e = 0;
               char *s = strdup(p + 1);
               char *d = strdup(e + strlen(delim));
-              delete pSubtitle;
-              delete pExtendedDescription;
+              free(pSubtitle);
+              free(pExtendedDescription);
               pSubtitle = s;
               pExtendedDescription = d;
-              EpgBugFixStat(0, GetServiceID());
+              EpgBugFixStat(1, GetChannelID());
               }
            }
         }
@@ -516,7 +547,7 @@ void cEventInfo::FixEpgBugs(void)
            memmove(pSubtitle, pSubtitle + 1, strlen(pSubtitle));
            pExtendedDescription = pSubtitle;
            pSubtitle = NULL;
-           EpgBugFixStat(1, GetServiceID());
+           EpgBugFixStat(2, GetChannelID());
            }
         }
 
@@ -526,9 +557,9 @@ void cEventInfo::FixEpgBugs(void)
      // Title
      //
      if (pSubtitle && strcmp(pTitle, pSubtitle) == 0) {
-        delete pSubtitle;
+        free(pSubtitle);
         pSubtitle = NULL;
-        EpgBugFixStat(2, GetServiceID());
+        EpgBugFixStat(3, GetChannelID());
         }
 
      // ZDF.info puts the Subtitle between double quotes, which is nothing
@@ -544,7 +575,7 @@ void cEventInfo::FixEpgBugs(void)
            char *p = strrchr(pSubtitle, '"');
            if (p)
               *p = 0;
-           EpgBugFixStat(3, GetServiceID());
+           EpgBugFixStat(4, GetChannelID());
            }
         }
 
@@ -565,11 +596,25 @@ void cEventInfo::FixEpgBugs(void)
               if (*p == '-' && *(p + 1) == ' ' && *(p + 2) && islower(*(p - 1)) && islower(*(p + 2))) {
                  if (!startswith(p + 2, "und ")) { // special case in German, as in "Lach- und Sachgeschichten"
                     memmove(p, p + 2, strlen(p + 2) + 1);
-                    EpgBugFixStat(4, GetServiceID());
+                    EpgBugFixStat(5, GetChannelID());
                     }
                  }
               p++;
               }
+        }
+
+#define MAX_USEFUL_SUBTITLE_LENGTH 40
+     // Some channels put a whole lot of information in the Subtitle and leave
+     // the Extended Description totally empty. So if the Subtitle length exceeds
+     // MAX_USEFUL_SUBTITLE_LENGTH, let's put this into the Extended Description
+     // instead:
+     if (!isempty(pSubtitle) && isempty(pExtendedDescription)) {
+        if (strlen(pSubtitle) > MAX_USEFUL_SUBTITLE_LENGTH) {
+           free(pExtendedDescription);
+           pExtendedDescription = pSubtitle;
+           pSubtitle = NULL;
+           EpgBugFixStat(6, GetChannelID());
+           }
         }
 
      // Some channels use the ` ("backtick") character, where a ' (single quote)
@@ -583,10 +628,10 @@ void cEventInfo::FixEpgBugs(void)
 
 // --- cSchedule -------------------------------------------------------------
 
-cSchedule::cSchedule(unsigned short servid)
+cSchedule::cSchedule(tChannelID channelid)
 {
    pPresent = pFollowing = NULL;
-   uServiceID = servid;
+   channelID = channelid;
 }
 
 
@@ -600,58 +645,34 @@ cEventInfo *cSchedule::AddEvent(cEventInfo *EventInfo)
   return EventInfo;
 }
 
-/**  */
-const cEventInfo * cSchedule::GetPresentEvent() const
+const cEventInfo *cSchedule::GetPresentEvent(void) const
 {
-   // checking temporal sanity of present event (kls 2000-11-01)
-   time_t now = time(NULL);
-//XXX   if (pPresent && !(pPresent->GetTime() <= now && now <= pPresent->GetTime() + pPresent->GetDuration()))
-   {
-      cEventInfo *pe = Events.First();
-      while (pe != NULL)
-      {
-         if (pe->GetTime() <= now && now <= pe->GetTime() + pe->GetDuration())
-            return pe;
-         pe = Events.Next(pe);
-      }
-   }
-   return NULL;//XXX
-   return pPresent;
+  return GetEventAround(time(NULL));
 }
-/**  */
-const cEventInfo * cSchedule::GetFollowingEvent() const
+
+const cEventInfo *cSchedule::GetFollowingEvent(void) const
 {
-   // checking temporal sanity of following event (kls 2000-11-01)
-   time_t now = time(NULL);
-   const cEventInfo *pr = GetPresentEvent(); // must have it verified!
-if (pr)//XXX   if (pFollowing && !(pr && pr->GetTime() + pr->GetDuration() <= pFollowing->GetTime()))
-   {
-      int minDt = INT_MAX;
-      cEventInfo *pe = Events.First(), *pf = NULL;
-      while (pe != NULL)
-      {
-         int dt = pe->GetTime() - now;
-         if (dt > 0 && dt < minDt)
-         {
-            minDt = dt;
-            pf = pe;
+  const cEventInfo *pe = NULL;
+  time_t now = time(NULL);
+  time_t delta = INT_MAX;
+  for (cEventInfo *p = Events.First(); p; p = Events.Next(p)) {
+      time_t dt = p->GetTime() - now;
+      if (dt > 0 && dt < delta) {
+         delta = dt;
+         pe = p;
          }
-         pe = Events.Next(pe);
       }
-      return pf;
-   }
-   return NULL;//XXX
-   return pFollowing;
+  return pe;
+}
+
+void cSchedule::SetChannelID(tChannelID channelid)
+{
+   channelID = channelid;
 }
 /**  */
-void cSchedule::SetServiceID(unsigned short servid)
+tChannelID cSchedule::GetChannelID() const
 {
-   uServiceID = servid;
-}
-/**  */
-unsigned short cSchedule::GetServiceID() const
-{
-   return uServiceID;
+   return channelID;
 }
 /**  */
 const cEventInfo * cSchedule::GetEvent(unsigned short uEventID, time_t tTime) const
@@ -672,21 +693,21 @@ const cEventInfo * cSchedule::GetEvent(unsigned short uEventID, time_t tTime) co
 
    return pt;
 }
-/**  */
-const cEventInfo * cSchedule::GetEventAround(time_t tTime) const
+
+const cEventInfo *cSchedule::GetEventAround(time_t Time) const
 {
-   cEventInfo *pe = Events.First();
-   while (pe != NULL)
-   {
-      if (pe->GetTime() <= tTime && tTime <= pe->GetTime() + pe->GetDuration())
-         return pe;
-
-      pe = Events.Next(pe);
-   }
-
-   return NULL;
+  const cEventInfo *pe = NULL;
+  time_t delta = INT_MAX;
+  for (cEventInfo *p = Events.First(); p; p = Events.Next(p)) {
+      time_t dt = Time - p->GetTime();
+      if (dt >= 0 && dt < delta && p->GetTime() + p->GetDuration() >= Time) {
+         delta = dt;
+         pe = p;
+         }
+      }
+  return pe;
 }
-/**  */
+
 bool cSchedule::SetPresentEvent(cEventInfo *pEvent)
 {
    if (pPresent != NULL)
@@ -734,10 +755,10 @@ void cSchedule::Cleanup(time_t tTime)
 /**  */
 void cSchedule::Dump(FILE *f, const char *Prefix) const
 {
-   cChannel *channel = Channels.GetByServiceID(uServiceID);
+   cChannel *channel = Channels.GetByChannelID(channelID, true);
    if (channel)
    {
-      fprintf(f, "%sC %u %s\n", Prefix, uServiceID, channel->name);
+      fprintf(f, "%sC %s %s\n", Prefix, channel->GetChannelID().ToString(), channel->Name());
       for (cEventInfo *p = Events.First(); p; p = Events.Next(p))
          p->Dump(f, Prefix);
       fprintf(f, "%sc\n", Prefix);
@@ -750,17 +771,27 @@ bool cSchedule::Read(FILE *f, cSchedules *Schedules)
      char *s;
      while ((s = readline(f)) != NULL) {
            if (*s == 'C') {
-              unsigned int uServiceID;
-              if (1 == sscanf(s + 1, "%u", &uServiceID)) {
-                 cSchedule *p = (cSchedule *)Schedules->SetCurrentServiceID(uServiceID);
-                 if (p) {
-                    if (!cEventInfo::Read(f, p))
-                       return false;
+              s = skipspace(s + 1);
+              char *p = strchr(s, ' ');
+              if (p)
+                 *p = 0; // strips optional channel name
+              if (*s) {
+                 tChannelID channelID = tChannelID::FromString(s);
+                 if (channelID.Valid()) {
+                    cSchedule *p = (cSchedule *)Schedules->AddChannelID(channelID);
+                    if (p) {
+                       if (!cEventInfo::Read(f, p))
+                          return false;
+                       }
+                    }
+                 else {
+                    esyslog("ERROR: illegal channel ID: %s", s);
+                    return false;
                     }
                  }
               }
            else {
-              esyslog(LOG_ERR, "ERROR: unexpected tag while reading EPG data: %s", s);
+              esyslog("ERROR: unexpected tag while reading EPG data: %s", s);
               return false;
               }
            }
@@ -774,27 +805,30 @@ bool cSchedule::Read(FILE *f, cSchedules *Schedules)
 cSchedules::cSchedules()
 {
    pCurrentSchedule = NULL;
-   uCurrentServiceID = 0;
 }
 
 cSchedules::~cSchedules()
 {
 }
 /**  */
-const cSchedule *cSchedules::SetCurrentServiceID(unsigned short servid)
+const cSchedule *cSchedules::AddChannelID(tChannelID channelid)
 {
-   pCurrentSchedule = GetSchedule(servid);
-   if (pCurrentSchedule == NULL)
-   {
-      Add(new cSchedule(servid));
-      pCurrentSchedule = GetSchedule(servid);
-      if (pCurrentSchedule == NULL)
-         return NULL;
-   }
-
-   uCurrentServiceID = servid;
-
-   return pCurrentSchedule;
+  channelid.ClrRid();
+  const cSchedule *p = GetSchedule(channelid);
+  if (!p) {
+     Add(new cSchedule(channelid));
+     p = GetSchedule(channelid);
+     }
+  return p;
+}
+/**  */
+const cSchedule *cSchedules::SetCurrentChannelID(tChannelID channelid)
+{
+  channelid.ClrRid();
+  pCurrentSchedule = AddChannelID(channelid);
+  if (pCurrentSchedule)
+     currentChannelID = channelid;
+  return pCurrentSchedule;
 }
 /**  */
 const cSchedule * cSchedules::GetSchedule() const
@@ -802,14 +836,15 @@ const cSchedule * cSchedules::GetSchedule() const
    return pCurrentSchedule;
 }
 /**  */
-const cSchedule * cSchedules::GetSchedule(unsigned short servid) const
+const cSchedule * cSchedules::GetSchedule(tChannelID channelid) const
 {
    cSchedule *p;
 
+   channelid.ClrRid();
    p = First();
    while (p != NULL)
    {
-      if (p->GetServiceID() == servid)
+      if (p->GetChannelID() == channelid)
          return p;
       p = Next(p);
    }
@@ -853,7 +888,7 @@ public:
    cEIT(unsigned char *buf, int length, cSchedules *Schedules);
    ~cEIT();
   /**  */
-  int ProcessEIT(unsigned char *buffer);
+  int ProcessEIT(unsigned char *buffer, int CurrentSource);
 
 protected: // Protected methods
   /** returns true if this EIT covers a
@@ -876,7 +911,7 @@ cEIT::~cEIT()
 }
 
 /**  */
-int cEIT::ProcessEIT(unsigned char *buffer)
+int cEIT::ProcessEIT(unsigned char *buffer, int CurrentSource)
 {
    cEventInfo *pEvent, *rEvent = NULL;
    cSchedule *pSchedule, *rSchedule = NULL;
@@ -890,15 +925,20 @@ int cEIT::ProcessEIT(unsigned char *buffer)
 
    if (VdrProgramInfos) {
       for (VdrProgramInfo = (struct VdrProgramInfo *) VdrProgramInfos->Head; VdrProgramInfo; VdrProgramInfo = (struct VdrProgramInfo *) xSucc (VdrProgramInfo)) {
-          pSchedule = (cSchedule *)schedules->GetSchedule(VdrProgramInfo->ServiceID);
+          //XXX TODO use complete channel ID
+          cChannel *channel = Channels.GetByServiceID(CurrentSource, VdrProgramInfo->ServiceID);
+          tChannelID channelID = channel ? channel->GetChannelID() : tChannelID(CurrentSource, 0, 0, VdrProgramInfo->ServiceID);
+          channelID.ClrRid();
+          //XXX
+          pSchedule = (cSchedule *)schedules->GetSchedule(channelID);
           if (!pSchedule) {
-             schedules->Add(new cSchedule(VdrProgramInfo->ServiceID));
-             pSchedule = (cSchedule *)schedules->GetSchedule(VdrProgramInfo->ServiceID);
+             schedules->Add(new cSchedule(channelID));
+             pSchedule = (cSchedule *)schedules->GetSchedule(channelID);
              if (!pSchedule)
                 break;
              }
           if (VdrProgramInfo->ReferenceServiceID) {
-             rSchedule = (cSchedule *)schedules->GetSchedule(VdrProgramInfo->ReferenceServiceID);
+             rSchedule = (cSchedule *)schedules->GetSchedule(tChannelID(CurrentSource, 0, 0, VdrProgramInfo->ReferenceServiceID));
              if (!rSchedule)
                 break;
              rEvent = (cEventInfo *)rSchedule->GetEvent((unsigned short)VdrProgramInfo->ReferenceEventID);
@@ -909,7 +949,7 @@ int cEIT::ProcessEIT(unsigned char *buffer)
           if (!pEvent) {
              // If we don't have that event ID yet, we create a new one.
              // Otherwise we copy the information into the existing event anyway, because the data might have changed.
-             pEvent = pSchedule->AddEvent(new cEventInfo(VdrProgramInfo->ServiceID, VdrProgramInfo->EventID));
+             pEvent = pSchedule->AddEvent(new cEventInfo(channelID, VdrProgramInfo->EventID));
              if (!pEvent)
                 break;
              pEvent->SetTableID(tid);
@@ -966,6 +1006,60 @@ bool cEIT::IsPresentFollowing()
    return false;
 }
 
+// --- cCaDescriptor ---------------------------------------------------------
+
+class cCaDescriptor : public cListObject {
+  friend class cSIProcessor;
+private:
+  int source;
+  int transponder;
+  int serviceId;
+  int caSystem;
+  unsigned int providerId;
+  int caPid;
+  int length;
+  uchar *data;
+public:
+  cCaDescriptor(int Source, int Transponder, int ServiceId, int CaSystem, unsigned int ProviderId, int CaPid, int Length, uchar *Data);
+  virtual ~cCaDescriptor();
+  int Length(void) const { return length; }
+  const uchar *Data(void) const { return data; }
+  };
+
+cCaDescriptor::cCaDescriptor(int Source, int Transponder, int ServiceId, int CaSystem, unsigned int ProviderId, int CaPid, int Length, uchar *Data)
+{
+  source = Source;
+  transponder = Transponder;
+  serviceId = ServiceId;
+  caSystem = CaSystem;
+  providerId = ProviderId;
+  caPid = CaPid;
+  length = Length + 6;
+  data = MALLOC(uchar, length);
+  data[0] = DESCR_CA;
+  data[1] = length - 2;
+  data[2] = (caSystem >> 8) & 0xFF;
+  data[3] =  caSystem       & 0xFF;
+  data[4] = ((CaPid   >> 8) & 0x1F) | 0xE0;
+  data[5] =   CaPid         & 0xFF;
+  if (Length)
+     memcpy(&data[6], Data, Length);
+//#define DEBUG_CA_DESCRIPTORS 1
+#ifdef DEBUG_CA_DESCRIPTORS
+  char buffer[1024];
+  char *q = buffer;
+  q += sprintf(q, "CAM: %04X %5d %5d %04X %6X %04X -", source, transponder, serviceId, caSystem, providerId, caPid);
+  for (int i = 0; i < length; i++)
+      q += sprintf(q, " %02X", data[i]);
+  dsyslog(buffer);
+#endif
+}
+
+cCaDescriptor::~cCaDescriptor()
+{
+  free(data);
+}
+
 // --- cSIProcessor ----------------------------------------------------------
 
 #define MAX_FILTERS 20
@@ -974,16 +1068,25 @@ bool cEIT::IsPresentFollowing()
 int cSIProcessor::numSIProcessors = 0;
 cSchedules *cSIProcessor::schedules = NULL;
 cMutex cSIProcessor::schedulesMutex;
+cList<cCaDescriptor> cSIProcessor::caDescriptors;
+cMutex cSIProcessor::caDescriptorsMutex;
 const char *cSIProcessor::epgDataFileName = EPGDATAFILENAME;
+time_t cSIProcessor::lastDump = time(NULL);
 
 /**  */
 cSIProcessor::cSIProcessor(const char *FileName)
 {
    fileName = strdup(FileName);
    masterSIProcessor = numSIProcessors == 0; // the first one becomes the 'master'
+   currentSource = 0;
+   currentTransponder = 0;
+   statusCount = 0;
+   pmtIndex = 0;
+   pmtPid = 0;
    filters = NULL;
-   if (!numSIProcessors++) // the first one creates it
+   if (!numSIProcessors++) { // the first one creates them
       schedules = new cSchedules;
+      }
    filters = (SIP_FILTER *)calloc(MAX_FILTERS, sizeof(SIP_FILTER));
    SetStatus(true);
    Start();
@@ -996,10 +1099,11 @@ cSIProcessor::~cSIProcessor()
    active = false;
    Cancel(3);
    ShutDownFilters();
-   delete filters;
-   if (!--numSIProcessors) // the last one deletes it
+   free(filters);
+   if (!--numSIProcessors) { // the last one deletes them
       delete schedules;
-   delete fileName;
+      }
+   free(fileName);
 }
 
 const cSchedules *cSIProcessor::Schedules(cMutexLock &MutexLock)
@@ -1015,7 +1119,7 @@ bool cSIProcessor::Read(FILE *f)
   if (OwnFile) {
      const char *FileName = GetEpgDataFileName();
      if (access(FileName, R_OK) == 0) {
-        dsyslog(LOG_INFO, "reading EPG data from %s", FileName);
+        dsyslog("reading EPG data from %s", FileName);
         if ((f = fopen(FileName, "r")) == NULL) {
            LOG_ERROR;
            return false;
@@ -1028,6 +1132,13 @@ bool cSIProcessor::Read(FILE *f)
   if (OwnFile)
      fclose(f);
   return result;
+}
+
+void cSIProcessor::Clear(void)
+{
+  cMutexLock MutexLock(&schedulesMutex);
+  delete schedules;
+  schedules = new cSchedules;
 }
 
 void cSIProcessor::SetEpgDataFileName(const char *FileName)
@@ -1046,30 +1157,35 @@ const char *cSIProcessor::GetEpgDataFileName(void)
 
 void cSIProcessor::SetStatus(bool On)
 {
+   LOCK_THREAD;
+   statusCount++;
    ShutDownFilters();
+   pmtIndex = 0;
+   pmtPid = 0;
    if (On)
    {
+      AddFilter(0x00, 0x00);  // PAT
       AddFilter(0x14, 0x70);  // TDT
       AddFilter(0x14, 0x73);  // TOT
-      AddFilter(0x12, 0x4e);  // event info, actual TS, present/following
-      AddFilter(0x12, 0x4f);  // event info, other TS, present/following
-      AddFilter(0x12, 0x50);  // event info, actual TS, schedule
-      AddFilter(0x12, 0x60);  // event info, other TS, schedule
-      AddFilter(0x12, 0x51);  // event info, actual TS, schedule for another 4 days
-      AddFilter(0x12, 0x61);  // event info, other TS, schedule for another 4 days
+      AddFilter(0x12, 0x4e, 0xfe);  // event info, actual(0x4e)/other(0x4f) TS, present/following
+      AddFilter(0x12, 0x50, 0xfe);  // event info, actual TS, schedule(0x50)/schedule for another 4 days(0x51)
+      AddFilter(0x12, 0x60, 0xfe);  // event info, other  TS, schedule(0x60)/schedule for another 4 days(0x61)
    }
 }
+
+#define PMT_SCAN_TIMEOUT  10 // seconds
 
 /** use the vbi device to parse all relevant SI
 information and let the classes corresponding
 to the tables write their information to the disk */
 void cSIProcessor::Action()
 {
-   dsyslog(LOG_INFO, "EIT processing thread started (pid=%d)%s", getpid(), masterSIProcessor ? " - master" : "");
+   dsyslog("EIT processing thread started (pid=%d)%s", getpid(), masterSIProcessor ? " - master" : "");
 
    time_t lastCleanup = time(NULL);
-   time_t lastDump = time(NULL);
+   time_t lastPmtScan = time(NULL);
 
+   int oldStatusCount = 0;
    active = true;
 
    while(active)
@@ -1082,7 +1198,7 @@ void cSIProcessor::Action()
          if (now - lastCleanup > 3600 && ptm->tm_hour == 5)
          {
             cMutexLock MutexLock(&schedulesMutex);
-            isyslog(LOG_INFO, "cleaning up schedules data");
+            isyslog("cleaning up schedules data");
             schedules->Cleanup();
             lastCleanup = now;
             ReportEpgBugFixStats(true);
@@ -1102,6 +1218,7 @@ void cSIProcessor::Action()
       }
 
       // set up pfd structures for all active filter
+      Lock();
       pollfd pfd[MAX_FILTERS];
       int NumUsedFilters = 0;
       for (int a = 0; a < MAX_FILTERS ; a++)
@@ -1113,27 +1230,68 @@ void cSIProcessor::Action()
             NumUsedFilters++;
          }
       }
+      oldStatusCount = statusCount;
+      Unlock();
 
       // wait until data becomes ready from the bitfilter
       if (poll(pfd, NumUsedFilters, 1000) != 0)
       {
-         for (int a = 0; a < NumUsedFilters ; a++)
+         for (int aa = 0; aa < NumUsedFilters; aa++)
          {
-            if (pfd[a].revents & POLLIN)
+            if (pfd[aa].revents & POLLIN)
             {
-               /* read section */
-               unsigned char buf[4096+1]; // max. allowed size for any EIT section (+1 for safety ;-)
-               if (safe_read(filters[a].handle, buf, 3) == 3)
+               int a;
+               for (a = 0; a < MAX_FILTERS; a++) {
+                   if (pfd[aa].fd == filters[a].handle)
+                      break;
+                   }
+               if (a >= MAX_FILTERS || !filters[a].inuse) // filter no longer available
+                  continue;
+               // read section
+               unsigned char buf[4096]; // max. allowed size for any EIT section
+               int r = safe_read(filters[a].handle, buf, sizeof(buf));
+               if (r > 3) // minimum number of bytes necessary to get section length
                {
-                  int seclen = ((buf[1] & 0x0F) << 8) | (buf[2] & 0xFF);
+                  int seclen = (((buf[1] & 0x0F) << 8) | (buf[2] & 0xFF)) + 3;
                   int pid = filters[a].pid;
-                  int n = safe_read(filters[a].handle, buf + 3, seclen);
-                  if (n == seclen)
+                  if (seclen == r)
                   {
-                     seclen += 3;
-                     //dsyslog(LOG_INFO, "Received pid 0x%02x with table ID 0x%02x and length of %04d\n", pid, buf[0], seclen);
+                     //dsyslog("Received pid 0x%04X with table ID 0x%02X and length of %4d\n", pid, buf[0], seclen);
+                     cMutexLock MutexLock(&schedulesMutex); // since the xMem... stuff is not thread safe, we need to use a "global" mutex
+                     LOCK_THREAD;
+                     if (statusCount != oldStatusCount)
+                        break;
                      switch (pid)
                      {
+                        case 0x00:
+                           if (buf[0] == 0x00)
+                           {
+                              if (pmtPid && time(NULL) - lastPmtScan > PMT_SCAN_TIMEOUT) {
+                                 DelFilter(pmtPid, 0x02);
+                                 pmtPid = 0;
+                                 pmtIndex++;
+                                 lastPmtScan = time(NULL);
+                                 }
+                              if (!pmtPid) {
+                                 struct LIST *pat = siParsePAT(buf);
+                                 if (pat) {
+                                    int Index = 0;
+                                    for (struct Program *prg = (struct Program *)pat->Head; prg; prg = (struct Program *)xSucc(prg)) {
+                                        if (prg->ProgramID) {
+                                           if (Index++ == pmtIndex) {
+                                              pmtPid = prg->NetworkPID;
+                                              AddFilter(pmtPid, 0x02);
+                                              break;
+                                              }
+                                           }
+                                        }
+                                    if (!pmtPid)
+                                       pmtIndex = 0;
+                                    }
+                                 xMemFreeAll(NULL);
+                                 }
+                           }
+                           break;
                         case 0x14:
                            if (buf[0] == 0x70)
                            {
@@ -1145,50 +1303,65 @@ void cSIProcessor::Action()
                            }
                               /*XXX this comes pretty often:
                            else
-                              dsyslog(LOG_INFO, "Time packet was not 0x70 but 0x%02x\n", (int)buf[0]);
+                              dsyslog("Time packet was not 0x70 but 0x%02x\n", (int)buf[0]);
                               XXX*/
                            break;
 
                         case 0x12:
                            if (buf[0] != 0x72)
                            {
-                              cMutexLock MutexLock(&schedulesMutex);
                               cEIT ceit(buf, seclen, schedules);
-                              ceit.ProcessEIT(buf);
+                              ceit.ProcessEIT(buf, currentSource);
                            }
-                           else
-                              dsyslog(LOG_INFO, "Received stuffing section in EIT\n");
+                           /*else
+                              dsyslog("Received stuffing section in EIT\n");
+                           */
                            break;
 
-                        default:
+                        default: {
+                           if (pid == pmtPid && buf[0] == 0x02 && currentSource && currentTransponder) {
+                              struct Pid *pi = siParsePMT(buf);
+                              if (pi) {
+                                 struct Descriptor *d;
+                                 for (d = (struct Descriptor *)pi->Descriptors->Head; d; d = (struct Descriptor *)xSucc(d))
+                                     NewCaDescriptor(d, pi->ProgramID);
+                                 // Also scan the PidInfo list for descriptors - some broadcasts send them only here.
+                                 for (struct PidInfo *p = (struct PidInfo *)pi->InfoList->Head; p; p = (struct PidInfo *)xSucc(p)) {
+                                     for (d = (struct Descriptor *)p->Descriptors->Head; d; d = (struct Descriptor *)xSucc(d))
+                                         NewCaDescriptor(d, pi->ProgramID);
+                                     }
+                                 }
+                              xMemFreeAll(NULL);
+                              lastPmtScan = 0; // this triggers the next scan
+                              }
+                           }
                            break;
                      }
                   }
-                  /*XXX this just fills up the log file - shouldn't we rather try to re-sync?
+                  /*
                   else
-                     dsyslog(LOG_INFO, "read incomplete section - seclen = %d, n = %d", seclen, n);
-                  XXX*/
+                     dsyslog("read incomplete section - seclen = %d, r = %d", seclen, r);
+                  */
                }
             }
          }
       }
    }
 
-   dsyslog(LOG_INFO, "EIT processing thread ended (pid=%d)%s", getpid(), masterSIProcessor ? " - master" : "");
+   dsyslog("EIT processing thread ended (pid=%d)%s", getpid(), masterSIProcessor ? " - master" : "");
 }
 
 /** Add a filter with packet identifier pid and
 table identifer tid */
-bool cSIProcessor::AddFilter(u_char pid, u_char tid)
+bool cSIProcessor::AddFilter(unsigned short pid, u_char tid, u_char mask)
 {
-   dmxSctFilterParams sctFilterParams;
+   dmx_sct_filter_params sctFilterParams;
+   memset(&sctFilterParams, 0, sizeof(sctFilterParams));
    sctFilterParams.pid = pid;
-   memset(&sctFilterParams.filter.filter, 0, DMX_FILTER_SIZE);
-   memset(&sctFilterParams.filter.mask, 0, DMX_FILTER_SIZE);
    sctFilterParams.timeout = 0;
    sctFilterParams.flags = DMX_IMMEDIATE_START;
    sctFilterParams.filter.filter[0] = tid;
-   sctFilterParams.filter.mask[0] = 0xFF;
+   sctFilterParams.filter.mask[0] = mask;
 
    for (int a = 0; a < MAX_FILTERS; a++)
    {
@@ -1202,22 +1375,37 @@ bool cSIProcessor::AddFilter(u_char pid, u_char tid)
                filters[a].inuse = true;
             else
             {
-               esyslog(LOG_ERR, "ERROR: can't set filter");
+               esyslog("ERROR: can't set filter (pid=%d, tid=%02X)", pid, tid);
                close(filters[a].handle);
                return false;
             }
-            // dsyslog(LOG_INFO, "  Registered filter handle %04x, pid = %02d, tid = %02d", filters[a].handle, filters[a].pid, filters[a].tid);
+            // dsyslog("Registered filter handle %04x, pid = %02d, tid = %02d", filters[a].handle, filters[a].pid, filters[a].tid);
          }
          else
          {
-            esyslog(LOG_ERR, "ERROR: can't open filter handle");
+            esyslog("ERROR: can't open filter handle");
             return false;
          }
          return true;
       }
    }
-   esyslog(LOG_ERR, "ERROR: too many filters");
+   esyslog("ERROR: too many filters");
 
+   return false;
+}
+
+bool cSIProcessor::DelFilter(unsigned short pid, u_char tid)
+{
+   for (int a = 0; a < MAX_FILTERS; a++)
+   {
+      if (filters[a].inuse && filters[a].pid == pid && filters[a].tid == tid)
+      {
+         close(filters[a].handle);
+         // dsyslog("Deregistered filter handle %04x, pid = %02d, tid = %02d", filters[a].handle, filters[a].pid, filters[a].tid);
+         filters[a].inuse = false;
+         return true;
+      }
+   }
    return false;
 }
 
@@ -1229,7 +1417,7 @@ bool cSIProcessor::ShutDownFilters(void)
       if (filters[a].inuse)
       {
          close(filters[a].handle);
-         // dsyslog(LOG_INFO, "Deregistered filter handle %04x, pid = %02d, tid = %02d", filters[a].handle, filters[a].pid, filters[a].tid);
+         // dsyslog("Deregistered filter handle %04x, pid = %02d, tid = %02d", filters[a].handle, filters[a].pid, filters[a].tid);
          filters[a].inuse = false;
       }
    }
@@ -1238,14 +1426,63 @@ bool cSIProcessor::ShutDownFilters(void)
 }
 
 /** */
-void cSIProcessor::SetCurrentTransponder(int CurrentTransponder)
+void cSIProcessor::SetCurrentTransponder(int CurrentSource, int CurrentTransponder)
 {
+  currentSource = CurrentSource;
   currentTransponder = CurrentTransponder;
 }
 
 /** */
-bool cSIProcessor::SetCurrentServiceID(unsigned short servid)
+bool cSIProcessor::SetCurrentChannelID(tChannelID channelid)
 {
   cMutexLock MutexLock(&schedulesMutex);
-  return schedules ? schedules->SetCurrentServiceID(servid) : false;
+  return schedules ? schedules->SetCurrentChannelID(channelid) : false;
+}
+
+void cSIProcessor::TriggerDump(void)
+{
+  cMutexLock MutexLock(&schedulesMutex);
+  lastDump = 0;
+}
+
+void cSIProcessor::NewCaDescriptor(struct Descriptor *d, int ServiceId)
+{
+  if (DescriptorTag(d) == DESCR_CA) {
+     struct CaDescriptor *cd = (struct CaDescriptor *)d;
+     cMutexLock MutexLock(&caDescriptorsMutex);
+
+     for (cCaDescriptor *ca = caDescriptors.First(); ca; ca = caDescriptors.Next(ca)) {
+         if (ca->source == currentSource && ca->transponder == currentTransponder && ca->serviceId == ServiceId && ca->caSystem == cd->CA_type && ca->providerId == cd->ProviderID && ca->caPid == cd->CA_PID)
+            return;
+         }
+     caDescriptors.Add(new cCaDescriptor(currentSource, currentTransponder, ServiceId, cd->CA_type, cd->ProviderID, cd->CA_PID, cd->DataLength, cd->Data));
+     //XXX update???
+     }
+}
+
+int cSIProcessor::GetCaDescriptors(int Source, int Transponder, int ServiceId, const unsigned short *CaSystemIds, int BufSize, uchar *Data)
+{
+  if (!CaSystemIds || !*CaSystemIds)
+     return 0;
+  if (BufSize > 0 && Data) {
+     cMutexLock MutexLock(&caDescriptorsMutex);
+     int length = 0;
+     for (cCaDescriptor *d = caDescriptors.First(); d; d = caDescriptors.Next(d)) {
+         if (d->source == Source && d->transponder == Transponder && d->serviceId == ServiceId) {
+            const unsigned short *caids = CaSystemIds;
+            do {
+               if (d->caSystem == *caids) {
+                  if (length + d->Length() <= BufSize) {
+                     memcpy(Data + length, d->Data(), d->Length());
+                     length += d->Length();
+                     }
+                  else
+                     return -1;
+                  }
+               } while (*++caids);
+            }
+         }
+     return length;
+     }
+  return -1;
 }
