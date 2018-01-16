@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: recording.c 1.83 2003/09/09 16:02:55 kls Exp $
+ * $Id: recording.c 1.86 2003/11/08 15:25:35 kls Exp $
  */
 
 #include "recording.h"
@@ -46,7 +46,7 @@
 #define SUMMARYFILESUFFIX "/summary.vdr"
 #define MARKSFILESUFFIX   "/marks.vdr"
 
-#define FINDCMD      "find %s -follow -type d -name '%s' 2> /dev/null"
+#define FINDCMD      "cd '%s' && find '%s' -follow -type d -name '%s' 2> /dev/null"
 
 #define MINDISKSPACE 1024 // MB
 
@@ -124,7 +124,7 @@ void AssertFreeDiskSpace(int Priority)
            cRecording *r = Recordings.First();
            cRecording *r0 = NULL;
            while (r) {
-                 if (r->lifetime < MAXLIFETIME) { // recordings with MAXLIFETIME live forever
+                 if (!r->IsEdited() && r->lifetime < MAXLIFETIME) { // edited recordings and recordings with MAXLIFETIME live forever
                     if ((r->lifetime == 0 && Priority > r->priority) || // the recording has no guaranteed lifetime and the new recording has higher priority
                         (time(NULL) - r->start) / SECSINDAY > r->lifetime) { // the recording's guaranteed lifetime has expired
                        if (r0) {
@@ -559,6 +559,13 @@ int cRecording::HierarchyLevels(void)
   return level;
 }
 
+bool cRecording::IsEdited(void)
+{
+  const char *s = strrchr(name, '~');
+  s = !s ? name : s + 1;
+  return *s == '%';
+}
+
 bool cRecording::WriteSummary(void)
 {
   if (summary) {
@@ -614,7 +621,7 @@ bool cRecordings::Load(bool Deleted)
   Clear();
   bool result = false;
   char *cmd = NULL;
-  asprintf(&cmd, FINDCMD, VideoDirectory, Deleted ? "*" DELEXT : "*" RECEXT);
+  asprintf(&cmd, FINDCMD, VideoDirectory, VideoDirectory, Deleted ? "*" DELEXT : "*" RECEXT);
   FILE *p = popen(cmd, "r");
   if (p) {
      char *s;
@@ -674,10 +681,8 @@ bool cMark::Parse(const char *s)
   const char *p = strchr(s, ' ');
   if (p) {
      p = skipspace(p);
-     if (*p) {
+     if (*p)
         comment = strdup(p);
-        comment[strlen(comment) - 1] = 0; // strips trailing newline
-        }
      }
   return true;
 }
