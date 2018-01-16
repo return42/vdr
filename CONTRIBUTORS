@@ -1382,6 +1382,10 @@ Marco Schlüßler <marco@lordzodiac.de>
  files than VDR itself
  for adding a missing initialization of 'mutex' in cCiMenu::cCiMenu() and removing
  some superfluous semicolons in ci.c
+ for pointing out what caused the problem with audio track descriptions after a
+ replay has been stopped
+ for reporting a problem with displaying the replay mode symbol in case of "Multi
+ speed mode"
 
 Jürgen Schmitz <j.schmitz@web.de>
  for reporting a bug in displaying the current channel when switching via the SVDRP
@@ -1468,6 +1472,8 @@ Udo Richter <udo_richter@gmx.de>
  for reporting a problem with cPlugin::ConfigDirectory() in case a plugin calls it
  from a separate thread
  for reporting that an assignment in svdrp.c didn't use the cTimer::operator=())
+ for suggesting that the function cThread::Cancel() should only set 'running' to
+ false and not actually kill the thread if the special value -1 is given
 
 Sven Kreiensen <svenk@kammer.uni-hannover.de>
  for his help in keeping 'channels.conf.terr' up to date
@@ -1821,6 +1827,17 @@ Petri Hintukainen <Petri.Hintukainen@hut.fi>
  the Makefile to avoid a crash in case a new version is installed on a running system
  for fixing handling video directory updates in case the timestamp of the .update
  file is in the future
+ for fixing handling video directory updates in case an other process has touched the
+ .update file after the last NeedsUpdate() check
+ for fixing a possible crash if cPluginManager::GetPlugin() is called with a NULL
+ pointer
+ for fixing displaying the error log message in case an unknown plugin was requested
+ in a key macro
+ for pointing out that keys from expanded key macros should be put into the front of
+ the key queue to avoid problems if the queue is not empty at that time
+ for making cRemote::PutMacro() set a lock while it expands the macro
+ for pointing out that plugins from cRemote::PutMacro() and cRemote::CallPlugin()
+ need to be handled separately
 
 Marcel Schaeben <mts280@gmx.de>
  for his "Easy Input" patch
@@ -2003,3 +2020,15 @@ Matthias Schwarzott <zzam@gentoo.org>
 
 Martin Ostermann <martin@familie-ostermann.de>
  for fixing processing the PDCDescriptor in 'libsi' on big endian systems
+
+Boguslaw Juza <bogdan@uci.agh.edu.pl>
+ for reporting that there are stations that use blanks in the language codes
+ for reporting that events without an ExtendedEventDescriptor may get duplicate
+ information in their ShortText through the EPG bugfixes in case they are received
+ again
+ for reporting a problem with language codes of recorded audio tracks on channels with
+ multiple tracks
+
+Ulf Kiener <webmaster@ulf-kiener.de>
+ for reporting a problem with audio track descriptions in the DVD plugin after a
+ replay has been stopped

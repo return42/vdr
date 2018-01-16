@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: i18n.c 1.282 2006/09/16 09:08:30 kls Exp $
+ * $Id: i18n.c 1.285 2006/10/14 09:26:41 kls Exp $
  *
  * Translations provided by:
  *
@@ -3582,7 +3582,7 @@ const tI18nPhrase Phrases[] = {
     "ÌïñöŞ áğåéêüíéóçò Âßíôåï",
     "Format för video display",
     "Formatul redãrii video",
-    "",//TODO
+    "Képerny¿formátum",
     "",//TODO
     "ÈØàŞÚŞíÚàĞİİŞÕ Ø×ŞÑàĞÖÕİØÕ",
     "Format video prikaza",
@@ -4596,7 +4596,7 @@ const tI18nPhrase Phrases[] = {
     " áÜâãäåİæçŞèéßêëìíîïüğñóòôõıö÷øùş0123456789-.#~,/_@abcdefghijklmnopqrstuvwxyz",
     " abcdefghijklmnopqrstuvwxyzåäö0123456789-.#~,/_@",
     " aãâbcdefghiîjklmnopqrsºtşuvwxyz0123456789-.#~,/_@",
-    " aábcdeéfghiíjklmnoóöpqrstuúüvwxyz0123456789-.,#~,/_@",
+    " aábcdeéfghiíjklmnoóö¿pqrstuúü¿vwxyz0123456789-.,#~,/_@",
     " aàbcçdeéèfghiíjklmnoòpqrstuúvwxyz0123456789-.,#~,/_@·",
     " abcdefghijklmnopqrstuvwxyzĞÑÒÓÔÕñÖ×ØÙÚÛÜİŞßàáâãäåæçèéêëìîï0123456789-.#~,/_@",
     " abcèædğefghijklmnopqrs¹tuvwxyz¾0123456789-.#~,/_@", // hrv
@@ -4619,7 +4619,7 @@ const tI18nPhrase Phrases[] = {
     "",//TODO
     " 0\t-.#~,/_@1\tabcåä2\tdef3\tghi4\tjkl5\tmnoö6\tpqrs7\ttuv8\twxyz",
     " 0\t-.#~,/_@1\taãâbc2\tdef3\tghiî4\tjkl5\tmno6\tpqrsº7\ttşuv8\twxyz9",
-    "",//TODO
+    " 0\t-.#~,/_@1\taábc2\tdeé3\tghií4\tjkl5\tmnoóö¿6\tpqrs7\ttuúü¿v8\twxyz9",
     "",//TODO
     "",//TODO
     "",//TODO
@@ -6243,12 +6243,31 @@ int I18nLanguageIndex(const char *Code)
 
 const char *I18nNormalizeLanguageCode(const char *Code)
 {
-  if (Code[0] && !isalnum(Code[0]) || Code[1] && !isalnum(Code[1]) || Code[2] && !isalnum(Code[2])) {
-     // ISO 639 language codes are defined as alphabetical characters, but digits are apparently
-     // also used, for instance for "2ch"
-     //dsyslog("invalid language code: '%s'", Code);
-     return "???";
-     }
+  for (int i = 0; i < 3; i++) {
+      if (Code[i]) {
+         // ETSI EN 300 468 defines language codes as consisting of three letters
+         // according to ISO 639-2. This means that they are supposed to always consist
+         // of exactly three letters in the range a-z - no digits, UTF-8 or other
+         // funny characters. However, some broadcasters apparently don't have a
+         // copy of the DVB standard (or they do, but are perhaps unable to read it),
+         // so they put all sorts of non-standard stuff into the language codes,
+         // like nonsense as "2ch" or "A 1" (yes, they even go as far as using
+         // blanks!). Such things should go into the description of the EPG event's
+         // ComponentDescriptor.
+         // So, as a workaround for this broadcaster stupidity, let's ignore
+         // language codes with unprintable characters...
+         if (!isprint(Code[i])) {
+            //dsyslog("invalid language code: '%s'", Code);
+            return "???";
+            }
+         // ...and replace blanks with underlines (ok, this breaks the 'const'
+         // of the Code parameter - but hey, it's them who started this):
+         if (Code[i] == ' ')
+            *((char *)&Code[i]) = '_';
+         }
+      else
+         break;
+      }
   int n = I18nLanguageIndex(Code);
   return n >= 0 ? I18nLanguageCode(n) : Code;
 }
