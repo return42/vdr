@@ -315,6 +315,10 @@ Rainer Zocholl <vdrcontrib@zocki.toppoint.de>
  for suggesting a confirmation prompt when the user presses the "Power" button
  and there is an upcoming timer event
  for reporting a bug in skipping the next hit of a repeating timer
+ for reporting a problem with staying off the end of an ongoing recording while
+ replaying in time shift mode
+ for suggesting that VDR should stop if one of the configuration files can't be
+ read correctly at program startup
 
 Oleg Assovski <assen@bitcom.msk.ru>
  for adding EPG scanning for another 4 days
@@ -328,6 +332,9 @@ Bernd Schweikert <bernd.schweikert@dit-gmbh.de>
 Mirko Günther <mi.guenther@ib-helms.de>
  for suggesting the -m command line option
  for suggesting the SVDRP command VOLU
+ for reporting a bug in keeping track of the current channel number when moving
+ channels in the "Channels" menu
+ for reporting a bug in toggling channels with the '0' key
 
 Achim Lange <Achim_Lange@t-online.de>
  for replacing 'killproc' with 'killall' in 'runvdr' to make it work on Debian
@@ -450,6 +457,7 @@ Jürgen Zimmermann <jnzimmer@informatik.uni-kl.de>
 
 Helmut Auer <vdr@helmutauer.de>
  for reporting a superfluous error message in cLockFile
+ for suggesting to make the "Zap timeout" a setup variable
 
 Jeremy Hall <jhall@UU.NET>
  for fixing an incomplete initialization of the filter parameters in eit.c
@@ -481,6 +489,12 @@ Oliver Endriss <o.endriss@gmx.de>
  the remote control keys
  for reporting a bug in reading 'epg.data' for channels with non-zero RID
  for fixing I/O handling in case an explicit controlling terminal is given
+ for fixing displaying still pictures, now using the driver's VIDEO_STILLPICTURE call
+ directly
+ for reporting and helping to debug dropping out of replay mode while viewing a
+ recording that is still going on
+ for fixing checking for VIDEO_STREAM_S in cRemux::SetBrokenLink()
+ for suggesting to add 'repeat' function keys '7' and '9'
 
 Reinhard Walter Buchner <rw.buchner@freenet.de>
  for adding some satellites to 'sources.conf'
@@ -536,6 +550,8 @@ Steffen Barszus <st_barszus@gmx.de>
  for reporting a bug in switching audio tracks in 'Transfer Mode' on the primary DVB device
  for making the program use the values of VIDEODIR and PLUGINDIR defined in Makefile
  or Makefile.config as defaults
+ for helping to debug a crash when using the --terminal option without having access
+ to the given terminal
 
 Peter Seyringer <e9425234@student.tuwien.ac.at>
  for reporting a bug in saving the polarization parameter of channels that have a
@@ -550,6 +566,8 @@ Régis Bossut <rbossut@auchan.com>
 
 Andreas Kool <akool@akool.de>
  for his help in keeping 'channels.conf.cable' up to date
+ for fixing the TS to PES repacker so that it works with MPEG1 streams
+ for reporting a problem with empty values in setup.conf
 
 Guy Roussin <guy.roussin@teledetection.fr>
  for suggesting not to display channel group delimiters without text
@@ -583,6 +601,8 @@ Sven Goethel <sgoethel@jausoft.com>
 
 Jan Rieger <jan@ricomp.de>
  for suggestions and testing raw keyboard input
+ for suggesting to make cOsdMenu::Display() virtual, which allows plugins to do some
+ additional processing after calling the base class function
 
 Walter Stroebel <walter.stroebel@lifeline.nl>
  for introducing "Doxygen" to document the VDR source code
@@ -612,6 +632,7 @@ Torsten Herz <torsten.herz@web.de>
  for fixing a possible deadlock when using the "Blue" button in the "Schedules" menu
  to switch to an other channel
  for reporting a wrong EPG bugfix code number for the MAX_USEFUL_SUBTITLE_LENGTH fix
+ for fixing a bug in resetting OSD color palettes
 
 Steffen Becker <stbecker@rbg.informatik.tu-darmstadt.de>
  for reporting a problem with CPU load peaks (in the EPG scanner)
@@ -637,6 +658,7 @@ Ludwig Nussel <ludwig.nussel@web.de>
  for fixing handling repeat function with LIRC
  for reporting a problem with the LIRC remote control trying to learn keys even if it
  couldn't connect to the LIRC daemon
+ for making the plugin library directory configurable via Make.config
 
 Thomas Koch <tom@harhar.net>
  for his support in keeping the Premiere World channels up to date in 'channels.conf'
@@ -689,6 +711,7 @@ Juri Haberland <juri@koschikode.com>
 Alfred Zastrow <vdr@zastrow4u.de>
  for suggesting to implement separate PausePriority and PauseLifetime parameters for
  the recordings created when pausing live video
+ for reporting two warnings when compiling with gcc 3.3.1
 
 Matthias Raus <matthias-raus@web.de>
  for reporting a problem with starting the editing process if no marks have been set
@@ -728,6 +751,7 @@ Jon Burgess <mplayer@jburgess.uklinux.net>
 
 Thomas Schmidt <thomas.schmidt@in.stud.tu-ilmenau.de>
  for reporting a crash when cancelling a newly created timer
+ for making 'diseqc.conf' a required file only if Setup.DiSEqC is activated
 
 Michael Walle <michael.walle@web.de>
  for reporting a bug in channel switching after Left/Right has been pressed
@@ -737,6 +761,7 @@ Thomas Keil <tk@commedia-group.com>
  that a channel only qualifies as "previous" if it has been selected for at least
  3 seconds
  for reporting a bug in handling the color buttons in the "Edit channel" menu
+ for adding a note about the config files of plugins to INSTALL
 
 Kenneth Aafløy <ke-aa@frisurf.no>
  for fixing checking CA capabilities with the dvb-kernel driver
@@ -744,3 +769,55 @@ Kenneth Aafløy <ke-aa@frisurf.no>
 Ernst Fürst <ernstfuerst@swissonline.ch>
  for reporting a crash in case a VFAT file system is used without compiling VDR
  with VFAT=1
+
+Reinhard Nissl <rnissl@gmx.de>
+ for reporting a name clash because of function crc32() in libdtv/libsi/si_parser.c
+ when using other libraries that also implement a function by that name
+ for reporting a bug in handling ':' characters in channel names when reading
+ channels.conf
+
+Richard Robson <richard_robson@beeb.net>
+ for reporting freezing replay if a timer starts while in Transfer Mode from the
+ device used by the timer, and the timer needs a different transponder
+
+Manfred Schmidt-Voigt <manfred.schmidt-voigt@mannitec.de>
+ for reporting a problem with runnign out of disk space while cutting in case
+ there are still deleted recordings to remove
+
+Javier Marcet <lists@marcet.info>
+ for reporting a problem when starting a recording on the primary device if there
+ is a replay session active
+
+Peter Waechtler <pwaechtler@mac.com>
+ for adding channels for DVB-T Hannover (Germany) to channels.cont.terr
+
+Robert Bartl <robert@bartl.priv.at>
+ for reporting a hangup in SVDRP when the client disappears without sending QUIT
+
+Sebastian Frei <sebastian@schnapsleichen.de>
+ for his support in keeping 'channels.conf' up-to-date.
+
+Rene Bartsch <ml@bartschnet.de>
+ for reporting a bug in setting the primary device in case none of the devices
+ provides an MPEG decoder
+
+Christoph Hermanns <christoph.hermanns@gmx.de>
+ for reporting a bug in handling the "Red" button in the "Schedules" menu in case
+ there are no events listed for a particular channel
+
+Oskar Signell <oskar@signell.net>
+ for pointing out a problem with setting an editing mark while in "Pause" mode,
+ where replay was not immediately positioned to the marked frame
+
+Dirk Essl <de@floydworld.de>
+ for reporting a wrong URL to the 'Doxygen' tool in INSTALL
+
+Hans Dingemans <hans.dingemans@tacticalops.nl>
+ for translating OSD texts to the Dutch language
+
+Alexander Wetzel <alexander.wetzel@web.de>
+ for suggesting to let VDR start up even if 'keymacros.conf' references a plugin
+ that is currently not loaded
+
+Marco Franceschetti <ordaz@quipo.it>
+ for updating 'ca.conf'

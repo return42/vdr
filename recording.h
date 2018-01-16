@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: recording.h 1.25 2002/10/19 15:48:52 kls Exp $
+ * $Id: recording.h 1.27 2003/09/09 16:00:56 kls Exp $
  */
 
 #ifndef __RECORDING_H
@@ -12,11 +12,14 @@
 
 #include <time.h>
 #include "config.h"
+#include "thread.h"
 #include "timers.h"
 #include "tools.h"
 
 void RemoveDeletedRecordings(void);
 void AssertFreeDiskSpace(int Priority = 0);
+     ///< The special Priority value -1 means that we shall get rid of any
+     ///< deleted recordings faster than normal (because we're cutting).
 
 class cResumeFile {
 private:
@@ -128,6 +131,7 @@ private:
   int size, last;
   tIndex *index;
   cResumeFile resumeFile;
+  cMutex mutex;
   bool CatchUp(int Index = -1);
 public:
   cIndexFile(const char *FileName, bool Record);

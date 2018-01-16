@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: channels.c 1.12 2003/04/26 09:57:48 kls Exp $
+ * $Id: channels.c 1.14 2003/09/09 18:55:26 kls Exp $
  */
 
 #include "channels.h"
@@ -315,6 +315,7 @@ const char *cChannel::ToText(void)
 
 bool cChannel::Parse(const char *s, bool AllowNonUniqueID)
 {
+  bool ok = true;
   if (*s == ':') {
      groupSep = true;
      if (*++s == '@' && *++s) {
@@ -346,7 +347,7 @@ bool cChannel::Parse(const char *s, bool AllowNonUniqueID)
         vpid  = ppid  = 0;
         apid1 = apid2 = 0;
         dpid1 = dpid2 = 0;
-        bool ok = false;
+        ok = false;
         if (parambuf && sourcebuf && vpidbuf && apidbuf) {
            ok = StringToParameters(parambuf) && (source = cSource::FromString(sourcebuf)) >= 0;
            char *p = strchr(vpidbuf, '+');
@@ -372,13 +373,12 @@ bool cChannel::Parse(const char *s, bool AllowNonUniqueID)
            esyslog("ERROR: channel data not unique!");
            return false;
            }
-        return ok;
         }
      else
         return false;
      }
   strreplace(name, '|', ':');
-  return true;
+  return ok;
 }
 
 bool cChannel::Save(FILE *f)
@@ -390,9 +390,9 @@ bool cChannel::Save(FILE *f)
 
 cChannels Channels;
 
-bool cChannels::Load(const char *FileName, bool AllowComments)
+bool cChannels::Load(const char *FileName, bool AllowComments, bool MustExist)
 {
-  if (cConfig<cChannel>::Load(FileName, AllowComments)) {
+  if (cConfig<cChannel>::Load(FileName, AllowComments, MustExist)) {
      ReNumber();
      return true;
      }

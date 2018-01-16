@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: dvbdevice.c 1.60 2003/05/24 13:23:51 kls Exp $
+ * $Id: dvbdevice.c 1.64 2003/09/06 13:19:33 kls Exp $
  */
 
 #include "dvbdevice.h"
@@ -74,6 +74,7 @@ private:
   cChannel channel;
   const char *diseqcCommands;
   bool active;
+  bool useCa;
   time_t startTime;
   eTunerStatus tunerStatus;
   cMutex mutex;
@@ -84,7 +85,7 @@ public:
   cDvbTuner(int Fd_Frontend, int CardIndex, fe_type_t FrontendType, cCiHandler *CiHandler);
   virtual ~cDvbTuner();
   bool IsTunedTo(const cChannel *Channel) const;
-  void Set(const cChannel *Channel, bool Tune);
+  void Set(const cChannel *Channel, bool Tune, bool UseCa);
   bool Locked(void) { return tunerStatus == tsLocked; }
   };
 
@@ -96,6 +97,7 @@ cDvbTuner::cDvbTuner(int Fd_Frontend, int CardIndex, fe_type_t FrontendType, cCi
   ciHandler = CiHandler;
   diseqcCommands = NULL;
   active = false;
+  useCa = false;
   tunerStatus = tsIdle;
   startTime = time(NULL);
   Start();
@@ -114,7 +116,7 @@ bool cDvbTuner::IsTunedTo(const cChannel *Channel) const
   return tunerStatus != tsIdle && channel.Source() == Channel->Source() && channel.Frequency() == Channel->Frequency();
 }
 
-void cDvbTuner::Set(const cChannel *Channel, bool Tune)
+void cDvbTuner::Set(const cChannel *Channel, bool Tune, bool UseCa)
 {
   cMutexLock MutexLock(&mutex);
   bool CaChange = !(Channel->GetChannelID() == channel.GetChannelID());
@@ -122,6 +124,7 @@ void cDvbTuner::Set(const cChannel *Channel, bool Tune)
      tunerStatus = tsSet;
   else if (tunerStatus == tsCam && CaChange)
      tunerStatus = tsTuned;
+  useCa = UseCa;
   if (Channel->Ca() && CaChange)
      startTime = time(NULL);
   channel = *Channel;
@@ -267,7 +270,7 @@ void cDvbTuner::Action(void)
               }
            if (tunerStatus >= tsLocked) {
               if (ciHandler) {
-                 if (ciHandler->Process()) {
+                 if (ciHandler->Process() && useCa) {
                     if (tunerStatus != tsCam) {//XXX TODO update in case the CA descriptors have changed
                        for (int Slot = 0; Slot < ciHandler->NumSlots(); Slot++) {
                            uchar buffer[2048];
@@ -525,6 +528,19 @@ void cDvbDevice::SetVideoFormat(bool VideoFormat16_9)
      CHECK(ioctl(fd_video, VIDEO_SET_FORMAT, VideoFormat16_9 ? VIDEO_FORMAT_16_9 : VIDEO_FORMAT_4_3));
 }
 
+eVideoSystem cDvbDevice::GetVideoSystem(void)
+{
+  eVideoSystem VideoSytem = vsPAL;
+  video_size_t vs;
+  if (ioctl(fd_video, VIDEO_GET_SIZE, &vs) == 0) {
+     if (vs.h == 480 || vs.h == 240)
+        VideoSytem = vsNTSC;
+     }
+  else
+     LOG_ERROR;
+  return VideoSytem;
+}
+
 //                            ptAudio        ptVideo        ptPcr        ptTeletext        ptDolby        ptOther
 dmx_pes_type_t PesTypes[] = { DMX_PES_AUDIO, DMX_PES_VIDEO, DMX_PES_PCR, DMX_PES_TELETEXT, DMX_PES_OTHER, DMX_PES_OTHER };
 
@@ -600,13 +616,12 @@ bool cDvbDevice::ProvidesChannel(const cChannel *Channel, int Priority, bool *Ne
 {
   bool result = false;
   bool hasPriority = Priority < 0 || Priority > this->Priority();
-  bool needsDetachReceivers = true;
+  bool needsDetachReceivers = false;
 
   if (ProvidesSource(Channel->Source()) && ProvidesCa(Channel->Ca())) {
      result = hasPriority;
      if (Receiving()) {
         if (dvbTuner->IsTunedTo(Channel)) {
-           needsDetachReceivers = false;
            if (!HasPid(Channel->Vpid())) {
 #ifdef DO_MULTIPLE_RECORDINGS
               if (Channel->Ca() > CACONFBASE)
@@ -623,6 +638,8 @@ bool cDvbDevice::ProvidesChannel(const cChannel *Channel, int Priority, bool *Ne
            else
               result = !IsPrimaryDevice() || Priority >= Setup.PrimaryLimit;
            }
+        else
+           needsDetachReceivers = true;
         }
      }
   if (NeedsDetachReceivers)
@@ -659,6 +676,7 @@ bool cDvbDevice::SetChannelDevice(const cChannel *Channel, bool LiveView)
   StartTransferMode = false;
 #endif
 
+  // XXX 1.3: use the same mechanism as below (!EITScanner.UsesDevice(this))
   if (EITScanner.Active()) {
      StartTransferMode = false;
      TurnOnLivePIDs = false;
@@ -676,7 +694,7 @@ bool cDvbDevice::SetChannelDevice(const cChannel *Channel, bool LiveView)
   if (TurnOffLivePIDs)
      TurnOffLiveMode();
 
-  dvbTuner->Set(Channel, DoTune);
+  dvbTuner->Set(Channel, DoTune, !EITScanner.UsesDevice(this)); //XXX 1.3: this is an ugly hack - find a cleaner solution
 
   // PID settings:
 
@@ -882,11 +900,49 @@ void cDvbDevice::StillPicture(const uchar *Data, int Length)
    If anybody ever finds out what could be changed so that VIDEO_STILLPICTURE
    could be used, please let me know!
    kls 2002-03-23
+   2003-08-30: apparently the driver can't handle PES data, so Oliver Endriss
+               <o.endriss@gmx.de> has changed this to strip all PES headers
+               and send pure ES data to the driver. Seems to work just fine!
+               Let's drop the VIDEO_STILLPICTURE_WORKS_WITH_VDR_FRAMES stuff
+               once this has proven to work in all cases.
 */
-//#define VIDEO_STILLPICTURE_WORKS_WITH_VDR_FRAMES
+#define VIDEO_STILLPICTURE_WORKS_WITH_VDR_FRAMES
 #ifdef VIDEO_STILLPICTURE_WORKS_WITH_VDR_FRAMES
-  video_still_picture sp = { (char *)Data, Length };
-  CHECK(ioctl(fd_video, VIDEO_STILLPICTURE, &sp));
+  if (Data[0] == 0x00 && Data[1] == 0x00 && Data[2] == 0x01 && (Data[3] & 0xF0) == 0xE0) {
+     // PES data
+     char *buf = MALLOC(char, Length);
+     if (!buf)
+        return;
+     int i = 0;
+     int blen = 0;
+     while (i < Length - 4) {
+           if (Data[i] == 0x00 && Data[i + 1] == 0x00 && Data[i + 2] == 0x01 && (Data[i + 3] & 0xF0) == 0xE0) {
+              // skip PES header
+              int offs = i + 6;
+              int len = Data[i + 4] * 256 + Data[i + 5];
+              // skip header extension
+              if ((Data[i + 6] & 0xC0) == 0x80) {
+                 offs += 3;
+                 offs += Data[i + 8];
+                 len -= 3;
+                 len -= Data[i + 8];
+                 }
+              memcpy(&buf[blen], &Data[offs], len);
+              i = offs + len;
+              blen += len;
+              }
+           else
+              i++;
+           }
+     video_still_picture sp = { buf, blen };
+     CHECK(ioctl(fd_video, VIDEO_STILLPICTURE, &sp));
+     free(buf);
+     }
+  else {
+     // non-PES data
+     video_still_picture sp = { (char *)Data, Length };
+     CHECK(ioctl(fd_video, VIDEO_STILLPICTURE, &sp));
+     }
 #else
 #define MIN_IFRAME 400000
   for (int i = MIN_IFRAME / Length + 1; i > 0; i--) {

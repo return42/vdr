@@ -8,7 +8,7 @@
  * the Linux DVB driver's 'tuxplayer' example and were rewritten to suit
  * VDR's needs.
  *
- * $Id: remux.c 1.15 2003/04/26 15:07:41 kls Exp $
+ * $Id: remux.c 1.17 2003/09/14 10:34:39 kls Exp $
  */
 
 /* The calling interface of the 'cRemux::Process()' function is defined
@@ -321,7 +321,6 @@ void cTS2PES::instant_repack(const uint8_t *Buf, int Count)
                      if ((flag1 & 0xC0) == 0x80 )
                         mpeg = 2;
                      else {
-                        esyslog("ERROR: error in data stream!");
                         hlength = 0;
                         which = 0;
                         mpeg = 1;
@@ -360,6 +359,9 @@ void cTS2PES::instant_repack(const uint8_t *Buf, int Count)
                write_ipack(&flag2, 1);
                write_ipack(&hlength, 1);
                }
+
+            if (mpeg == 1 && found == 7)
+               write_ipack(&flag1, 1);
 
             if (mpeg == 2 && (flag2 & PTS_ONLY) && found < 14) {
                while (c < Count && found < 14) {
@@ -670,7 +672,7 @@ XXX*/
 
 void cRemux::SetBrokenLink(uchar *Data, int Length)
 {
-  if (Length > 9 && Data[0] == 0 && Data[1] == 0 && Data[2] == 1 && (Data[3] & VIDEO_STREAM_S) == VIDEO_STREAM_S) {
+  if (Length > 9 && Data[0] == 0 && Data[1] == 0 && Data[2] == 1 && (Data[3] & 0xF0) == VIDEO_STREAM_S) {
      for (int i = Data[8] + 9; i < Length - 7; i++) { // +9 to skip video packet header
          if (Data[i] == 0 && Data[i + 1] == 0 && Data[i + 2] == 1 && Data[i + 3] == 0xB8) {
             if (!(Data[i + 7] & 0x40)) // set flag only if GOP is not closed

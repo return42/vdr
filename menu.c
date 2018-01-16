@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: menu.c 1.264 2003/08/03 09:38:37 kls Exp $
+ * $Id: menu.c 1.272 2003/09/14 10:49:28 kls Exp $
  */
 
 #include "menu.h"
@@ -25,6 +25,7 @@
 #include "sources.h"
 #include "status.h"
 #include "timers.h"
+#include "transfer.h"
 #include "videodir.h"
 
 #define MENUTIMEOUT     120 // seconds
@@ -763,6 +764,8 @@ eOSState cMenuChannels::Delete(void)
 
 void cMenuChannels::Move(int From, int To)
 {
+  int CurrentChannelNr = cDevice::CurrentChannel();
+  cChannel *CurrentChannel = Channels.GetByNumber(CurrentChannelNr);
   cChannel *FromChannel = GetChannel(From);
   cChannel *ToChannel = GetChannel(To);
   if (FromChannel && ToChannel) {
@@ -772,6 +775,8 @@ void cMenuChannels::Move(int From, int To)
      cOsdMenu::Move(From, To);
      Propagate();
      isyslog("channel %d moved to %d", FromNumber, ToNumber);
+     if (CurrentChannel && CurrentChannel->Number() != CurrentChannelNr)
+        Channels.SwitchTo(CurrentChannel->Number());
      }
 }
 
@@ -1245,7 +1250,7 @@ cMenuWhatsOn::cMenuWhatsOn(const cSchedules *Schedules, bool Now, int CurrentCha
 
   currentChannel = CurrentChannelNr;
   free(pArray);
-  SetHelp(tr("Record"), Now ? tr("Next") : tr("Now"), tr("Button$Schedule"), tr("Switch"));
+  SetHelp(Count() ? tr("Record") : NULL, Now ? tr("Next") : tr("Now"), tr("Button$Schedule"), tr("Switch"));
 }
 
 const cEventInfo *cMenuWhatsOn::ScheduleEventInfo(void)
@@ -1353,7 +1358,7 @@ cMenuSchedule::cMenuSchedule(void)
      cMenuWhatsOn::SetCurrentChannel(channel->Number());
      schedules = cSIProcessor::Schedules(mutexLock);
      PrepareSchedule(channel);
-     SetHelp(tr("Record"), tr("Now"), tr("Next"));
+     SetHelp(Count() ? tr("Record") : NULL, tr("Now"), tr("Next"));
      }
 }
 
@@ -1465,7 +1470,7 @@ eOSState cMenuSchedule::ProcessKey(eKeys Key)
            PrepareSchedule(channel);
            if (channel->Number() != cDevice::CurrentChannel()) {
               otherChannel = channel->Number();
-              SetHelp(tr("Record"), tr("Now"), tr("Next"), tr("Switch"));
+              SetHelp(Count() ? tr("Record") : NULL, tr("Now"), tr("Next"), tr("Switch"));
               }
            Display();
            }
@@ -2252,6 +2257,7 @@ cMenuSetupMisc::cMenuSetupMisc(void)
   Add(new cMenuEditIntItem( tr("Setup.Miscellaneous$Min. event timeout (min)"),   &data.MinEventTimeout));
   Add(new cMenuEditIntItem( tr("Setup.Miscellaneous$Min. user inactivity (min)"), &data.MinUserInactivity));
   Add(new cMenuEditIntItem( tr("Setup.Miscellaneous$SVDRP timeout (s)"),          &data.SVDRPTimeout));
+  Add(new cMenuEditIntItem( tr("Setup.Miscellaneous$Zap timeout (s)"),            &data.ZapTimeout));
 }
 
 // --- cMenuSetupPluginItem --------------------------------------------------
@@ -2997,6 +3003,8 @@ cRecordControl::cRecordControl(cDevice *Device, cTimer *Timer, bool Pause)
      else {
         Timers.Del(timer);
         Timers.Save();
+        if (!cReplayControl::LastReplayed()) // an instant recording, maybe from cRecordControls::PauseLiveVideo()
+           cReplayControl::SetRecording(fileName, Recording.Name());
         }
      timer = NULL;
      return;
@@ -3093,8 +3101,11 @@ bool cRecordControls::Start(cTimer *Timer, bool Pause)
      int Priority = Timer ? Timer->Priority() : Pause ? Setup.PausePriority : Setup.DefaultPriority;
      cDevice *device = cDevice::GetDevice(channel, Priority, &NeedsDetachReceivers);
      if (device) {
-        if (NeedsDetachReceivers)
+        if (NeedsDetachReceivers) {
            Stop(device);
+           if (device == cTransferControl::ReceiverDevice())
+              cControl::Shutdown(); // in case this device was used for Transfer Mode
+           }
         if (!device->SwitchChannel(channel, false)) {
            cThread::EmergencyExit(true);
            return false;
@@ -3520,6 +3531,10 @@ void cReplayControl::MarkToggle(void)
      else {
         marks.Add(Current);
         ShowTimed(2);
+        bool Play, Forward;
+        int Speed;
+        if (GetReplayMode(Play, Forward, Speed) && !Play)
+           Goto(Current, true);
         }
      marks.Save();
      }
@@ -3648,9 +3663,10 @@ eOSState cReplayControl::ProcessKey(eKeys Key)
       DoShowMode = false;
       switch (Key) {
         // Editing:
-        //XXX should we do this only when the ProgressDisplay is on???
         case kMarkToggle:      MarkToggle(); break;
+        case kMarkJumpBack|k_Repeat:
         case kMarkJumpBack:    MarkJump(false); break;
+        case kMarkJumpForward|k_Repeat:
         case kMarkJumpForward: MarkJump(true); break;
         case kMarkMoveBack|k_Repeat:
         case kMarkMoveBack:    MarkMove(false); break;
