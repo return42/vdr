@@ -4,13 +4,14 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: recorder.c 1.17 2006/01/08 11:01:25 kls Exp $
+ * $Id: recorder.c 1.19 2007/02/24 16:36:24 kls Exp $
  */
 
 #include "recorder.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <unistd.h>
+#include "shutdown.h"
 
 #define RECORDERBUFSIZE  MEGABYTE(5)
 
@@ -20,6 +21,8 @@
 
 #define MINFREEDISKSPACE    (512) // MB
 #define DISKCHECKINTERVAL   100 // seconds
+
+// --- cFileWriter -----------------------------------------------------------
 
 class cFileWriter : public cThread {
 private:
@@ -115,14 +118,16 @@ void cFileWriter::Action(void)
            }
         else if (time(NULL) - t > MAXBROKENTIMEOUT) {
            esyslog("ERROR: video data stream broken");
-           cThread::EmergencyExit(true);
+           ShutdownHandler.RequestEmergencyExit();
            t = time(NULL);
            }
         }
 }
 
-cRecorder::cRecorder(const char *FileName, int Ca, int Priority, int VPid, const int *APids, const int *DPids, const int *SPids)
-:cReceiver(Ca, Priority, VPid, APids, Setup.UseDolbyDigital ? DPids : NULL, SPids)
+// --- cRecorder -------------------------------------------------------------
+
+cRecorder::cRecorder(const char *FileName, tChannelID ChannelID, int Priority, int VPid, const int *APids, const int *DPids, const int *SPids)
+:cReceiver(ChannelID, Priority, VPid, APids, Setup.UseDolbyDigital ? DPids : NULL, SPids)
 ,cThread("recording")
 {
   // Make sure the disk is up and running:

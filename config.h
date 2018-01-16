@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: config.h 1.282.1.5 2007/05/12 09:07:16 kls Exp $
+ * $Id: config.h 1.310 2008/03/23 10:26:10 kls Exp $
  */
 
 #ifndef __CONFIG_H
@@ -17,17 +17,18 @@
 #include <time.h>
 #include <unistd.h>
 #include "i18n.h"
+#include "font.h"
 #include "tools.h"
 
 // VDR's own version number:
 
-#define VDRVERSION  "1.4.7"
-#define VDRVERSNUM   10407  // Version * 10000 + Major * 100 + Minor
+#define VDRVERSION  "1.6.0"
+#define VDRVERSNUM   10600  // Version * 10000 + Major * 100 + Minor
 
 // The plugin API's version number:
 
-#define APIVERSION  "1.4.5"
-#define APIVERSNUM   10405  // Version * 10000 + Major * 100 + Minor
+#define APIVERSION  "1.6.0"
+#define APIVERSNUM   10600  // Version * 10000 + Major * 100 + Minor
 
 // When loading plugins, VDR searches them by their APIVERSION, which
 // may be smaller than VDRVERSION in case there have been no changes to
@@ -198,7 +199,7 @@ private:
 public:
   // Also adjust cMenuSetup (menu.c) when adding parameters here!
   int __BeginData__;
-  int OSDLanguage;
+  char OSDLanguage[I18N_MAX_LOCALE_LEN];
   char OSDSkin[MaxSkinName];
   char OSDTheme[MaxThemeName];
   int PrimaryDVB;
@@ -206,7 +207,7 @@ public:
   int TimeoutRequChInfo;
   int MenuScrollPage;
   int MenuScrollWrap;
-  int MenuButtonCloses;
+  int MenuKeyCloses;
   int MarkInstantRecord;
   char NameInstantRecord[MaxFileName];
   int InstantRecordTime;
@@ -218,13 +219,18 @@ public:
   int TimeSource;
   int TimeTransponder;
   int MarginStart, MarginStop;
-  int AudioLanguages[I18nNumLanguages + 1];
-  int EPGLanguages[I18nNumLanguages + 1];
+  int AudioLanguages[I18N_MAX_LANGUAGES + 1];
+  int DisplaySubtitles;
+  int SubtitleLanguages[I18N_MAX_LANGUAGES + 1];
+  int SubtitleOffset;
+  int SubtitleFgTransparency, SubtitleBgTransparency;
+  int EPGLanguages[I18N_MAX_LANGUAGES + 1];
   int EPGScanTimeout;
   int EPGBugfixLevel;
   int EPGLinger;
   int SVDRPTimeout;
   int ZapTimeout;
+  int ChannelEntryTimeout;
   int PrimaryLimit;
   int DefaultPriority, DefaultLifetime;
   int PausePriority, PauseLifetime;
@@ -241,9 +247,17 @@ public:
   int OSDLeft, OSDTop, OSDWidth, OSDHeight;
   int OSDMessageTime;
   int UseSmallFont;
+  int AntiAlias;
+  char FontOsd[MAXFONTNAME];
+  char FontSml[MAXFONTNAME];
+  char FontFix[MAXFONTNAME];
+  int FontOsdSize;
+  int FontSmlSize;
+  int FontFixSize;
   int MaxVideoFileSize;
   int SplitEditedFiles;
   int MinEventTimeout, MinUserInactivity;
+  time_t NextWakeupTime;
   int MultiSpeedMode;
   int ShowReplayMode;
   int ResumeID;
@@ -252,6 +266,7 @@ public:
   int CurrentDolby;
   int InitialChannel;
   int InitialVolume;
+  int EmergencyExit;
   int __EndData__;
   cSetup(void);
   cSetup& operator= (const cSetup &s);

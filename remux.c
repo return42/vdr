@@ -11,13 +11,13 @@
  * The cRepacker family's code was originally written by Reinhard Nissl <rnissl@gmx.de>,
  * and adapted to the VDR coding style by Klaus.Schmidinger@cadsoft.de.
  *
- * $Id: remux.c 1.57 2006/12/01 14:46:25 kls Exp $
+ * $Id: remux.c 1.64 2007/11/25 13:56:03 kls Exp $
  */
 
 #include "remux.h"
 #include <stdlib.h>
 #include "channels.h"
-#include "thread.h"
+#include "shutdown.h"
 #include "tools.h"
 
 ePesHeader AnalyzePesHeader(const uchar *Data, int Count, int &PesPayloadOffset, bool *ContinuationHeader)
@@ -1555,6 +1555,13 @@ void cTS2PES::send_ipack(void)
             buf[7] = 0x00;
             buf[8] = 0x00;
             count = 9;
+            if (!repacker && subStreamId) {
+               buf[9] = subStreamId;
+               buf[10] = 1;
+               buf[11] = 0;
+               buf[12] = 1;
+               count = 13;
+               }
             break;
     case 1:
             buf[6] = 0x0F;
@@ -1742,13 +1749,13 @@ void cTS2PES::instant_repack(const uint8_t *Buf, int Count)
        case VIDEO_STREAM_S ... VIDEO_STREAM_E:
        case PRIVATE_STREAM1:
 
-            if (mpeg == 2 && found == 9) {
+            if (mpeg == 2 && found == 9 && count < found) { // make sure to not write the data twice by looking at count
                write_ipack(&flag1, 1);
                write_ipack(&flag2, 1);
                write_ipack(&hlength, 1);
                }
 
-            if (mpeg == 1 && found == mpeg1_required) {
+            if (mpeg == 1 && found == mpeg1_required && count < found) { // make sure to not write the data twice by looking at count
                write_ipack(&flag1, 1);
                if (mpeg1_required > 7) {
                   write_ipack(&flag2, 1);
@@ -1764,6 +1771,19 @@ void cTS2PES::instant_repack(const uint8_t *Buf, int Count)
                      }
                if (c == Count)
                   return;
+               }
+
+            if (!repacker && subStreamId) {
+               while (c < Count && found < (hlength + 9) && found < plength + 6) {
+                     write_ipack(Buf + c, 1);
+                     c++;
+                     found++;
+                     }
+               if (found == (hlength + 9)) {
+                  uchar sbuf[] = { 0x01, 0x00, 0x00 };
+                  write_ipack(&subStreamId, 1);
+                  write_ipack(sbuf, 3);
+                  }
                }
 
             while (c < Count && found < plength + 6) {
@@ -1849,6 +1869,29 @@ void cTS2PES::ts_to_pes(const uint8_t *Buf) // don't need count (=188)
      instant_repack(Buf + 4 + off, TS_SIZE - 4 - off);
 }
 
+// --- cRingBufferLinearPes --------------------------------------------------
+
+class cRingBufferLinearPes : public cRingBufferLinear {
+protected:
+  virtual int DataReady(const uchar *Data, int Count);
+public:
+  cRingBufferLinearPes(int Size, int Margin = 0, bool Statistics = false, const char *Description = NULL)
+  :cRingBufferLinear(Size, Margin, Statistics, Description) {}
+  };
+
+int cRingBufferLinearPes::DataReady(const uchar *Data, int Count)
+{
+  int c = cRingBufferLinear::DataReady(Data, Count);
+  if (!c && Count >= 6) {
+     if (!Data[0] && !Data[1] && Data[2] == 0x01) {
+        int Length = 6 + Data[4] * 256 + Data[5];
+        if (Length <= Count)
+           return Length;
+        }
+     }
+  return c;
+}
+
 // --- cRemux ----------------------------------------------------------------
 
 #define RESULTBUFFERSIZE KILOBYTE(256)
@@ -1856,13 +1899,13 @@ void cTS2PES::ts_to_pes(const uint8_t *Buf) // don't need count (=188)
 cRemux::cRemux(int VPid, const int *APids, const int *DPids, const int *SPids, bool ExitOnFailure)
 {
   exitOnFailure = ExitOnFailure;
-  isRadio = VPid == 0 || VPid == 1 || VPid == 0x1FFF;
+  noVideo = VPid == 0 || VPid == 1 || VPid == 0x1FFF;
   numUPTerrors = 0;
   synced = false;
   skipped = 0;
   numTracks = 0;
   resultSkipped = 0;
-  resultBuffer = new cRingBufferLinear(RESULTBUFFERSIZE, IPACKS, false, "Result");
+  resultBuffer = new cRingBufferLinearPes(RESULTBUFFERSIZE, IPACKS, false, "Result");
   resultBuffer->SetTimeouts(0, 100);
   if (VPid)
 #define TEST_cVideoRepacker
@@ -1888,13 +1931,11 @@ cRemux::cRemux(int VPid, const int *APids, const int *DPids, const int *SPids, b
      while (*DPids && numTracks < MAXTRACKS && n < MAXDPIDS)
            ts2pes[numTracks++] = new cTS2PES(*DPids++, resultBuffer, IPACKS, 0x00, 0x80 + n++, new cDolbyRepacker);
      }
-  /* future...
   if (SPids) {
      int n = 0;
      while (*SPids && numTracks < MAXTRACKS && n < MAXSPIDS)
-           ts2pes[numTracks++] = new cTS2PES(*SPids++, resultBuffer, IPACKS, 0x00, 0x28 + n++);
+           ts2pes[numTracks++] = new cTS2PES(*SPids++, resultBuffer, IPACKS, 0x00, 0x20 + n++);
      }
-  */
 }
 
 cRemux::~cRemux()
@@ -2011,7 +2052,7 @@ int cRemux::Put(const uchar *Data, int Count)
         esyslog("ERROR: no useful data seen within %d byte of video stream", skipped);
         skipped = -1;
         if (exitOnFailure)
-           cThread::EmergencyExit(true);
+           ShutdownHandler.RequestEmergencyExit();
         }
      else
         skipped += used;
@@ -2058,8 +2099,10 @@ uchar *cRemux::Get(int &Count, uchar *PictureType)
                if (pt != NO_PICTURE) {
                   if (pt < I_FRAME || B_FRAME < pt) {
                      esyslog("ERROR: unknown picture type '%d'", pt);
-                     if (++numUPTerrors > MAXNUMUPTERRORS && exitOnFailure)
-                        cThread::EmergencyExit(true);
+                     if (++numUPTerrors > MAXNUMUPTERRORS && exitOnFailure) {
+                        ShutdownHandler.RequestEmergencyExit();
+                        numUPTerrors = 0;
+                        }
                      }
                   else if (!synced) {
                      if (pt == I_FRAME) {
@@ -2080,7 +2123,7 @@ uchar *cRemux::Get(int &Count, uchar *PictureType)
                l = GetPacketLength(data, resultCount, i);
                if (l < 0)
                   return resultData;
-               if (isRadio) {
+               if (noVideo) {
                   if (!synced) {
                      if (PictureType)
                         *PictureType = I_FRAME;

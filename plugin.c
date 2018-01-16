@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: plugin.c 1.24 2006/10/14 09:49:16 kls Exp $
+ * $Id: plugin.c 1.28 2008/02/17 13:32:12 kls Exp $
  */
 
 #include "plugin.h"
@@ -35,12 +35,12 @@ cPlugin::cPlugin(void)
 
 cPlugin::~cPlugin()
 {
-  I18nRegister(NULL, Name());
 }
 
 void cPlugin::SetName(const char *s)
 {
   name = s;
+  I18nRegister(name);
 }
 
 const char *cPlugin::CommandLineHelp(void)
@@ -78,6 +78,11 @@ void cPlugin::MainThreadHook(void)
 cString cPlugin::Active(void)
 {
   return NULL;
+}
+
+time_t cPlugin::WakeupTime(void)
+{
+  return 0;
 }
 
 const char *cPlugin::MainMenuEntry(void)
@@ -125,9 +130,9 @@ cString cPlugin::SVDRPCommand(const char *Command, const char *Option, int &Repl
   return NULL;
 }
 
-void cPlugin::RegisterI18n(const tI18nPhrase * const Phrases)
+void cPlugin::RegisterI18n(const void *)
 {
-  I18nRegister(Phrases, Name());
+  dsyslog("plugin '%s' called obsolete function RegisterI18n()", Name());
 }
 
 void cPlugin::SetConfigDirectory(const char *Dir)
@@ -137,12 +142,11 @@ void cPlugin::SetConfigDirectory(const char *Dir)
 
 const char *cPlugin::ConfigDirectory(const char *PluginName)
 {
-  static char *buffer = NULL;
+  static cString buffer;
   if (!cThread::IsMainThread())
      esyslog("ERROR: plugin '%s' called cPlugin::ConfigDirectory(), which is not thread safe!", PluginName ? PluginName : "<no name given>");
-  free(buffer);
-  asprintf(&buffer, "%s/plugins%s%s", configDirectory, PluginName ? "/" : "", PluginName ? PluginName : "");
-  return MakeDirs(buffer, true) ? buffer : NULL;
+  buffer = cString::sprintf("%s/plugins%s%s", configDirectory, PluginName ? "/" : "", PluginName ? PluginName : "");
+  return MakeDirs(buffer, true) ? *buffer : NULL;
 }
 
 // --- cDll ------------------------------------------------------------------
@@ -312,10 +316,7 @@ void cPluginManager::AddPlugin(const char *Args)
   char *p = strchr(s, ' ');
   if (p)
      *p = 0;
-  char *buffer = NULL;
-  asprintf(&buffer, "%s/%s%s%s%s", directory, LIBVDR_PREFIX, s, SO_INDICATOR, APIVERSION);
-  dlls.Add(new cDll(buffer, Args));
-  free(buffer);
+  dlls.Add(new cDll(cString::sprintf("%s/%s%s%s%s", directory, LIBVDR_PREFIX, s, SO_INDICATOR, APIVERSION), Args));
   free(s);
 }
 
@@ -333,10 +334,7 @@ bool cPluginManager::InitializePlugins(void)
   for (cDll *dll = dlls.First(); dll; dll = dlls.Next(dll)) {
       cPlugin *p = dll->Plugin();
       if (p) {
-         int Language = Setup.OSDLanguage;
-         Setup.OSDLanguage = 0; // the i18n texts are only available _after_ Start()
          isyslog("initializing plugin: %s (%s): %s", p->Name(), p->Version(), p->Description());
-         Setup.OSDLanguage = Language;
          if (!p->Initialize())
             return false;
          }
@@ -349,10 +347,7 @@ bool cPluginManager::StartPlugins(void)
   for (cDll *dll = dlls.First(); dll; dll = dlls.Next(dll)) {
       cPlugin *p = dll->Plugin();
       if (p) {
-         int Language = Setup.OSDLanguage;
-         Setup.OSDLanguage = 0; // the i18n texts are only available _after_ Start()
          isyslog("starting plugin: %s", p->Name());
-         Setup.OSDLanguage = Language;
          if (!p->Start())
             return false;
          p->started = true;
@@ -401,6 +396,26 @@ bool cPluginManager::Active(const char *Prompt)
          }
      }
   return false;
+}
+
+cPlugin *cPluginManager::GetNextWakeupPlugin(void)
+{
+  cPlugin *NextPlugin = NULL;
+  if (pluginManager) {
+     time_t Now = time(NULL);
+     time_t Next = 0;
+     for (cDll *dll = pluginManager->dlls.First(); dll; dll = pluginManager->dlls.Next(dll)) {
+         cPlugin *p = dll->Plugin();
+         if (p) {
+            time_t t = p->WakeupTime();
+            if (t > Now && (!Next || t < Next)) {
+               Next = t;
+               NextPlugin = p;
+               }
+            }
+         }
+     }
+  return NextPlugin;
 }
 
 bool cPluginManager::HasPlugins(void)

@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: device.c 1.137 2006/09/03 10:13:25 kls Exp $
+ * $Id: device.c 1.157 2008/03/09 10:03:34 kls Exp $
  */
 
 #include "device.h"
@@ -18,6 +18,75 @@
 #include "receiver.h"
 #include "status.h"
 #include "transfer.h"
+
+// --- cLiveSubtitle ---------------------------------------------------------
+
+#define LIVESUBTITLEBUFSIZE  KILOBYTE(100)
+
+class cLiveSubtitle : public cReceiver, public cThread {
+private:
+  cRingBufferLinear *ringBuffer;
+  cRemux *remux;
+protected:
+  virtual void Activate(bool On);
+  virtual void Receive(uchar *Data, int Length);
+  virtual void Action(void);
+public:
+  cLiveSubtitle(int SPid);
+  virtual ~cLiveSubtitle();
+  };
+
+cLiveSubtitle::cLiveSubtitle(int SPid)
+:cReceiver(tChannelID(), -1, SPid)
+,cThread("live subtitle")
+{
+  ringBuffer = new cRingBufferLinear(LIVESUBTITLEBUFSIZE, TS_SIZE * 2, true, "Live Subtitle");
+  int NoPids = 0;
+  int SPids[] = { SPid, 0 };
+  remux = new cRemux(0, &NoPids, &NoPids, SPids);
+}
+
+cLiveSubtitle::~cLiveSubtitle()
+{
+  cReceiver::Detach();
+  delete remux;
+  delete ringBuffer;
+}
+
+void cLiveSubtitle::Activate(bool On)
+{
+  if (On)
+     Start();
+  else
+     Cancel(3);
+}
+
+void cLiveSubtitle::Receive(uchar *Data, int Length)
+{
+  if (Running()) {
+     int p = ringBuffer->Put(Data, Length);
+     if (p != Length && Running())
+        ringBuffer->ReportOverflow(Length - p);
+     }
+}
+
+void cLiveSubtitle::Action(void)
+{
+  while (Running()) {
+        int Count;
+        uchar *b = ringBuffer->Get(Count);
+        if (b) {
+           Count = remux->Put(b, Count);
+           if (Count)
+              ringBuffer->Del(Count);
+           }
+        b = remux->Get(Count);
+        if (b) {
+           Count = cDevice::PrimaryDevice()->PlaySubtitle(b, Count);
+           remux->Del(Count);
+           }
+        }
+}
 
 // --- cPesAssembler ---------------------------------------------------------
 
@@ -140,12 +209,16 @@ int cPesAssembler::PacketSize(const uchar *data)
 // The default priority for non-primary devices:
 #define DEFAULTPRIORITY  -1
 
+// The minimum number of unknown PS1 packets to consider this a "pre 1.3.19 private stream":
+#define MIN_PRE_1_3_19_PRIVATESTREAM 10
+
 int cDevice::numDevices = 0;
 int cDevice::useDevice = 0;
 int cDevice::nextCardIndex = 0;
 int cDevice::currentChannel = 1;
 cDevice *cDevice::device[MAXDEVICES] = { NULL };
 cDevice *cDevice::primaryDevice = NULL;
+cDevice *cDevice::avoidDevice = NULL;
 
 cDevice::cDevice(void)
 {
@@ -164,12 +237,18 @@ cDevice::cDevice(void)
   sdtFilter = NULL;
   nitFilter = NULL;
 
-  ciHandler = NULL;
+  camSlot = NULL;
+  startScrambleDetection = 0;
+
   player = NULL;
   pesAssembler = new cPesAssembler;
   ClrAvailableTracks();
   currentAudioTrack = ttNone;
   currentAudioTrackMissingCount = 0;
+  currentSubtitleTrack = ttNone;
+  liveSubtitle = NULL;
+  dvbSubtitleConverter = NULL;
+  autoSelectPreferredSubtitleLanguage = true;
 
   for (int i = 0; i < MAXRECEIVERS; i++)
       receiver[i] = NULL;
@@ -183,14 +262,9 @@ cDevice::cDevice(void)
 cDevice::~cDevice()
 {
   Detach(player);
-  for (int i = 0; i < MAXRECEIVERS; i++)
-      Detach(receiver[i]);
-  delete ciHandler;
-  delete nitFilter;
-  delete sdtFilter;
-  delete patFilter;
-  delete eitFilter;
-  delete sectionHandler;
+  DetachAllReceivers();
+  delete liveSubtitle;
+  delete dvbSubtitleConverter;
   delete pesAssembler;
 }
 
@@ -199,8 +273,10 @@ bool cDevice::WaitForAllDevicesReady(int Timeout)
   for (time_t t0 = time(NULL); time(NULL) - t0 < Timeout; ) {
       bool ready = true;
       for (int i = 0; i < numDevices; i++) {
-          if (device[i] && !device[i]->Ready())
+          if (device[i] && !device[i]->Ready()) {
              ready = false;
+             cCondWait::SleepMs(100);
+             }
           }
       if (ready)
          return true;
@@ -249,6 +325,7 @@ bool cDevice::SetPrimaryDevice(int n)
      primaryDevice = device[n];
      primaryDevice->MakePrimaryDevice(true);
      primaryDevice->SetVideoFormat(Setup.VideoFormat);
+     primaryDevice->SetVolumeDevice(Setup.CurrentVolume);
      return true;
      }
   esyslog("ERROR: invalid primary device number: %d", n + 1);
@@ -278,37 +355,106 @@ cDevice *cDevice::GetDevice(int Index)
   return (0 <= Index && Index < numDevices) ? device[Index] : NULL;
 }
 
-cDevice *cDevice::GetDevice(const cChannel *Channel, int Priority, bool *NeedsDetachReceivers)
+cDevice *cDevice::GetDevice(const cChannel *Channel, int Priority, bool LiveView)
 {
-  cDevice *d = NULL;
-  uint Impact = 0xFFFFFFFF; // we're looking for a device with the least impact
-  for (int i = 0; i < numDevices; i++) {
-      bool ndr;
-      if (device[i]->ProvidesChannel(Channel, Priority, &ndr)) { // this device is basicly able to do the job
-         // Put together an integer number that reflects the "impact" using
-         // this device would have on the overall system. Each condition is represented
-         // by one bit in the number (or several bits, if the condition is actually
-         // a numeric value). The sequence in which the conditions are listed corresponds
-         // to their individual severity, where the one listed first will make the most
-         // difference, because it results in the most significant bit of the result.
-         uint imp = 0;
-         imp <<= 1; imp |= !device[i]->Receiving() || ndr;                         // use receiving devices if we don't need to detach existing receivers
-         imp <<= 1; imp |= device[i]->Receiving();                                 // avoid devices that are receiving
-         imp <<= 1; imp |= device[i] == cTransferControl::ReceiverDevice();        // avoid the Transfer Mode receiver device
-         imp <<= 8; imp |= min(max(device[i]->Priority() + MAXPRIORITY, 0), 0xFF); // use the device with the lowest priority (+MAXPRIORITY to assure that values -99..99 can be used)
-         imp <<= 8; imp |= min(max(device[i]->ProvidesCa(Channel), 0), 0xFF);      // use the device that provides the lowest number of conditional access methods
-         imp <<= 1; imp |= device[i]->IsPrimaryDevice();                           // avoid the primary device
-         imp <<= 1; imp |= device[i]->HasDecoder();                                // avoid full featured cards
-         if (imp < Impact) {
-            // This device has less impact than any previous one, so we take it.
-            Impact = imp;
-            d = device[i];
-            if (NeedsDetachReceivers)
-               *NeedsDetachReceivers = ndr;
+  cDevice *AvoidDevice = avoidDevice;
+  avoidDevice = NULL;
+  // Collect the current priorities of all CAM slots that can decrypt the channel:
+  int NumCamSlots = CamSlots.Count();
+  int SlotPriority[NumCamSlots];
+  int NumUsableSlots = 0;
+  if (Channel->Ca() >= CA_ENCRYPTED_MIN) {
+     for (cCamSlot *CamSlot = CamSlots.First(); CamSlot; CamSlot = CamSlots.Next(CamSlot)) {
+         SlotPriority[CamSlot->Index()] = MAXPRIORITY + 1; // assumes it can't be used
+         if (CamSlot->ModuleStatus() == msReady) {
+            if (CamSlot->ProvidesCa(Channel->Caids())) {
+               if (!ChannelCamRelations.CamChecked(Channel->GetChannelID(), CamSlot->SlotNumber())) {
+                  SlotPriority[CamSlot->Index()] = CamSlot->Priority();
+                  NumUsableSlots++;
+                  }
+               }
             }
          }
+     if (!NumUsableSlots)
+        return NULL; // no CAM is able to decrypt this channel
+     }
+
+  bool NeedsDetachReceivers = false;
+  cDevice *d = NULL;
+  cCamSlot *s = NULL;
+
+  uint32_t Impact = 0xFFFFFFFF; // we're looking for a device with the least impact
+  for (int j = 0; j < NumCamSlots || !NumUsableSlots; j++) {
+      if (NumUsableSlots && SlotPriority[j] > MAXPRIORITY)
+         continue; // there is no CAM available in this slot
+      for (int i = 0; i < numDevices; i++) {
+          if (device[i] == AvoidDevice)
+             continue; // this device shall be temporarily avoided
+          if (Channel->Ca() && Channel->Ca() <= CA_DVB_MAX && Channel->Ca() != device[i]->CardIndex() + 1)
+             continue; // a specific card was requested, but not this one
+          if (NumUsableSlots && !CamSlots.Get(j)->Assign(device[i], true))
+             continue; // CAM slot can't be used with this device
+          bool ndr;
+          if (device[i]->ProvidesChannel(Channel, Priority, &ndr)) { // this device is basicly able to do the job
+             if (NumUsableSlots && device[i]->CamSlot() && device[i]->CamSlot() != CamSlots.Get(j))
+                ndr = true; // using a different CAM slot requires detaching receivers
+             // Put together an integer number that reflects the "impact" using
+             // this device would have on the overall system. Each condition is represented
+             // by one bit in the number (or several bits, if the condition is actually
+             // a numeric value). The sequence in which the conditions are listed corresponds
+             // to their individual severity, where the one listed first will make the most
+             // difference, because it results in the most significant bit of the result.
+             uint32_t imp = 0;
+             imp <<= 1; imp |= LiveView ? !device[i]->IsPrimaryDevice() || ndr : 0;                                  // prefer the primary device for live viewing if we don't need to detach existing receivers
+             imp <<= 1; imp |= !device[i]->Receiving() && (device[i] != cTransferControl::ReceiverDevice() || device[i]->IsPrimaryDevice()) || ndr; // use receiving devices if we don't need to detach existing receivers, but avoid primary device in local transfer mode
+             imp <<= 1; imp |= device[i]->Receiving();                                                               // avoid devices that are receiving
+             imp <<= 1; imp |= device[i] == cTransferControl::ReceiverDevice();                                      // avoid the Transfer Mode receiver device
+             imp <<= 8; imp |= min(max(device[i]->Priority() + MAXPRIORITY, 0), 0xFF);                               // use the device with the lowest priority (+MAXPRIORITY to assure that values -99..99 can be used)
+             imp <<= 8; imp |= min(max((NumUsableSlots ? SlotPriority[j] : 0) + MAXPRIORITY, 0), 0xFF);              // use the CAM slot with the lowest priority (+MAXPRIORITY to assure that values -99..99 can be used)
+             imp <<= 1; imp |= ndr;                                                                                  // avoid devices if we need to detach existing receivers
+             imp <<= 1; imp |= device[i]->IsPrimaryDevice();                                                         // avoid the primary device
+             imp <<= 1; imp |= NumUsableSlots ? 0 : device[i]->HasCi();                                              // avoid cards with Common Interface for FTA channels
+             imp <<= 1; imp |= device[i]->HasDecoder();                                                              // avoid full featured cards
+             imp <<= 1; imp |= NumUsableSlots ? !ChannelCamRelations.CamDecrypt(Channel->GetChannelID(), j + 1) : 0; // prefer CAMs that are known to decrypt this channel
+             if (imp < Impact) {
+                // This device has less impact than any previous one, so we take it.
+                Impact = imp;
+                d = device[i];
+                NeedsDetachReceivers = ndr;
+                if (NumUsableSlots)
+                   s = CamSlots.Get(j);
+                }
+             }
+          }
+      if (!NumUsableSlots)
+         break; // no CAM necessary, so just one loop over the devices
       }
+  if (d) {
+     if (NeedsDetachReceivers)
+        d->DetachAllReceivers();
+     if (s) {
+        if (s->Device() != d) {
+           if (s->Device())
+              s->Device()->DetachAllReceivers();
+           if (d->CamSlot())
+              d->CamSlot()->Assign(NULL);
+           s->Assign(d);
+           }
+        }
+     else if (d->CamSlot() && !d->CamSlot()->IsDecrypting())
+        d->CamSlot()->Assign(NULL);
+     }
   return d;
+}
+
+bool cDevice::HasCi(void)
+{
+  return false;
+}
+
+void cDevice::SetCamSlot(cCamSlot *CamSlot)
+{
+  camSlot = CamSlot;
 }
 
 void cDevice::Shutdown(void)
@@ -422,8 +568,8 @@ bool cDevice::AddPid(int Pid, ePidType PidType)
               DelPid(Pid, PidType);
               return false;
               }
-           if (ciHandler)
-              ciHandler->SetPid(Pid, true);
+           if (camSlot)
+              camSlot->SetPid(Pid, true);
            }
         PRINTPIDS("a");
         return true;
@@ -451,8 +597,8 @@ bool cDevice::AddPid(int Pid, ePidType PidType)
            DelPid(Pid, PidType);
            return false;
            }
-        if (ciHandler)
-           ciHandler->SetPid(Pid, true);
+        if (camSlot)
+           camSlot->SetPid(Pid, true);
         }
      }
   return true;
@@ -479,8 +625,8 @@ void cDevice::DelPid(int Pid, ePidType PidType)
            if (pidHandles[n].used == 0) {
               pidHandles[n].handle = -1;
               pidHandles[n].pid = 0;
-              if (ciHandler)
-                 ciHandler->SetPid(Pid, false);
+              if (camSlot)
+                 camSlot->SetPid(Pid, false);
               }
            }
         PRINTPIDS("E");
@@ -504,9 +650,30 @@ void cDevice::StartSectionHandler(void)
      }
 }
 
+void cDevice::StopSectionHandler(void)
+{
+  if (sectionHandler) {
+     delete nitFilter;
+     delete sdtFilter;
+     delete patFilter;
+     delete eitFilter;
+     delete sectionHandler;
+     nitFilter = NULL;
+     sdtFilter = NULL;
+     patFilter = NULL;
+     eitFilter = NULL;
+     sectionHandler = NULL;
+     }
+}
+
 int cDevice::OpenFilter(u_short Pid, u_char Tid, u_char Mask)
 {
   return -1;
+}
+
+void cDevice::CloseFilter(int Handle)
+{
+  close(Handle);
 }
 
 void cDevice::AttachFilter(cFilter *Filter)
@@ -557,8 +724,10 @@ bool cDevice::MaySwitchTransponder(void)
 
 bool cDevice::SwitchChannel(const cChannel *Channel, bool LiveView)
 {
-  if (LiveView)
+  if (LiveView) {
      isyslog("switching to channel %d", Channel->Number());
+     cControl::Shutdown(); // prevents old channel from being shown too long if GetDevice() takes longer
+     }
   for (int i = 3; i--;) {
       switch (SetChannel(Channel, LiveView)) {
         case scrOk:           return true;
@@ -578,12 +747,13 @@ bool cDevice::SwitchChannel(int Direction)
   bool result = false;
   Direction = sgn(Direction);
   if (Direction) {
+     cControl::Shutdown(); // prevents old channel from being shown too long if GetDevice() takes longer
      int n = CurrentChannel() + Direction;
      int first = n;
      cChannel *channel;
      while ((channel = Channels.GetByNumber(n, Direction)) != NULL) {
            // try only channels which are currently available
-           if (PrimaryDevice()->ProvidesChannel(channel, Setup.PrimaryLimit) || PrimaryDevice()->CanReplay() && GetDevice(channel, 0))
+           if (GetDevice(channel, 0, true))
               break;
            n = channel->Number() + Direction;
            }
@@ -604,17 +774,15 @@ bool cDevice::SwitchChannel(int Direction)
 
 eSetChannelResult cDevice::SetChannel(const cChannel *Channel, bool LiveView)
 {
-  if (LiveView)
+  if (LiveView) {
      StopReplay();
+     DELETENULL(liveSubtitle);
+     DELETENULL(dvbSubtitleConverter);
+     }
 
-  // If this card is switched to an other transponder, any receivers still
-  // attached to it need to be automatically detached:
-  bool NeedsDetachReceivers = false;
+  cDevice *Device = (LiveView && IsPrimaryDevice()) ? GetDevice(Channel, 0, LiveView) : this;
 
-  // If this card can't receive this channel, we must not actually switch
-  // the channel here, because that would irritate the driver when we
-  // start replaying in Transfer Mode immediately after switching the channel:
-  bool NeedsTransferMode = (LiveView && IsPrimaryDevice() && !ProvidesChannel(Channel, Setup.PrimaryLimit, &NeedsDetachReceivers));
+  bool NeedsTransferMode = Device != this;
 
   eSetChannelResult Result = scrOk;
 
@@ -622,14 +790,10 @@ eSetChannelResult cDevice::SetChannel(const cChannel *Channel, bool LiveView)
   // use the card that actually can receive it and transfer data from there:
 
   if (NeedsTransferMode) {
-     cDevice *CaDevice = GetDevice(Channel, 0, &NeedsDetachReceivers);
-     if (CaDevice && CanReplay()) {
+     if (Device && CanReplay()) {
         cStatus::MsgChannelSwitch(this, 0); // only report status if we are actually going to switch the channel
-        if (CaDevice->SetChannel(Channel, false) == scrOk) { // calling SetChannel() directly, not SwitchChannel()!
-           if (NeedsDetachReceivers)
-              CaDevice->DetachAllReceivers();
-           cControl::Launch(new cTransferControl(CaDevice, Channel->Vpid(), Channel->Apids(), Channel->Dpids(), Channel->Spids()));
-           }
+        if (Device->SetChannel(Channel, false) == scrOk) // calling SetChannel() directly, not SwitchChannel()!
+           cControl::Launch(new cTransferControl(Device, Channel->GetChannelID(), Channel->Vpid(), Channel->Apids(), Channel->Dpids(), Channel->Spids()));
         else
            Result = scrNoTransfer;
         }
@@ -644,27 +808,10 @@ eSetChannelResult cDevice::SetChannel(const cChannel *Channel, bool LiveView)
         sectionHandler->SetStatus(false);
         sectionHandler->SetChannel(NULL);
         }
-     // Tell the ciHandler about the channel switch and add all PIDs of this
+     // Tell the camSlot about the channel switch and add all PIDs of this
      // channel to it, for possible later decryption:
-     if (ciHandler) {
-        ciHandler->SetSource(Channel->Source(), Channel->Transponder());
-// Men at work - please stand clear! ;-)
-#ifdef XXX_DO_MULTIPLE_CA_CHANNELS
-        if (Channel->Ca() >= CA_ENCRYPTED_MIN) {
-#endif
-           ciHandler->AddPid(Channel->Sid(), Channel->Vpid(), 2);
-           for (const int *Apid = Channel->Apids(); *Apid; Apid++)
-               ciHandler->AddPid(Channel->Sid(), *Apid, 4);
-           for (const int *Dpid = Channel->Dpids(); *Dpid; Dpid++)
-               ciHandler->AddPid(Channel->Sid(), *Dpid, 0);
-#ifdef XXX_DO_MULTIPLE_CA_CHANNELS
-           bool CanDecrypt = ciHandler->CanDecrypt(Channel->Sid());//XXX
-           dsyslog("CanDecrypt %d %d %d %s", CardIndex() + 1, CanDecrypt, Channel->Number(), Channel->Name());//XXX
-           }
-#endif
-        }
-     if (NeedsDetachReceivers)
-        DetachAllReceivers();
+     if (camSlot)
+        camSlot->AddChannel(Channel);
      if (SetChannelDevice(Channel, LiveView)) {
         // Start section handling:
         if (sectionHandler) {
@@ -672,8 +819,8 @@ eSetChannelResult cDevice::SetChannel(const cChannel *Channel, bool LiveView)
            sectionHandler->SetStatus(true);
            }
         // Start decrypting any PIDs that might have been set in SetChannelDevice():
-        if (ciHandler)
-           ciHandler->StartDecrypting();
+        if (camSlot)
+           camSlot->StartDecrypting();
         }
      else
         Result = scrFailed;
@@ -691,8 +838,11 @@ eSetChannelResult cDevice::SetChannel(const cChannel *Channel, bool LiveView)
            for (int i = 0; i < MAXDPIDS; i++)
                SetAvailableTrack(ttDolby, i, Channel->Dpid(i), Channel->Dlang(i));
            }
+        for (int i = 0; i < MAXSPIDS; i++)
+            SetAvailableTrack(ttSubtitle, i, Channel->Spid(i), Channel->Slang(i));
         if (!NeedsTransferMode)
            EnsureAudioTrack(true);
+        EnsureSubtitleTrack();
         }
      cStatus::MsgChannelSwitch(this, Channel->Number()); // only report status if channel switch successfull
      }
@@ -742,6 +892,10 @@ void cDevice::SetDigitalAudioDevice(bool On)
 }
 
 void cDevice::SetAudioTrackDevice(eTrackType Type)
+{
+}
+
+void cDevice::SetSubtitleTrackDevice(eTrackType Type)
 {
 }
 
@@ -800,10 +954,11 @@ void cDevice::ClrAvailableTracks(bool DescriptionsOnly, bool IdsOnly)
         }
      else
         memset(availableTracks, 0, sizeof(availableTracks));
-     pre_1_3_19_PrivateStream = false;
+     pre_1_3_19_PrivateStream = 0;
      SetAudioChannel(0); // fall back to stereo
      currentAudioTrackMissingCount = 0;
      currentAudioTrack = ttNone;
+     currentSubtitleTrack = ttNone;
      }
 }
 
@@ -811,18 +966,23 @@ bool cDevice::SetAvailableTrack(eTrackType Type, int Index, uint16_t Id, const c
 {
   eTrackType t = eTrackType(Type + Index);
   if (Type == ttAudio && IS_AUDIO_TRACK(t) ||
-      Type == ttDolby && IS_DOLBY_TRACK(t)) {
+      Type == ttDolby && IS_DOLBY_TRACK(t) ||
+      Type == ttSubtitle && IS_SUBTITLE_TRACK(t)) {
      if (Language)
         strn0cpy(availableTracks[t].language, Language, sizeof(availableTracks[t].language));
      if (Description)
-        strn0cpy(availableTracks[t].description, Description, sizeof(availableTracks[t].description));
+        Utf8Strn0Cpy(availableTracks[t].description, Description, sizeof(availableTracks[t].description));
      if (Id) {
         availableTracks[t].id = Id; // setting 'id' last to avoid the need for extensive locking
-        int numAudioTracks = NumAudioTracks();
-        if (!availableTracks[currentAudioTrack].id && numAudioTracks && currentAudioTrackMissingCount++ > numAudioTracks * 10)
-           EnsureAudioTrack();
-        else if (t == currentAudioTrack)
-           currentAudioTrackMissingCount = 0;
+        if (Type == ttAudio || Type == ttDolby) {
+           int numAudioTracks = NumAudioTracks();
+           if (!availableTracks[currentAudioTrack].id && numAudioTracks && currentAudioTrackMissingCount++ > numAudioTracks * 10)
+              EnsureAudioTrack();
+           else if (t == currentAudioTrack)
+              currentAudioTrackMissingCount = 0;
+           }
+        else if (Type == ttSubtitle && autoSelectPreferredSubtitleLanguage)
+           EnsureSubtitleTrack();
         }
      return true;
      }
@@ -836,19 +996,29 @@ const tTrackId *cDevice::GetTrack(eTrackType Type)
   return (ttNone < Type && Type < ttMaxTrackTypes) ? &availableTracks[Type] : NULL;
 }
 
-int cDevice::NumAudioTracks(void) const
+int cDevice::NumTracks(eTrackType FirstTrack, eTrackType LastTrack) const
 {
   int n = 0;
-  for (int i = ttAudioFirst; i <= ttDolbyLast; i++) {
+  for (int i = FirstTrack; i <= LastTrack; i++) {
       if (availableTracks[i].id)
          n++;
       }
   return n;
 }
 
+int cDevice::NumAudioTracks(void) const
+{
+  return NumTracks(ttAudioFirst, ttDolbyLast);
+}
+
+int cDevice::NumSubtitleTracks(void) const
+{
+  return NumTracks(ttSubtitleFirst, ttSubtitleLast);
+}
+
 bool cDevice::SetCurrentAudioTrack(eTrackType Type)
 {
-  if (ttNone < Type && Type < ttDolbyLast) {
+  if (ttNone < Type && Type <= ttDolbyLast) {
      cMutexLock MutexLock(&mutexCurrentAudioTrack);
      if (IS_DOLBY_TRACK(Type))
         SetDigitalAudioDevice(true);
@@ -859,6 +1029,34 @@ bool cDevice::SetCurrentAudioTrack(eTrackType Type)
         SetAudioTrackDevice(currentAudioTrack);
      if (IS_AUDIO_TRACK(Type))
         SetDigitalAudioDevice(false);
+     return true;
+     }
+  return false;
+}
+
+bool cDevice::SetCurrentSubtitleTrack(eTrackType Type, bool Manual)
+{
+  if (Type == ttNone || IS_SUBTITLE_TRACK(Type)) {
+     currentSubtitleTrack = Type;
+     autoSelectPreferredSubtitleLanguage = !Manual;
+     if (dvbSubtitleConverter)
+        dvbSubtitleConverter->Reset();
+     if (Type == ttNone && dvbSubtitleConverter) {
+        cMutexLock MutexLock(&mutexCurrentSubtitleTrack);
+        DELETENULL(dvbSubtitleConverter);
+        }
+     DELETENULL(liveSubtitle);
+     if (player)
+        player->SetSubtitleTrack(currentSubtitleTrack, GetTrack(currentSubtitleTrack));
+     else
+        SetSubtitleTrackDevice(currentSubtitleTrack);
+     if (currentSubtitleTrack != ttNone && !Replaying() && !Transferring()) {
+        const tTrackId *TrackId = GetTrack(currentSubtitleTrack);
+        if (TrackId && TrackId->id) {
+           liveSubtitle = new cLiveSubtitle(TrackId->id);
+           AttachReceiver(liveSubtitle);
+           }
+        }
      return true;
      }
   return false;
@@ -895,6 +1093,25 @@ void cDevice::EnsureAudioTrack(bool Force)
      }
 }
 
+void cDevice::EnsureSubtitleTrack(void)
+{
+  if (Setup.DisplaySubtitles) {
+     eTrackType PreferredTrack = ttNone;
+     int LanguagePreference = INT_MAX; // higher than the maximum possible value
+     for (int i = ttSubtitleFirst; i <= ttSubtitleLast; i++) {
+         const tTrackId *TrackId = GetTrack(eTrackType(i));
+         if (TrackId && TrackId->id && I18nIsPreferredLanguage(Setup.SubtitleLanguages, TrackId->language, LanguagePreference))
+            PreferredTrack = eTrackType(i);
+         }
+     // Make sure we're set to an available subtitle track:
+     const tTrackId *Track = GetTrack(GetCurrentSubtitleTrack());
+     if (!Track || !Track->id || PreferredTrack != GetCurrentSubtitleTrack())
+        SetCurrentSubtitleTrack(PreferredTrack);
+     }
+  else
+     SetCurrentSubtitleTrack(ttNone);
+}
+
 bool cDevice::CanReplay(void) const
 {
   return HasDecoder();
@@ -917,6 +1134,8 @@ void cDevice::TrickSpeed(int Speed)
 void cDevice::Clear(void)
 {
   Audios.ClearAudio();
+  if (dvbSubtitleConverter)
+     dvbSubtitleConverter->Reset();
 }
 
 void cDevice::Play(void)
@@ -945,7 +1164,7 @@ bool cDevice::Replaying(void) const
 
 bool cDevice::Transferring(void) const
 {
-  return dynamic_cast<cTransfer *>(player) != NULL;
+  return ActualDevice() != PrimaryDevice();
 }
 
 bool cDevice::AttachPlayer(cPlayer *Player)
@@ -953,6 +1172,8 @@ bool cDevice::AttachPlayer(cPlayer *Player)
   if (CanReplay()) {
      if (player)
         Detach(player);
+     DELETENULL(liveSubtitle);
+     DELETENULL(dvbSubtitleConverter);
      pesAssembler->Reset();
      player = Player;
      if (!Transferring())
@@ -968,9 +1189,13 @@ bool cDevice::AttachPlayer(cPlayer *Player)
 void cDevice::Detach(cPlayer *Player)
 {
   if (Player && player == Player) {
-     player->Activate(false);
-     player->device = NULL;
-     player = NULL;
+     cPlayer *p = player;
+     player = NULL; // avoids recursive calls to Detach()
+     p->Activate(false);
+     p->device = NULL;
+     cMutexLock MutexLock(&mutexCurrentSubtitleTrack);
+     delete dvbSubtitleConverter;
+     dvbSubtitleConverter = NULL;
      SetPlayMode(pmNone);
      SetVideoDisplayFormat(eVideoDisplayFormat(Setup.VideoDisplayFormat));
      Audios.ClearAudio();
@@ -1006,6 +1231,13 @@ int cDevice::PlayAudio(const uchar *Data, int Length, uchar Id)
   return -1;
 }
 
+int cDevice::PlaySubtitle(const uchar *Data, int Length)
+{
+  if (!dvbSubtitleConverter)
+     dvbSubtitleConverter = new cDvbSubtitleConverter;
+  return dvbSubtitleConverter->Convert(Data, Length);
+}
+
 int cDevice::PlayPesPacket(const uchar *Data, int Length, bool VideoOnly)
 {
   cMutexLock MutexLock(&mutexCurrentAudioTrack);
@@ -1023,7 +1255,7 @@ int cDevice::PlayPesPacket(const uchar *Data, int Length, bool VideoOnly)
                break;
           case 0xC0 ... 0xDF: // audio
                SetAvailableTrack(ttAudio, c - 0xC0, c);
-               if (!VideoOnly && c == availableTracks[currentAudioTrack].id) {
+               if ((!VideoOnly || HasIBPTrickSpeed()) && c == availableTracks[currentAudioTrack].id) {
                   w = PlayAudio(Start, d, c);
                   if (FirstLoop)
                      Audios.PlayAudio(Data, Length, c);
@@ -1031,25 +1263,35 @@ int cDevice::PlayPesPacket(const uchar *Data, int Length, bool VideoOnly)
                break;
           case 0xBD: { // private stream 1
                int PayloadOffset = Data[8] + 9;
+
+               // Compatibility mode for old subtitles plugin:
+               if ((Data[7] & 0x01) && (Data[PayloadOffset - 3] & 0x81) == 0x01 && Data[PayloadOffset - 2] == 0x81)
+                  PayloadOffset--;
+
                uchar SubStreamId = Data[PayloadOffset];
                uchar SubStreamType = SubStreamId & 0xF0;
                uchar SubStreamIndex = SubStreamId & 0x1F;
 
                // Compatibility mode for old VDR recordings, where 0xBD was only AC3:
 pre_1_3_19_PrivateStreamDeteced:
-               if (pre_1_3_19_PrivateStream) {
+               if (pre_1_3_19_PrivateStream > MIN_PRE_1_3_19_PRIVATESTREAM) {
                   SubStreamId = c;
                   SubStreamType = 0x80;
                   SubStreamIndex = 0;
                   }
+               else if (pre_1_3_19_PrivateStream)
+                  pre_1_3_19_PrivateStream--; // every known PS1 packet counts down towards 0 to recover from glitches...
                switch (SubStreamType) {
                  case 0x20: // SPU
                  case 0x30: // SPU
+                      SetAvailableTrack(ttSubtitle, SubStreamIndex, SubStreamId);
+                      if ((!VideoOnly || HasIBPTrickSpeed()) && currentSubtitleTrack != ttNone && SubStreamId == availableTracks[currentSubtitleTrack].id)
+                         w = PlaySubtitle(Start, d);
                       break;
                  case 0x80: // AC3 & DTS
                       if (Setup.UseDolbyDigital) {
                          SetAvailableTrack(ttDolby, SubStreamIndex, SubStreamId);
-                         if (!VideoOnly && SubStreamId == availableTracks[currentAudioTrack].id) {
+                         if ((!VideoOnly || HasIBPTrickSpeed()) && SubStreamId == availableTracks[currentAudioTrack].id) {
                             w = PlayAudio(Start, d, SubStreamId);
                             if (FirstLoop)
                                Audios.PlayAudio(Data, Length, SubStreamId);
@@ -1058,7 +1300,7 @@ pre_1_3_19_PrivateStreamDeteced:
                       break;
                  case 0xA0: // LPCM
                       SetAvailableTrack(ttAudio, SubStreamIndex, SubStreamId);
-                      if (!VideoOnly && SubStreamId == availableTracks[currentAudioTrack].id) {
+                      if ((!VideoOnly || HasIBPTrickSpeed()) && SubStreamId == availableTracks[currentAudioTrack].id) {
                          w = PlayAudio(Start, d, SubStreamId);
                          if (FirstLoop)
                             Audios.PlayAudio(Data, Length, SubStreamId);
@@ -1066,11 +1308,14 @@ pre_1_3_19_PrivateStreamDeteced:
                       break;
                  default:
                       // Compatibility mode for old VDR recordings, where 0xBD was only AC3:
-                      if (!pre_1_3_19_PrivateStream) {
-                         dsyslog("switching to pre 1.3.19 Dolby Digital compatibility mode");
-                         ClrAvailableTracks();
-                         pre_1_3_19_PrivateStream = true;
-                         goto pre_1_3_19_PrivateStreamDeteced;
+                      if (pre_1_3_19_PrivateStream <= MIN_PRE_1_3_19_PRIVATESTREAM) {
+                         dsyslog("unknown PS1 packet, substream id = %02X (counter is at %d)", SubStreamId, pre_1_3_19_PrivateStream);
+                         pre_1_3_19_PrivateStream += 2; // ...and every unknown PS1 packet counts up (the very first one counts twice, but that's ok)
+                         if (pre_1_3_19_PrivateStream > MIN_PRE_1_3_19_PRIVATESTREAM) {
+                            dsyslog("switching to pre 1.3.19 Dolby Digital compatibility mode - substream id = %02X", SubStreamId);
+                            ClrAvailableTracks();
+                            goto pre_1_3_19_PrivateStreamDeteced;
+                            }
                          }
                  }
                }
@@ -1094,6 +1339,8 @@ int cDevice::PlayPes(const uchar *Data, int Length, bool VideoOnly)
 {
   if (!Data) {
      pesAssembler->Reset();
+     if (dvbSubtitleConverter)
+        dvbSubtitleConverter->Reset();
      return 0;
      }
   int Result = 0;
@@ -1143,16 +1390,6 @@ int cDevice::PlayPes(const uchar *Data, int Length, bool VideoOnly)
   return Length;
 }
 
-int cDevice::Ca(void) const
-{
-  int ca = 0;
-  for (int i = 0; i < MAXRECEIVERS; i++) {
-      if (receiver[i] && (ca = receiver[i]->ca) != 0)
-         break; // all receivers have the same ca
-      }
-  return ca;
-}
-
 int cDevice::Priority(void) const
 {
   int priority = IsPrimaryDevice() ? Setup.PrimaryLimit - 1 : DEFAULTPRIORITY;
@@ -1168,16 +1405,6 @@ bool cDevice::Ready(void)
   return true;
 }
 
-int cDevice::ProvidesCa(const cChannel *Channel) const
-{
-  int Ca = Channel->Ca();
-  if (Ca == CardIndex() + 1)
-     return 1; // exactly _this_ card was requested
-  if (Ca && Ca <= CA_DVB_MAX)
-     return 0; // a specific card was requested, but not _this_ one
-  return !Ca; // by default every card can provide FTA
-}
-
 bool cDevice::Receiving(bool CheckAny) const
 {
   for (int i = 0; i < MAXRECEIVERS; i++) {
@@ -1186,6 +1413,10 @@ bool cDevice::Receiving(bool CheckAny) const
       }
   return false;
 }
+
+#define TS_SCRAMBLING_CONTROL  0xC0
+#define TS_SCRAMBLING_TIMEOUT     3 // seconds to wait until a TS becomes unscrambled
+#define TS_SCRAMBLING_TIME_OK    10 // seconds before a Channel/CAM combination is marked as known to decrypt
 
 void cDevice::Action(void)
 {
@@ -1196,11 +1427,39 @@ void cDevice::Action(void)
            if (GetTSPacket(b)) {
               if (b) {
                  int Pid = (((uint16_t)b[1] & PID_MASK_HI) << 8) | b[2];
+                 // Check whether the TS packets are scrambled:
+                 bool DetachReceivers = false;
+                 bool DescramblingOk = false;
+                 int CamSlotNumber = 0;
+                 if (startScrambleDetection) {
+                    cCamSlot *cs = CamSlot();
+                    CamSlotNumber = cs ? cs->SlotNumber() : 0;
+                    if (CamSlotNumber) {
+                       bool Scrambled = b[3] & TS_SCRAMBLING_CONTROL;
+                       int t = time(NULL) - startScrambleDetection;
+                       if (Scrambled) {
+                          if (t > TS_SCRAMBLING_TIMEOUT)
+                             DetachReceivers = true;
+                          }
+                       else if (t > TS_SCRAMBLING_TIME_OK) {
+                          DescramblingOk = true;
+                          startScrambleDetection = 0;
+                          }
+                       }
+                    }
                  // Distribute the packet to all attached receivers:
                  Lock();
                  for (int i = 0; i < MAXRECEIVERS; i++) {
-                     if (receiver[i] && receiver[i]->WantsPid(Pid))
-                        receiver[i]->Receive(b, TS_SIZE);
+                     if (receiver[i] && receiver[i]->WantsPid(Pid)) {
+                        if (DetachReceivers) {
+                           ChannelCamRelations.SetChecked(receiver[i]->ChannelID(), CamSlotNumber);
+                           Detach(receiver[i]);
+                           }
+                        else
+                           receiver[i]->Receive(b, TS_SIZE);
+                        if (DescramblingOk)
+                           ChannelCamRelations.SetDecrypt(receiver[i]->ChannelID(), CamSlotNumber);
+                        }
                      }
                  Unlock();
                  }
@@ -1256,10 +1515,11 @@ bool cDevice::AttachReceiver(cReceiver *Receiver)
          Receiver->device = this;
          receiver[i] = Receiver;
          Unlock();
-         if (!Running())
-            Start();
-         if (ciHandler)
-            ciHandler->StartDecrypting();
+         if (camSlot) {
+            camSlot->StartDecrypting();
+            startScrambleDetection = time(NULL);
+            }
+         Start();
          return true;
          }
       }
@@ -1286,10 +1546,10 @@ void cDevice::Detach(cReceiver *Receiver)
       else if (receiver[i])
          receiversLeft = true;
       }
-  if (ciHandler)
-     ciHandler->StartDecrypting();
+  if (camSlot)
+     camSlot->StartDecrypting();
   if (!receiversLeft)
-     Cancel(3);
+     Cancel(-1);
 }
 
 void cDevice::DetachAll(int Pid)
@@ -1307,10 +1567,8 @@ void cDevice::DetachAll(int Pid)
 void cDevice::DetachAllReceivers(void)
 {
   cMutexLock MutexLock(&mutexReceiver);
-  for (int i = 0; i < MAXRECEIVERS; i++) {
-      if (receiver[i])
-         Detach(receiver[i]);
-      }
+  for (int i = 0; i < MAXRECEIVERS; i++)
+      Detach(receiver[i]);
 }
 
 // --- cTSBuffer -------------------------------------------------------------

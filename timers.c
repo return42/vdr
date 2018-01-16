@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: timers.c 1.65 2006/09/15 14:15:53 kls Exp $
+ * $Id: timers.c 1.73 2008/02/16 14:47:40 kls Exp $
  */
 
 #include "timers.h"
@@ -13,13 +13,17 @@
 #include "device.h"
 #include "i18n.h"
 #include "libsi/si.h"
+#include "recording.h"
 #include "remote.h"
+#include "status.h"
+
+#define VFAT_MAX_FILENAME 40 // same as MAX_SUBTITLE_LENGTH in recording.c
 
 // IMPORTANT NOTE: in the 'sscanf()' calls there is a blank after the '%d'
 // format characters in order to allow any number of blanks after a numeric
 // value!
 
-// -- cTimer -----------------------------------------------------------------
+// --- cTimer ----------------------------------------------------------------
 
 cTimer::cTimer(bool Instant, bool Pause, cChannel *Channel)
 {
@@ -78,7 +82,7 @@ cTimer::cTimer(const cEvent *Event)
   *file = 0;
   const char *Title = Event->Title();
   if (!isempty(Title))
-     strn0cpy(file, Event->Title(), sizeof(file));
+     Utf8Strn0Cpy(file, Event->Title(), sizeof(file));
   aux = NULL;
   event = NULL; // let SetEvent() be called to get a log message
 }
@@ -99,13 +103,14 @@ cTimer::~cTimer()
 cTimer& cTimer::operator= (const cTimer &Timer)
 {
   if (&Timer != this) {
+     uint OldFlags = flags & tfRecording;
      startTime    = Timer.startTime;
      stopTime     = Timer.stopTime;
      lastSetEvent = 0;
      recording    = Timer.recording;
      pending      = Timer.pending;
      inVpsMargin  = Timer.inVpsMargin;
-     flags        = Timer.flags;
+     flags        = Timer.flags | OldFlags;
      channel      = Timer.channel;
      day          = Timer.day;
      weekdays     = Timer.weekdays;
@@ -132,20 +137,17 @@ int cTimer::Compare(const cListObject &ListObject) const
   return r;
 }
 
-cString cTimer::ToText(bool UseChannelID)
+cString cTimer::ToText(bool UseChannelID) const
 {
-  char *buffer;
   strreplace(file, ':', '|');
-  asprintf(&buffer, "%u:%s:%s:%04d:%04d:%d:%d:%s:%s\n", flags, UseChannelID ? *Channel()->GetChannelID().ToString() : *itoa(Channel()->Number()), *PrintDay(day, weekdays), start, stop, priority, lifetime, file, aux ? aux : "");
+  cString buffer = cString::sprintf("%u:%s:%s:%04d:%04d:%d:%d:%s:%s\n", flags, UseChannelID ? *Channel()->GetChannelID().ToString() : *itoa(Channel()->Number()), *PrintDay(day, weekdays, true), start, stop, priority, lifetime, file, aux ? aux : "");
   strreplace(file, '|', ':');
-  return cString(buffer, true);
+  return buffer;
 }
 
 cString cTimer::ToDescr(void) const
 {
-  char *buffer;
-  asprintf(&buffer, "%d (%d %04d-%04d %s'%s')", Index() + 1, Channel()->Number(), start, stop, HasFlags(tfVps) ? "VPS " : "", file);
-  return cString(buffer, true);
+  return cString::sprintf("%d (%d %04d-%04d %s'%s')", Index() + 1, Channel()->Number(), start, stop, HasFlags(tfVps) ? "VPS " : "", file);
 }
 
 int cTimer::TimeToInt(int t)
@@ -212,17 +214,27 @@ bool cTimer::ParseDay(const char *s, time_t &Day, int &WeekDays)
   return true;
 }
 
-cString cTimer::PrintDay(time_t Day, int WeekDays)
+cString cTimer::PrintDay(time_t Day, int WeekDays, bool SingleByteChars)
 {
-#define DAYBUFFERSIZE 32
+#define DAYBUFFERSIZE 64
   char buffer[DAYBUFFERSIZE];
   char *b = buffer;
   if (WeekDays) {
-     const char *w = tr("MTWTFSS");
+     // TRANSLATORS: the first character of each weekday, beginning with monday
+     const char *w = trNOOP("MTWTFSS");
+     if (!SingleByteChars)
+        w = tr(w);
      while (*w) {
-           *b++ = (WeekDays & 1) ? *w : '-';
+           int sl = Utf8CharLen(w);
+           if (WeekDays & 1) {
+              for (int i = 0; i < sl; i++)
+                  b[i] = w[i];
+              b += sl;
+              }
+           else
+              *b++ = '-';
            WeekDays >>= 1;
-           w++;
+           w += sl;
            }
      if (Day)
         *b++ = '@';
@@ -239,7 +251,7 @@ cString cTimer::PrintDay(time_t Day, int WeekDays)
 cString cTimer::PrintFirstDay(void) const
 {
   if (weekdays) {
-     cString s = PrintDay(day, weekdays);
+     cString s = PrintDay(day, weekdays, true);
      if (strlen(s) == 18)
         return *s + 8;
      }
@@ -277,7 +289,19 @@ bool cTimer::Parse(const char *s)
         }
      //TODO add more plausibility checks
      result = ParseDay(daybuffer, day, weekdays);
-     strn0cpy(file, filebuffer, MaxFileName);
+     if (VfatFileSystem) {
+        char *p = strrchr(filebuffer, '~');
+        if (p)
+           p++;
+        else
+           p = filebuffer;
+        if (strlen(p) > VFAT_MAX_FILENAME) {
+           dsyslog("timer file name too long for VFAT file system: '%s'", p);
+           p[VFAT_MAX_FILENAME] = 0;
+           dsyslog("timer file name truncated to '%s'", p);
+           }
+        }
+     Utf8Strn0Cpy(file, filebuffer, MaxFileName);
      strreplace(file, '|', ':');
      if (isnumber(channelbuffer))
         channel = Channels.GetByNumber(atoi(channelbuffer));
@@ -349,7 +373,7 @@ time_t cTimer::SetTime(time_t t, int SecondsFromMidnight)
 char *cTimer::SetFile(const char *File)
 {
   if (!isempty(File))
-     strn0cpy(file, File, sizeof(file));
+     Utf8Strn0Cpy(file, File, sizeof(file));
   return file;
 }
 
@@ -597,7 +621,7 @@ void cTimer::OnOff(void)
   Matches(); // refresh start and end time
 }
 
-// -- cTimers ----------------------------------------------------------------
+// --- cTimers ---------------------------------------------------------------
 
 cTimers Timers;
 
@@ -673,7 +697,26 @@ cTimer *cTimers::GetNextActiveTimer(void)
 
 void cTimers::SetModified(void)
 {
+  cStatus::MsgTimerChange(NULL, tcMod);
   state++;
+}
+
+void cTimers::Add(cTimer *Timer, cTimer *After)
+{
+  cConfig<cTimer>::Add(Timer, After);
+  cStatus::MsgTimerChange(Timer, tcAdd);
+}
+
+void cTimers::Ins(cTimer *Timer, cTimer *Before)
+{
+  cConfig<cTimer>::Ins(Timer, Before);
+  cStatus::MsgTimerChange(Timer, tcAdd);
+}
+
+void cTimers::Del(cTimer *Timer, bool DeleteObject)
+{
+  cStatus::MsgTimerChange(Timer, tcDel);
+  cConfig<cTimer>::Del(Timer, DeleteObject);
 }
 
 bool cTimers::Modified(int &State)

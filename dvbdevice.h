@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: dvbdevice.h 1.41 2006/05/28 15:05:19 kls Exp $
+ * $Id: dvbdevice.h 1.47 2008/02/08 13:48:31 kls Exp $
  */
 
 #ifndef __DVBDEVICE_H
@@ -19,7 +19,7 @@
 #error VDR requires Linux DVB driver API version 3!
 #endif
 
-#define MAXDVBDEVICES  4
+#define MAXDVBDEVICES  8
 
 class cDvbTuner;
 
@@ -36,15 +36,19 @@ public:
          ///< \return True if any devices are available.
 private:
   fe_type_t frontendType;
-  int fd_osd, fd_audio, fd_video, fd_dvr, fd_stc;
+  int fd_osd, fd_audio, fd_video, fd_dvr, fd_stc, fd_ca;
 protected:
   virtual void MakePrimaryDevice(bool On);
 public:
   cDvbDevice(int n);
   virtual ~cDvbDevice();
   virtual bool Ready(void);
-  virtual int ProvidesCa(const cChannel *Channel) const;
   virtual bool HasDecoder(void) const;
+
+// Common Interface facilities:
+
+private:
+  cCiAdapter *ciAdapter;
 
 // SPU facilities
 
@@ -79,6 +83,12 @@ protected:
 
 protected:
   virtual int OpenFilter(u_short Pid, u_char Tid, u_char Mask);
+  virtual void CloseFilter(int Handle);
+
+// Common Interface facilities:
+
+public:
+  virtual bool HasCi(void);
 
 // Image Grab facilities
 

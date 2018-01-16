@@ -12,7 +12,7 @@
 # See the main source file 'vdr.c' for copyright information and
 # how to reach the author.
 #
-# $Id: newplugin 1.30 2006/09/09 12:38:35 kls Exp $
+# $Id: newplugin 1.41 2008/01/13 13:00:23 kls Exp $
 
 $PLUGIN_NAME = $ARGV[0] || die "Usage: newplugin <name>\n";
 
@@ -35,7 +35,11 @@ Project's homepage:          URL
 
 Latest version available at: URL
 
-See the file COPYING for license information.
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+See the file COPYING for more information.
 
 Description:
 };
@@ -61,7 +65,7 @@ $MAKEFILE = qq
 # The official name of this plugin.
 # This name will be used in the '-P...' option of VDR to load the plugin.
 # By default the main source file also carries this name.
-# IPORTANT: the presence of this macro is important for the Make.config
+# IMPORTANT: the presence of this macro is important for the Make.config
 # file. So it must be defined, even if it is not used here!
 #
 PLUGIN = $PLUGIN_NAME
@@ -73,7 +77,7 @@ VERSION = \$(shell grep 'static const char \\*VERSION *=' \$(PLUGIN).c | awk '{ 
 ### The C++ compiler and options:
 
 CXX      ?= g++
-CXXFLAGS ?= -fPIC -g -O2 -Wall -Woverloaded-virtual
+CXXFLAGS ?= -fPIC -g -O2 -Wall -Woverloaded-virtual -Wno-parentheses
 
 ### The directory environment:
 
@@ -104,12 +108,16 @@ DEFINES += -D_GNU_SOURCE -DPLUGIN_NAME_I18N='"\$(PLUGIN)"'
 
 OBJS = \$(PLUGIN).o
 
+### The main target:
+
+all: libvdr-\$(PLUGIN).so i18n
+
 ### Implicit rules:
 
 %.o: %.c
 	\$(CXX) \$(CXXFLAGS) -c \$(DEFINES) \$(INCLUDES) \$<
 
-# Dependencies:
+### Dependencies:
 
 MAKEDEP = \$(CXX) -MM -MG
 DEPFILE = .dependencies
@@ -118,9 +126,32 @@ DEPFILE = .dependencies
 
 -include \$(DEPFILE)
 
-### Targets:
+### Internationalization (I18N):
 
-all: libvdr-\$(PLUGIN).so
+PODIR     = po
+LOCALEDIR = \$(VDRDIR)/locale
+I18Npo    = \$(wildcard \$(PODIR)/*.po)
+I18Nmsgs  = \$(addprefix \$(LOCALEDIR)/, \$(addsuffix /LC_MESSAGES/vdr-\$(PLUGIN).mo, \$(notdir \$(foreach file, \$(I18Npo), \$(basename \$(file))))))
+I18Npot   = \$(PODIR)/\$(PLUGIN).pot
+
+%.mo: %.po
+	msgfmt -c -o \$\@ \$<
+
+\$(I18Npot): \$(wildcard *.c)
+	xgettext -C -cTRANSLATORS --no-wrap --no-location -k -ktr -ktrNOOP --msgid-bugs-address='<see README>' -o \$\@ \$^
+
+%.po: \$(I18Npot)
+	msgmerge -U --no-wrap --no-location --backup=none -q \$\@ \$<
+	\@touch \$\@
+
+\$(I18Nmsgs): \$(LOCALEDIR)/%/LC_MESSAGES/vdr-\$(PLUGIN).mo: \$(PODIR)/%.mo
+	\@mkdir -p \$(dir \$@)
+	cp \$< \$\@
+
+.PHONY: i18n
+i18n: \$(I18Nmsgs) \$(I18Npot)
+
+### Targets:
 
 libvdr-\$(PLUGIN).so: \$(OBJS)
 	\$(CXX) \$(CXXFLAGS) -shared \$(OBJS) -o \$\@
@@ -135,7 +166,7 @@ dist: clean
 	\@echo Distribution package created as \$(PACKAGE).tgz
 
 clean:
-	\@-rm -f \$(OBJS) \$(DEPFILE) *.so *.tgz core* *~
+	\@-rm -f \$(OBJS) \$(DEPFILE) *.so *.tgz core* *~ \$(PODIR)/*.mo \$(PODIR)/*.pot
 };
 
 $MAIN = qq
@@ -169,6 +200,7 @@ public:
   virtual void Housekeeping(void);
   virtual void MainThreadHook(void);
   virtual cString Active(void);
+  virtual time_t WakeupTime(void);
   virtual const char *MainMenuEntry(void) { return MAINMENUENTRY; }
   virtual cOsdObject *MainMenuAction(void);
   virtual cMenuSetupPage *SetupMenu(void);
@@ -216,7 +248,7 @@ bool cPlugin${PLUGIN_CLASS}::Start(void)
 
 void cPlugin${PLUGIN_CLASS}::Stop(void)
 {
-  // Stop any background activities the plugin shall perform.
+  // Stop any background activities the plugin is performing.
 }
 
 void cPlugin${PLUGIN_CLASS}::Housekeeping(void)
@@ -234,6 +266,12 @@ cString cPlugin${PLUGIN_CLASS}::Active(void)
 {
   // Return a message string if shutdown should be postponed
   return NULL;
+}
+
+time_t cPlugin${PLUGIN_CLASS}::WakeupTime(void)
+{
+  // Return custom wakeup time for shutdown script
+  return 0;
 }
 
 cOsdObject *cPlugin${PLUGIN_CLASS}::MainMenuAction(void)

@@ -4,12 +4,13 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: menuitems.h 1.20 2006/04/14 10:01:47 kls Exp $
+ * $Id: menuitems.h 1.25 2008/02/16 16:09:58 kls Exp $
  */
 
 #ifndef __MENUITEMS_H
 #define __MENUITEMS_H
 
+#include <limits.h>
 #include "osdbase.h"
 
 extern const char *FileNameChars;
@@ -77,24 +78,31 @@ public:
 
 class cMenuEditStrItem : public cMenuEditItem {
 private:
-  char *orgValue;
   char *value;
   int length;
-  char *allowed;
-  int pos;
+  const char *allowed;
+  int pos, offset;
   bool insert, newchar, uppercase;
-  const char *charMap;
-  const char *currentChar;
+  int lengthUtf8;
+  uint *valueUtf8;
+  uint *allowedUtf8;
+  uint *charMapUtf8;
+  uint *currentCharUtf8;
   eKeys lastKey;
   cTimeMs autoAdvanceTimeout;
   void SetHelpKeys(void);
+  uint *IsAllowed(uint c);
   void AdvancePos(void);
   virtual void Set(void);
-  char Inc(char c, bool Up);
+  uint Inc(uint c, bool Up);
+  void Insert(void);
+  void Delete(void);
 protected:
-  bool InEditMode(void) { return pos >= 0; }
+  void EnterEditMode(void);
+  void LeaveEditMode(bool SaveValue = false);
+  bool InEditMode(void) { return valueUtf8 != NULL; }
 public:
-  cMenuEditStrItem(const char *Name, char *Value, int Length, const char *Allowed);
+  cMenuEditStrItem(const char *Name, char *Value, int Length, const char *Allowed = NULL);
   ~cMenuEditStrItem();
   virtual eOSState ProcessKey(eKeys Key);
   };

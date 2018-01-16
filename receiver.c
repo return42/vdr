@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: receiver.c 1.5 2006/03/26 14:07:21 kls Exp $
+ * $Id: receiver.c 1.7 2007/08/12 11:52:59 kls Exp $
  */
 
 #include "receiver.h"
@@ -12,10 +12,10 @@
 #include <stdio.h>
 #include "tools.h"
 
-cReceiver::cReceiver(int Ca, int Priority, int Pid, const int *Pids1, const int *Pids2, const int *Pids3)
+cReceiver::cReceiver(tChannelID ChannelID, int Priority, int Pid, const int *Pids1, const int *Pids2, const int *Pids3)
 {
   device = NULL;
-  ca = Ca;
+  channelID = ChannelID;
   priority = Priority;
   numPids = 0;
   if (Pid)
@@ -38,7 +38,12 @@ cReceiver::cReceiver(int Ca, int Priority, int Pid, const int *Pids1, const int 
 
 cReceiver::~cReceiver()
 {
-  Detach();
+  if (device) {
+     const char *msg = "ERROR: cReceiver has not been detached yet! This is a design fault and VDR will segfault now!";
+     esyslog(msg);
+     fprintf(stderr, "%s\n", msg);
+     *(char *)0 = 0; // cause a segfault
+     }
 }
 
 bool cReceiver::WantsPid(int Pid)

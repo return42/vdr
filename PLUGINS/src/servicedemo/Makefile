@@ -1,7 +1,7 @@
 #
 # Makefile for a Video Disk Recorder plugin
 #
-# $Id: Makefile 1.8 2006/09/09 12:38:35 kls Exp $
+# $Id: Makefile 1.10 2008/01/13 13:00:07 kls Exp $
 
 # The official name of this plugin.
 # This name will be used in the '-P...' option of VDR to load the plugin.
@@ -18,7 +18,7 @@ VERSION = $(shell grep 'static const char \*VERSION *=' $(PLUGIN1).c | awk '{ pr
 ### The C++ compiler and options:
 
 CXX      ?= g++
-CXXFLAGS ?= -fPIC -g -O2 -Wall -Woverloaded-virtual
+CXXFLAGS ?= -fPIC -g -O2 -Wall -Woverloaded-virtual -Wno-parentheses
 
 ### The directory environment:
 
@@ -49,6 +49,10 @@ DEFINES += -D_GNU_SOURCE -DPLUGIN_NAME_I18N='"$(PLUGIN)"'
 
 OBJS = $(PLUGIN1).o $(PLUGIN2).o
 
+### The main target:
+
+all: libvdr-$(PLUGIN1).so libvdr-$(PLUGIN2).so
+
 ### Implicit rules:
 
 %.o: %.c
@@ -64,8 +68,6 @@ $(DEPFILE): Makefile
 -include $(DEPFILE)
 
 ### Targets:
-
-all: libvdr-$(PLUGIN1).so libvdr-$(PLUGIN2).so
 
 libvdr-$(PLUGIN1).so: $(PLUGIN1).o
 	$(CXX) $(CXXFLAGS) -shared $(PLUGIN1).o -o $@

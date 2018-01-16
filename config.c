@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: config.c 1.147 2007/01/26 13:32:19 kls Exp $
+ * $Id: config.c 1.161 2008/02/17 13:39:00 kls Exp $
  */
 
 #include "config.h"
@@ -62,10 +62,10 @@ const char *cCommand::Execute(const char *Parameters)
 {
   free(result);
   result = NULL;
-  char *cmdbuf = NULL;
+  cString cmdbuf;
   if (Parameters)
-     asprintf(&cmdbuf, "%s %s", command, Parameters);
-  const char *cmd = cmdbuf ? cmdbuf : command;
+     cmdbuf = cString::sprintf("%s %s", command, Parameters);
+  const char *cmd = *cmdbuf ? *cmdbuf : command;
   dsyslog("executing command '%s'", cmd);
   cPipe p;
   if (p.Open(cmd, "r")) {
@@ -82,11 +82,10 @@ const char *cCommand::Execute(const char *Parameters)
      }
   else
      esyslog("ERROR: can't open pipe for command '%s'", cmd);
-  free(cmdbuf);
   return result;
 }
 
-// -- cSVDRPhost -------------------------------------------------------------
+// --- cSVDRPhost ------------------------------------------------------------
 
 cSVDRPhost::cSVDRPhost(void)
 {
@@ -119,15 +118,15 @@ bool cSVDRPhost::Parse(const char *s)
 
 bool cSVDRPhost::Accepts(in_addr_t Address)
 {
-  return (Address & mask) == addr.s_addr;
+  return (Address & mask) == (addr.s_addr & mask);
 }
 
-// -- cCommands --------------------------------------------------------------
+// --- cCommands -------------------------------------------------------------
 
 cCommands Commands;
 cCommands RecordingCommands;
 
-// -- cSVDRPhosts ------------------------------------------------------------
+// --- cSVDRPhosts -----------------------------------------------------------
 
 cSVDRPhosts SVDRPhosts;
 
@@ -142,7 +141,7 @@ bool cSVDRPhosts::Acceptable(in_addr_t Address)
   return false;
 }
 
-// -- cSetupLine -------------------------------------------------------------
+// --- cSetupLine ------------------------------------------------------------
 
 cSetupLine::cSetupLine(void)
 {
@@ -208,13 +207,13 @@ bool cSetupLine::Save(FILE *f)
   return fprintf(f, "%s%s%s = %s\n", plugin ? plugin : "", plugin ? "." : "", name, value) > 0;
 }
 
-// -- cSetup -----------------------------------------------------------------
+// --- cSetup ----------------------------------------------------------------
 
 cSetup Setup;
 
 cSetup::cSetup(void)
 {
-  OSDLanguage = 0;
+  strcpy(OSDLanguage, ""); // default is taken from environment
   strcpy(OSDSkin, "sttng");
   strcpy(OSDTheme, "default");
   PrimaryDVB = 1;
@@ -222,7 +221,7 @@ cSetup::cSetup(void)
   TimeoutRequChInfo = 1;
   MenuScrollPage = 1;
   MenuScrollWrap = 0;
-  MenuButtonCloses = 0;
+  MenuKeyCloses = 0;
   MarkInstantRecord = 1;
   strcpy(NameInstantRecord, "TITLE EPISODE");
   InstantRecordTime = 180;
@@ -236,12 +235,18 @@ cSetup::cSetup(void)
   MarginStart = 2;
   MarginStop = 10;
   AudioLanguages[0] = -1;
+  DisplaySubtitles = 0;
+  SubtitleLanguages[0] = -1;
+  SubtitleOffset = 0;
+  SubtitleFgTransparency = 0;
+  SubtitleBgTransparency = 0;
   EPGLanguages[0] = -1;
   EPGScanTimeout = 5;
   EPGBugfixLevel = 3;
   EPGLinger = 0;
   SVDRPTimeout = 300;
   ZapTimeout = 3;
+  ChannelEntryTimeout = 1000;
   PrimaryLimit = 0;
   DefaultPriority = 50;
   DefaultLifetime = 99;
@@ -263,10 +268,18 @@ cSetup::cSetup(void)
   OSDHeight = 486;
   OSDMessageTime = 1;
   UseSmallFont = 1;
+  AntiAlias = 1;
+  strcpy(FontOsd, DefaultFontOsd);
+  strcpy(FontSml, DefaultFontSml);
+  strcpy(FontFix, DefaultFontFix);
+  FontOsdSize = 22;
+  FontSmlSize = 18;
+  FontFixSize = 20;
   MaxVideoFileSize = MAXVIDEOFILESIZE;
   SplitEditedFiles = 0;
   MinEventTimeout = 30;
   MinUserInactivity = 300;
+  NextWakeupTime = 0;
   MultiSpeedMode = 0;
   ShowReplayMode = 0;
   ResumeID = 0;
@@ -275,6 +288,7 @@ cSetup::cSetup(void)
   CurrentDolby = 0;
   InitialChannel = 0;
   InitialVolume = -1;
+  EmergencyExit = 1;
 }
 
 cSetup& cSetup::operator= (const cSetup &s)
@@ -307,10 +321,7 @@ void cSetup::Store(const char *Name, const char *Value, const char *Plugin, bool
 
 void cSetup::Store(const char *Name, int Value, const char *Plugin)
 {
-  char *buffer = NULL;
-  asprintf(&buffer, "%d", Value);
-  Store(Name, buffer, Plugin);
-  free(buffer);
+  Store(Name, cString::sprintf("%d", Value), Plugin);
 }
 
 bool cSetup::Load(const char *FileName)
@@ -340,9 +351,9 @@ bool cSetup::Load(const char *FileName)
 
 void cSetup::StoreLanguages(const char *Name, int *Values)
 {
-  char buffer[I18nNumLanguages * 4];
+  char buffer[I18nLanguages()->Size() * 4];
   char *q = buffer;
-  for (int i = 0; i < I18nNumLanguages; i++) {
+  for (int i = 0; i < I18nLanguages()->Size(); i++) {
       if (Values[i] < 0)
          break;
       const char *s = I18nLanguageCode(Values[i]);
@@ -360,7 +371,7 @@ void cSetup::StoreLanguages(const char *Name, int *Values)
 bool cSetup::ParseLanguages(const char *Value, int *Values)
 {
   int n = 0;
-  while (Value && *Value && n < I18nNumLanguages) {
+  while (Value && *Value && n < I18nLanguages()->Size()) {
         char buffer[4];
         strn0cpy(buffer, Value, sizeof(buffer));
         int i = I18nLanguageIndex(buffer);
@@ -375,17 +386,17 @@ bool cSetup::ParseLanguages(const char *Value, int *Values)
 
 bool cSetup::Parse(const char *Name, const char *Value)
 {
-  if      (!strcasecmp(Name, "OSDLanguage"))         OSDLanguage        = atoi(Value);
-  else if (!strcasecmp(Name, "OSDSkin"))             strn0cpy(OSDSkin, Value, MaxSkinName);
-  else if (!strcasecmp(Name, "OSDTheme"))            strn0cpy(OSDTheme, Value, MaxThemeName);
+  if      (!strcasecmp(Name, "OSDLanguage"))       { strn0cpy(OSDLanguage, Value, sizeof(OSDLanguage)); I18nSetLocale(OSDLanguage); }
+  else if (!strcasecmp(Name, "OSDSkin"))             Utf8Strn0Cpy(OSDSkin, Value, MaxSkinName);
+  else if (!strcasecmp(Name, "OSDTheme"))            Utf8Strn0Cpy(OSDTheme, Value, MaxThemeName);
   else if (!strcasecmp(Name, "PrimaryDVB"))          PrimaryDVB         = atoi(Value);
   else if (!strcasecmp(Name, "ShowInfoOnChSwitch"))  ShowInfoOnChSwitch = atoi(Value);
   else if (!strcasecmp(Name, "TimeoutRequChInfo"))   TimeoutRequChInfo  = atoi(Value);
   else if (!strcasecmp(Name, "MenuScrollPage"))      MenuScrollPage     = atoi(Value);
   else if (!strcasecmp(Name, "MenuScrollWrap"))      MenuScrollWrap     = atoi(Value);
-  else if (!strcasecmp(Name, "MenuButtonCloses"))    MenuButtonCloses   = atoi(Value);
+  else if (!strcasecmp(Name, "MenuKeyCloses"))       MenuKeyCloses      = atoi(Value);
   else if (!strcasecmp(Name, "MarkInstantRecord"))   MarkInstantRecord  = atoi(Value);
-  else if (!strcasecmp(Name, "NameInstantRecord"))   strn0cpy(NameInstantRecord, Value, MaxFileName);
+  else if (!strcasecmp(Name, "NameInstantRecord"))   Utf8Strn0Cpy(NameInstantRecord, Value, MaxFileName);
   else if (!strcasecmp(Name, "InstantRecordTime"))   InstantRecordTime  = atoi(Value);
   else if (!strcasecmp(Name, "LnbSLOF"))             LnbSLOF            = atoi(Value);
   else if (!strcasecmp(Name, "LnbFrequLo"))          LnbFrequLo         = atoi(Value);
@@ -397,12 +408,18 @@ bool cSetup::Parse(const char *Name, const char *Value)
   else if (!strcasecmp(Name, "MarginStart"))         MarginStart        = atoi(Value);
   else if (!strcasecmp(Name, "MarginStop"))          MarginStop         = atoi(Value);
   else if (!strcasecmp(Name, "AudioLanguages"))      return ParseLanguages(Value, AudioLanguages);
+  else if (!strcasecmp(Name, "DisplaySubtitles"))    DisplaySubtitles   = atoi(Value);
+  else if (!strcasecmp(Name, "SubtitleLanguages"))   return ParseLanguages(Value, SubtitleLanguages);
+  else if (!strcasecmp(Name, "SubtitleOffset"))      SubtitleOffset     = atoi(Value);
+  else if (!strcasecmp(Name, "SubtitleFgTransparency")) SubtitleFgTransparency = atoi(Value);
+  else if (!strcasecmp(Name, "SubtitleBgTransparency")) SubtitleBgTransparency = atoi(Value);
   else if (!strcasecmp(Name, "EPGLanguages"))        return ParseLanguages(Value, EPGLanguages);
   else if (!strcasecmp(Name, "EPGScanTimeout"))      EPGScanTimeout     = atoi(Value);
   else if (!strcasecmp(Name, "EPGBugfixLevel"))      EPGBugfixLevel     = atoi(Value);
   else if (!strcasecmp(Name, "EPGLinger"))           EPGLinger          = atoi(Value);
   else if (!strcasecmp(Name, "SVDRPTimeout"))        SVDRPTimeout       = atoi(Value);
   else if (!strcasecmp(Name, "ZapTimeout"))          ZapTimeout         = atoi(Value);
+  else if (!strcasecmp(Name, "ChannelEntryTimeout")) ChannelEntryTimeout= atoi(Value);
   else if (!strcasecmp(Name, "PrimaryLimit"))        PrimaryLimit       = atoi(Value);
   else if (!strcasecmp(Name, "DefaultPriority"))     DefaultPriority    = atoi(Value);
   else if (!strcasecmp(Name, "DefaultLifetime"))     DefaultLifetime    = atoi(Value);
@@ -424,10 +441,18 @@ bool cSetup::Parse(const char *Name, const char *Value)
   else if (!strcasecmp(Name, "OSDHeight"))         { OSDHeight          = atoi(Value); if (OSDHeight < 100) OSDHeight *= 27; }
   else if (!strcasecmp(Name, "OSDMessageTime"))      OSDMessageTime     = atoi(Value);
   else if (!strcasecmp(Name, "UseSmallFont"))        UseSmallFont       = atoi(Value);
+  else if (!strcasecmp(Name, "AntiAlias"))           AntiAlias          = atoi(Value);
+  else if (!strcasecmp(Name, "FontOsd"))             Utf8Strn0Cpy(FontOsd, Value, MAXFONTNAME);
+  else if (!strcasecmp(Name, "FontSml"))             Utf8Strn0Cpy(FontSml, Value, MAXFONTNAME);
+  else if (!strcasecmp(Name, "FontFix"))             Utf8Strn0Cpy(FontFix, Value, MAXFONTNAME);
+  else if (!strcasecmp(Name, "FontOsdSize"))         FontOsdSize        = atoi(Value);
+  else if (!strcasecmp(Name, "FontSmlSize"))         FontSmlSize        = atoi(Value);
+  else if (!strcasecmp(Name, "FontFixSize"))         FontFixSize        = atoi(Value);
   else if (!strcasecmp(Name, "MaxVideoFileSize"))    MaxVideoFileSize   = atoi(Value);
   else if (!strcasecmp(Name, "SplitEditedFiles"))    SplitEditedFiles   = atoi(Value);
   else if (!strcasecmp(Name, "MinEventTimeout"))     MinEventTimeout    = atoi(Value);
   else if (!strcasecmp(Name, "MinUserInactivity"))   MinUserInactivity  = atoi(Value);
+  else if (!strcasecmp(Name, "NextWakeupTime"))      NextWakeupTime     = atoi(Value);
   else if (!strcasecmp(Name, "MultiSpeedMode"))      MultiSpeedMode     = atoi(Value);
   else if (!strcasecmp(Name, "ShowReplayMode"))      ShowReplayMode     = atoi(Value);
   else if (!strcasecmp(Name, "ResumeID"))            ResumeID           = atoi(Value);
@@ -436,6 +461,7 @@ bool cSetup::Parse(const char *Name, const char *Value)
   else if (!strcasecmp(Name, "CurrentDolby"))        CurrentDolby       = atoi(Value);
   else if (!strcasecmp(Name, "InitialChannel"))      InitialChannel     = atoi(Value);
   else if (!strcasecmp(Name, "InitialVolume"))       InitialVolume      = atoi(Value);
+  else if (!strcasecmp(Name, "EmergencyExit"))       EmergencyExit      = atoi(Value);
   else
      return false;
   return true;
@@ -451,7 +477,7 @@ bool cSetup::Save(void)
   Store("TimeoutRequChInfo",  TimeoutRequChInfo);
   Store("MenuScrollPage",     MenuScrollPage);
   Store("MenuScrollWrap",     MenuScrollWrap);
-  Store("MenuButtonCloses",   MenuButtonCloses);
+  Store("MenuKeyCloses",      MenuKeyCloses);
   Store("MarkInstantRecord",  MarkInstantRecord);
   Store("NameInstantRecord",  NameInstantRecord);
   Store("InstantRecordTime",  InstantRecordTime);
@@ -465,12 +491,18 @@ bool cSetup::Save(void)
   Store("MarginStart",        MarginStart);
   Store("MarginStop",         MarginStop);
   StoreLanguages("AudioLanguages", AudioLanguages);
+  Store("DisplaySubtitles",   DisplaySubtitles);
+  StoreLanguages("SubtitleLanguages", SubtitleLanguages);
+  Store("SubtitleOffset",     SubtitleOffset);
+  Store("SubtitleFgTransparency", SubtitleFgTransparency);
+  Store("SubtitleBgTransparency", SubtitleBgTransparency);
   StoreLanguages("EPGLanguages", EPGLanguages);
   Store("EPGScanTimeout",     EPGScanTimeout);
   Store("EPGBugfixLevel",     EPGBugfixLevel);
   Store("EPGLinger",          EPGLinger);
   Store("SVDRPTimeout",       SVDRPTimeout);
   Store("ZapTimeout",         ZapTimeout);
+  Store("ChannelEntryTimeout",ChannelEntryTimeout);
   Store("PrimaryLimit",       PrimaryLimit);
   Store("DefaultPriority",    DefaultPriority);
   Store("DefaultLifetime",    DefaultLifetime);
@@ -492,10 +524,18 @@ bool cSetup::Save(void)
   Store("OSDHeight",          OSDHeight);
   Store("OSDMessageTime",     OSDMessageTime);
   Store("UseSmallFont",       UseSmallFont);
+  Store("AntiAlias",          AntiAlias);
+  Store("FontOsd",            FontOsd);
+  Store("FontSml",            FontSml);
+  Store("FontFix",            FontFix);
+  Store("FontOsdSize",        FontOsdSize);
+  Store("FontSmlSize",        FontSmlSize);
+  Store("FontFixSize",        FontFixSize);
   Store("MaxVideoFileSize",   MaxVideoFileSize);
   Store("SplitEditedFiles",   SplitEditedFiles);
   Store("MinEventTimeout",    MinEventTimeout);
   Store("MinUserInactivity",  MinUserInactivity);
+  Store("NextWakeupTime",     NextWakeupTime);
   Store("MultiSpeedMode",     MultiSpeedMode);
   Store("ShowReplayMode",     ShowReplayMode);
   Store("ResumeID",           ResumeID);
@@ -504,6 +544,7 @@ bool cSetup::Save(void)
   Store("CurrentDolby",       CurrentDolby);
   Store("InitialChannel",     InitialChannel);
   Store("InitialVolume",      InitialVolume);
+  Store("EmergencyExit",      EmergencyExit);
 
   Sort();
 

@@ -1,7 +1,7 @@
 /*
  * vdr.c: Video Disk Recorder main program
  *
- * Copyright (C) 2000, 2003, 2006 Klaus Schmidinger
+ * Copyright (C) 2000, 2003, 2006, 2008 Klaus Schmidinger
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -16,17 +16,18 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
- * Or, point your browser to http://www.gnu.org/copyleft/gpl.html
+ * Or, point your browser to http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
  *
  * The author can be reached at kls@cadsoft.de
  *
  * The project's page is at http://www.cadsoft.de/vdr
  *
- * $Id: vdr.c 1.282.1.1 2007/04/30 09:48:23 kls Exp $
+ * $Id: vdr.c 1.313 2008/03/14 13:22:39 kls Exp $
  */
 
 #include <getopt.h>
 #include <grp.h>
+#include <langinfo.h>
 #include <locale.h>
 #include <pwd.h>
 #include <signal.h>
@@ -54,6 +55,7 @@
 #include "plugin.h"
 #include "rcu.h"
 #include "recording.h"
+#include "shutdown.h"
 #include "skinclassic.h"
 #include "skinsttng.h"
 #include "sources.h"
@@ -63,27 +65,28 @@
 #include "transfer.h"
 #include "videodir.h"
 
-#define MINCHANNELWAIT     10 // seconds to wait between failed channel switchings
-#define ACTIVITYTIMEOUT    60 // seconds before starting housekeeping
-#define SHUTDOWNWAIT      300 // seconds to wait in user prompt before automatic shutdown
-#define MANUALSTART       600 // seconds the next timer must be in the future to assume manual start
-#define CHANNELSAVEDELTA  600 // seconds before saving channels.conf after automatic modifications
-#define LASTCAMMENUTIMEOUT  3 // seconds to run the main loop 'fast' after a CAM menu has been closed
-                              // in order to react on a possible new CAM menu as soon as possible
-#define DEVICEREADYTIMEOUT 30 // seconds to wait until all devices are ready
-#define MENUTIMEOUT       120 // seconds of user inactivity after which an OSD display is closed
-#define SHUTDOWNRETRY     300 // seconds before trying again to shut down
-#define TIMERCHECKDELTA    10 // seconds between checks for timers that need to see their channel
-#define TIMERDEVICETIMEOUT  8 // seconds before a device used for timer check may be reused
-#define TIMERLOOKAHEADTIME 60 // seconds before a non-VPS timer starts and the channel is switched if possible
-#define VPSLOOKAHEADTIME   24 // hours within which VPS timers will make sure their events are up to date
-#define VPSUPTODATETIME  3600 // seconds before the event or schedule of a VPS timer needs to be refreshed
+#define MINCHANNELWAIT        10 // seconds to wait between failed channel switchings
+#define ACTIVITYTIMEOUT       60 // seconds before starting housekeeping
+#define SHUTDOWNWAIT         300 // seconds to wait in user prompt before automatic shutdown
+#define SHUTDOWNRETRY        360 // seconds before trying again to shut down
+#define SHUTDOWNFORCEPROMPT    5 // seconds to wait in user prompt to allow forcing shutdown
+#define SHUTDOWNCANCELPROMPT   5 // seconds to wait in user prompt to allow canceling shutdown
+#define RESTARTCANCELPROMPT    5 // seconds to wait in user prompt before restarting on SIGHUP
+#define MANUALSTART          600 // seconds the next timer must be in the future to assume manual start
+#define CHANNELSAVEDELTA     600 // seconds before saving channels.conf after automatic modifications
+#define DEVICEREADYTIMEOUT    30 // seconds to wait until all devices are ready
+#define MENUTIMEOUT          120 // seconds of user inactivity after which an OSD display is closed
+#define TIMERCHECKDELTA       10 // seconds between checks for timers that need to see their channel
+#define TIMERDEVICETIMEOUT     8 // seconds before a device used for timer check may be reused
+#define TIMERLOOKAHEADTIME    60 // seconds before a non-VPS timer starts and the channel is switched if possible
+#define VPSLOOKAHEADTIME      24 // hours within which VPS timers will make sure their events are up to date
+#define VPSUPTODATETIME     3600 // seconds before the event or schedule of a VPS timer needs to be refreshed
 
-#define EXIT(v) { ExitCode = (v); goto Exit; }
+#define EXIT(v) { ShutdownHandler.Exit(v); goto Exit; }
 
-static int Interrupted = 0;
+static int LastSignal = 0;
 
-static bool SetUser(const char *UserName)
+static bool SetUser(const char *UserName, bool UserDump)//XXX name?
 {
   if (UserName) {
      struct passwd *user = getpwnam(UserName);
@@ -103,10 +106,8 @@ static bool SetUser(const char *UserName)
         fprintf(stderr, "vdr: cannot set user id %u: %s\n", (unsigned int)user->pw_uid, strerror(errno));
         return false;
         }
-     if (prctl(PR_SET_DUMPABLE, 2, 0, 0, 0) < 0) {
+     if (UserDump && prctl(PR_SET_DUMPABLE, 1, 0, 0, 0) < 0)
         fprintf(stderr, "vdr: warning - cannot set dumpable: %s\n", strerror(errno));
-        // always non-fatal, and will not work with kernel < 2.6.13
-        }
      }
   return true;
 }
@@ -140,10 +141,18 @@ static bool SetKeepCaps(bool On)
 
 static void SignalHandler(int signum)
 {
-  if (signum != SIGPIPE) {
-     Interrupted = signum;
-     Interface->Interrupt();
-     }
+  isyslog("caught signal %d", signum);
+  switch (signum) {
+    case SIGPIPE:
+         break;
+    case SIGHUP:
+         LastSignal = signum;
+         break;
+    default:
+         LastSignal = signum;
+         Interface->Interrupt();
+         ShutdownHandler.Exit(0);
+    }
   signal(signum, SignalHandler);
 }
 
@@ -170,11 +179,13 @@ int main(int argc, char *argv[])
 
 #define DEFAULTSVDRPPORT 2001
 #define DEFAULTWATCHDOG     0 // seconds
+#define DEFAULTCONFDIR CONFDIR
 #define DEFAULTPLUGINDIR PLUGINDIR
 #define DEFAULTEPGDATAFILENAME "epg.data"
 
   bool StartedAsRoot = false;
   const char *VdrUser = NULL;
+  bool UserDump = false;
   int SVDRPport = DEFAULTSVDRPPORT;
   const char *AudioCommand = NULL;
   const char *ConfigDirectory = NULL;
@@ -186,7 +197,7 @@ int main(int argc, char *argv[])
   bool MuteAudio = false;
   int WatchdogTimeout = DEFAULTWATCHDOG;
   const char *Terminal = NULL;
-  const char *Shutdown = NULL;
+  const char *LocaleDir = NULL;
 
   bool UseKbd = true;
   const char *LircDevice = NULL;
@@ -207,7 +218,6 @@ int main(int argc, char *argv[])
 #endif
 
   cPluginManager PluginManager(DEFAULTPLUGINDIR);
-  int ExitCode = 0;
 
   static struct option long_options[] = {
       { "audio",    required_argument, NULL, 'a' },
@@ -219,6 +229,7 @@ int main(int argc, char *argv[])
       { "help",     no_argument,       NULL, 'h' },
       { "lib",      required_argument, NULL, 'L' },
       { "lirc",     optional_argument, NULL, 'l' | 0x100 },
+      { "localedir",required_argument, NULL, 'l' | 0x200 },
       { "log",      required_argument, NULL, 'l' },
       { "mute",     no_argument,       NULL, 'm' },
       { "no-kbd",   no_argument,       NULL, 'n' | 0x100 },
@@ -229,6 +240,7 @@ int main(int argc, char *argv[])
       { "shutdown", required_argument, NULL, 's' },
       { "terminal", required_argument, NULL, 't' },
       { "user",     required_argument, NULL, 'u' },
+      { "userdump", no_argument,       NULL, 'u' | 0x100 },
       { "version",  no_argument,       NULL, 'V' },
       { "vfat",     no_argument,       NULL, 'v' | 0x100 },
       { "video",    required_argument, NULL, 'v' },
@@ -294,7 +306,15 @@ int main(int argc, char *argv[])
                        }
                     break;
           case 'l' | 0x100:
-                    LircDevice = optarg ? : LIRC_DEVICE;
+                    LircDevice = optarg ? optarg : LIRC_DEVICE;
+                    break;
+          case 'l' | 0x200:
+                    if (access(optarg, R_OK | X_OK) == 0)
+                       LocaleDir = optarg;
+                    else {
+                       fprintf(stderr, "vdr: can't access locale directory: %s\n", optarg);
+                       return 2;
+                       }
                     break;
           case 'm': MuteAudio = true;
                     break;
@@ -315,7 +335,7 @@ int main(int argc, char *argv[])
                     break;
           case 'r': cRecordingUserCommand::SetCommand(optarg);
                     break;
-          case 's': Shutdown = optarg;
+          case 's': ShutdownHandler.SetShutdownCommand(optarg);
                     break;
           case 't': Terminal = optarg;
                     if (access(Terminal, R_OK | W_OK) < 0) {
@@ -326,6 +346,9 @@ int main(int argc, char *argv[])
           case 'u': if (*optarg)
                        VdrUser = optarg;
                     break;
+          case 'u' | 0x100:
+                    UserDump = true;
+                    break;
           case 'V': DisplayVersion = true;
                     break;
           case 'v' | 0x100:
@@ -335,7 +358,8 @@ int main(int argc, char *argv[])
                     while (optarg && *optarg && optarg[strlen(optarg) - 1] == '/')
                           optarg[strlen(optarg) - 1] = 0;
                     break;
-          case 'w': if (isnumber(optarg)) { int t = atoi(optarg);
+          case 'w': if (isnumber(optarg)) {
+                       int t = atoi(optarg);
                        if (t >= 0) {
                           WatchdogTimeout = t;
                           break;
@@ -355,7 +379,7 @@ int main(int argc, char *argv[])
      if (strcmp(VdrUser, "root")) {
         if (!SetKeepCaps(true))
            return 2;
-        if (!SetUser(VdrUser))
+        if (!SetUser(VdrUser, UserDump))
            return 2;
         if (!SetKeepCaps(false))
            return 2;
@@ -373,8 +397,7 @@ int main(int argc, char *argv[])
      if (DisplayHelp) {
         printf("Usage: vdr [OPTIONS]\n\n"          // for easier orientation, this is column 80|
                "  -a CMD,   --audio=CMD    send Dolby Digital audio to stdin of command CMD\n"
-               "  -c DIR,   --config=DIR   read config files from DIR (default is to read them\n"
-               "                           from the video directory)\n"
+               "  -c DIR,   --config=DIR   read config files from DIR (default: %s)\n"
                "  -d,       --daemon       run in daemon mode\n"
                "  -D NUM,   --device=NUM   use only the given DVB device (NUM = 0, 1, 2...)\n"
                "                           there may be several -D options (default: all DVB\n"
@@ -397,6 +420,8 @@ int main(int argc, char *argv[])
                "  -L DIR,   --lib=DIR      search for plugins in DIR (default is %s)\n"
                "            --lirc[=PATH]  use a LIRC remote control device, attached to PATH\n"
                "                           (default: %s)\n"
+               "            --localedir=DIR search for locale files in DIR (default is\n"
+               "                           %s)\n"
                "  -m,       --mute         mute audio of the primary DVB device at startup\n"
                "            --no-kbd       don't use the keyboard as an input device\n"
                "  -p PORT,  --port=PORT    use PORT for SVDRP (default: %d)\n"
@@ -409,6 +434,7 @@ int main(int argc, char *argv[])
                "  -t TTY,   --terminal=TTY controlling tty\n"
                "  -u USER,  --user=USER    run as user USER; only applicable if started as\n"
                "                           root\n"
+               "            --userdump     allow coredumps if -u is given (debugging)\n"
                "  -v DIR,   --video=DIR    use DIR as video directory (default: %s)\n"
                "  -V,       --version      print version information and exit\n"
                "            --vfat         encode special characters in recording names to\n"
@@ -416,9 +442,11 @@ int main(int argc, char *argv[])
                "  -w SEC,   --watchdog=SEC activate the watchdog timer with a timeout of SEC\n"
                "                           seconds (default: %d); '0' disables the watchdog\n"
                "\n",
+               DEFAULTCONFDIR,
                DEFAULTEPGDATAFILENAME,
                DEFAULTPLUGINDIR,
                LIRC_DEVICE,
+               LOCDIR,
                DEFAULTSVDRPPORT,
                RCU_DEVICE,
                VideoDirectory,
@@ -445,15 +473,6 @@ int main(int argc, char *argv[])
             }
         }
      return 0;
-     }
-
-  // Check for UTF-8 and exit if present - asprintf() will fail if it encounters 8 bit ASCII codes
-  char *LangEnv;
-  if ((LangEnv = getenv("LANG"))     != NULL && strcasestr(LangEnv, "utf") ||
-      (LangEnv = getenv("LC_ALL"))   != NULL && strcasestr(LangEnv, "utf") ||
-      (LangEnv = getenv("LC_CTYPE")) != NULL && strcasestr(LangEnv, "utf")) {
-     fprintf(stderr, "vdr: please turn off UTF-8 before starting VDR\n");
-     return 2;
      }
 
   // Log file:
@@ -492,6 +511,29 @@ int main(int argc, char *argv[])
      dsyslog("running as daemon (tid=%d)", cThread::ThreadId());
   cThread::SetMainThreadId();
 
+  // Set the system character table:
+
+  char *CodeSet = NULL;
+  if (setlocale(LC_CTYPE, ""))
+     CodeSet = nl_langinfo(CODESET);
+  else {
+     char *LangEnv = getenv("LANG"); // last resort in case locale stuff isn't installed
+     if (LangEnv) {
+        CodeSet = strchr(LangEnv, '.');
+        if (CodeSet)
+           CodeSet++; // skip the dot
+        }
+     }
+  if (CodeSet) {
+     bool known = SI::SetSystemCharacterTable(CodeSet);
+     isyslog("codeset is '%s' - %s", CodeSet, known ? "known" : "unknown");
+     cCharSetConv::SetSystemCharacterTable(CodeSet);
+     }
+
+  // Initialize internationalization:
+
+  I18nInitialize(LocaleDir);
+
   // Main program loop variables - need to be here to have them initialized before any EXIT():
 
   cOsdObject *Menu = NULL;
@@ -500,13 +542,11 @@ int main(int argc, char *argv[])
   int PreviousChannel[2] = { 1, 1 };
   int PreviousChannelIndex = 0;
   time_t LastChannelChanged = time(NULL);
-  time_t LastActivity = 0;
-  time_t LastCamMenu = 0;
+  time_t LastInteract = 0;
   int MaxLatencyTime = 0;
-  bool ForceShutdown = false;
-  bool UserShutdown = false;
   bool InhibitEpgScan = false;
   bool IsInfoMenu = false;
+  bool CheckHasProgramme = false;
   cSkin *CurrentSkin = NULL;
 
   // Load plugins:
@@ -517,7 +557,7 @@ int main(int argc, char *argv[])
   // Configuration data:
 
   if (!ConfigDirectory)
-     ConfigDirectory = VideoDirectory;
+     ConfigDirectory = DEFAULTCONFDIR;
 
   cPlugin::SetConfigDirectory(ConfigDirectory);
   cThemes::SetThemesDirectory(AddDirectory(ConfigDirectory, "themes"));
@@ -535,7 +575,11 @@ int main(int argc, char *argv[])
         ))
      EXIT(2);
 
-  cFont::SetCode(I18nCharSets()[Setup.OSDLanguage]);
+  if (!*cFont::GetFontFileName(Setup.FontOsd)) {
+     const char *msg = "no fonts available - OSD will not show any text!";
+     fprintf(stderr, "vdr: %s\n", msg);
+     esyslog("ERROR: %s", msg);
+     }
 
   // Recordings:
 
@@ -598,6 +642,10 @@ int main(int argc, char *argv[])
            }
         }
      }
+
+  // Check for timers in automatic start time window:
+
+  ShutdownHandler.CheckManualStart(MANUALSTART);
 
   // User interface:
 
@@ -671,31 +719,28 @@ int main(int argc, char *argv[])
 
 #define DELETE_MENU ((IsInfoMenu &= (Menu == NULL)), delete Menu, Menu = NULL)
 
-  while (!Interrupted) {
-        // Handle emergency exits:
-        if (cThread::EmergencyExit()) {
-           esyslog("emergency exit requested - shutting down");
-           break;
-           }
+  while (!ShutdownHandler.DoExit()) {
 #ifdef DEBUGRINGBUFFERS
         cRingBufferLinear::PrintDebugRBL();
 #endif
         // Attach launched player control:
         cControl::Attach();
+
+        time_t Now = time(NULL);
+
         // Make sure we have a visible programme in case device usage has changed:
         if (!EITScanner.Active() && cDevice::PrimaryDevice()->HasDecoder() && !cDevice::PrimaryDevice()->HasProgramme()) {
            static time_t lastTime = 0;
-           if (time(NULL) - lastTime > MINCHANNELWAIT) {
+           if ((!Menu || CheckHasProgramme) && Now - lastTime > MINCHANNELWAIT) { // !Menu to avoid interfering with the CAM if a CAM menu is open
               cChannel *Channel = Channels.GetByNumber(cDevice::CurrentChannel());
               if (Channel && (Channel->Vpid() || Channel->Apid(0))) {
                  if (!Channels.SwitchTo(cDevice::CurrentChannel()) // try to switch to the original channel...
-                     && !(LastTimerChannel > 0 && Channels.SwitchTo(LastTimerChannel)) // ...or the one used by the last timer...
-                     && !cDevice::SwitchChannel(1) // ...or the next higher available one...
-                     && !cDevice::SwitchChannel(-1)) // ...or the next lower available one
+                     && !(LastTimerChannel > 0 && Channels.SwitchTo(LastTimerChannel))) // ...or the one used by the last timer...
                     ;
                  }
-              lastTime = time(NULL); // don't do this too often
+              lastTime = Now; // don't do this too often
               LastTimerChannel = -1;
+              CheckHasProgramme = false;
               }
            }
         // Restart the Watchdog timer:
@@ -716,8 +761,8 @@ int main(int argc, char *argv[])
            if (modified == CHANNELSMOD_USER || Timers.Modified(TimerState))
               ChannelSaveTimeout = 1; // triggers an immediate save
            else if (modified && !ChannelSaveTimeout)
-              ChannelSaveTimeout = time(NULL) + CHANNELSAVEDELTA;
-           bool timeout = ChannelSaveTimeout == 1 || ChannelSaveTimeout && time(NULL) > ChannelSaveTimeout && !cRecordControls::Active();
+              ChannelSaveTimeout = Now + CHANNELSAVEDELTA;
+           bool timeout = ChannelSaveTimeout == 1 || ChannelSaveTimeout && Now > ChannelSaveTimeout && !cRecordControls::Active();
            if ((modified || timeout) && Channels.Lock(false, 100)) {
               if (timeout) {
                  Channels.Save();
@@ -745,16 +790,15 @@ int main(int argc, char *argv[])
            if (!Menu)
               Menu = new cDisplayChannel(cDevice::CurrentChannel(), LastChannel >= 0);
            LastChannel = cDevice::CurrentChannel();
-           LastChannelChanged = time(NULL);
+           LastChannelChanged = Now;
            }
-        if (time(NULL) - LastChannelChanged >= Setup.ZapTimeout && LastChannel != PreviousChannel[PreviousChannelIndex])
+        if (Now - LastChannelChanged >= Setup.ZapTimeout && LastChannel != PreviousChannel[PreviousChannelIndex])
            PreviousChannel[PreviousChannelIndex ^= 1] = LastChannel;
         // Timers and Recordings:
         if (!Timers.BeingEdited()) {
            // Assign events to timers:
            Timers.SetEvents();
            // Must do all following calls with the exact same time!
-           time_t Now = time(NULL);
            // Process ongoing recordings:
            cRecordControls::Process(Now);
            // Start new recordings:
@@ -835,13 +879,15 @@ int main(int argc, char *argv[])
                            }
                         if (cDevice::PrimaryDevice()->HasDecoder() && !cDevice::PrimaryDevice()->HasProgramme()) {
                            // the previous SwitchChannel() has switched away the current live channel
-                           Channels.SwitchTo(Timer->Channel()->Number()); // avoids toggling between old channel and black screen
-                           Skins.Message(mtInfo, tr("Upcoming VPS recording!"));
+                           cDevice::SetAvoidDevice(Device);
+                           if (!Channels.SwitchTo(cDevice::CurrentChannel())) // try to switch to the original channel on a different device...
+                              Channels.SwitchTo(Timer->Channel()->Number()); // ...or avoid toggling between old channel and black screen
+                           Skins.Message(mtInfo, tr("Upcoming recording!"));
                            }
                         }
                      }
                   }
-              LastTimerCheck = time(NULL);
+              LastTimerCheck = Now;
               }
            // Delete expired timers:
            Timers.DeleteExpired();
@@ -851,22 +897,21 @@ int main(int argc, char *argv[])
            DeletedRecordings.Update();
            }
         // CAM control:
-        if (!Menu && !cOsd::IsOpen()) {
+        if (!Menu && !cOsd::IsOpen())
            Menu = CamControl();
-           if (Menu)
-              LastCamMenu = 0;
-           else if (!LastCamMenu)
-              LastCamMenu = time(NULL);
-           }
         // Queued messages:
         if (!Skins.IsOpen())
            Skins.ProcessQueuedMessages();
         // User Input:
         cOsdObject *Interact = Menu ? Menu : cControl::Control();
-        eKeys key = Interface->GetKey((!Interact || !Interact->NeedsFastResponse()) && time(NULL) - LastCamMenu > LASTCAMMENUTIMEOUT);
-        if (NORMALKEY(key) != kNone) {
+        eKeys key = Interface->GetKey(!Interact || !Interact->NeedsFastResponse());
+        if (ISREALKEY(key)) {
            EITScanner.Activity();
-           LastActivity = time(NULL);
+           // Cancel shutdown countdown:
+           if (ShutdownHandler.countdown)
+              ShutdownHandler.countdown.Cancel();
+           // Set user active for MinUserInactivity time in the future:
+           ShutdownHandler.SetUserInactiveTimeout();
            }
         // Keys that must work independent of any interactive mode:
         switch (key) {
@@ -883,15 +928,17 @@ int main(int argc, char *argv[])
                   else
                      WasOpen = false;
                   }
-               if (!WasOpen || !WasMenu && !Setup.MenuButtonCloses)
+               if (!WasOpen || !WasMenu && !Setup.MenuKeyCloses)
                   Menu = new cMenuMain;
                }
                break;
           // Info:
           case kInfo: {
-               bool WasInfoMenu = IsInfoMenu;
-               DELETE_MENU;
-               if (!WasInfoMenu) {
+               if (IsInfoMenu) {
+                  key = kNone; // nobody else needs to see this key
+                  DELETE_MENU;
+                  }
+               else if (!Menu) {
                   IsInfoMenu = true;
                   if (cControl::Control()) {
                      cControl::Control()->Hide();
@@ -905,6 +952,7 @@ int main(int argc, char *argv[])
                      cRemote::Put(kOk, true);
                      cRemote::Put(kSchedule, true);
                      }
+                  key = kNone; // nobody else needs to see this key
                   }
                }
                break;
@@ -986,6 +1034,18 @@ int main(int argc, char *argv[])
                   cDisplayTracks::Process(key);
                key = kNone;
                break;
+          // Subtitle track control:
+          case kSubtitles:
+               if (cControl::Control())
+                  cControl::Control()->Hide();
+               if (!cDisplaySubtitleTracks::IsOpen()) {
+                  DELETE_MENU;
+                  Menu = cDisplaySubtitleTracks::Create();
+                  }
+               else
+                  cDisplaySubtitleTracks::Process(key);
+               key = kNone;
+               break;
           // Pausing live video:
           case kPause:
                if (!cControl::Control()) {
@@ -1004,41 +1064,37 @@ int main(int argc, char *argv[])
                   }
                break;
           // Power off:
-          case kPower: {
+          case kPower:
                isyslog("Power button pressed");
                DELETE_MENU;
-               if (!Shutdown) {
-                  Skins.Message(mtError, tr("Can't shutdown - option '-s' not given!"));
+               // Check for activity, request power button again if active:
+               if (!ShutdownHandler.ConfirmShutdown(false) && Skins.Message(mtWarning, tr("VDR will shut down later - press Power to force"), SHUTDOWNFORCEPROMPT) != kPower) {
+                  // Not pressed power - set VDR to be non-interactive and power down later:
+                  ShutdownHandler.SetUserInactive();
                   break;
                   }
-               LastActivity = 1; // not 0, see below!
-               UserShutdown = true;
-               if (cRecordControls::Active()) {
-                  if (!Interface->Confirm(tr("Recording - shut down anyway?")))
-                     break;
-                  }
-               if (cPluginManager::Active(tr("shut down anyway?")))
+               // No activity or power button pressed twice - ask for confirmation:
+               if (!ShutdownHandler.ConfirmShutdown(true)) {
+                  // Non-confirmed background activity - set VDR to be non-interactive and power down later:
+                  ShutdownHandler.SetUserInactive();
                   break;
-               if (!cRecordControls::Active()) {
-                  cTimer *timer = Timers.GetNextActiveTimer();
-                  time_t Next  = timer ? timer->StartTime() : 0;
-                  time_t Delta = timer ? Next - time(NULL) : 0;
-                  if (Next && Delta <= Setup.MinEventTimeout * 60) {
-                     char *buf;
-                     asprintf(&buf, tr("Recording in %ld minutes, shut down anyway?"), Delta / 60);
-                     bool confirm = Interface->Confirm(buf);
-                     free(buf);
-                     if (!confirm)
-                        break;
-                     }
                   }
-               ForceShutdown = true;
+               // Ask the final question:
+               if (!Interface->Confirm(tr("Press any key to cancel shutdown"), SHUTDOWNCANCELPROMPT, true))
+                  // If final question was canceled, continue to be active:
+                  break;
+               // Ok, now call the shutdown script:
+               ShutdownHandler.DoShutdown(true);
+               // Set VDR to be non-interactive and power down again later:
+               ShutdownHandler.SetUserInactive();
+               // Do not attempt to automatically shut down for a while:
+               ShutdownHandler.SetRetry(SHUTDOWNRETRY);
                break;
-               }
           default: break;
           }
         Interact = Menu ? Menu : cControl::Control(); // might have been closed in the mean time
         if (Interact) {
+           LastInteract = Now;
            eOSState state = Interact->ProcessKey(key);
            if (state == osUnknown && Interact != cControl::Control()) {
               if (ISMODELESSKEY(key) && cControl::Control()) {
@@ -1049,12 +1105,9 @@ int main(int argc, char *argv[])
                     continue;
                     }
                  }
-              else if (time(NULL) - LastActivity > MENUTIMEOUT)
+              else if (Now - cRemote::LastActivity() > MENUTIMEOUT)
                  state = osEnd;
               }
-           // TODO make the CAM menu stay open in case of automatic updates and have it return osContinue; then the following two lines can be removed again
-           else if (state == osEnd && LastActivity > 1)
-              LastActivity = time(NULL);
            switch (state) {
              case osPause:  DELETE_MENU;
                             cControl::Shutdown(); // just in case
@@ -1069,6 +1122,7 @@ int main(int argc, char *argv[])
                             DELETE_MENU;
                             cControl::Shutdown();
                             Menu = new cMenuMain(osRecordings);
+                            CheckHasProgramme = true; // to have live tv after stopping replay with 'Back'
                             break;
              case osReplay: DELETE_MENU;
                             cControl::Shutdown();
@@ -1154,79 +1208,64 @@ int main(int argc, char *argv[])
                  Skins.Message(mtInfo, tr("Editing process finished"));
               }
            }
-        if (!Interact && ((!cRecordControls::Active() && !cCutter::Active() && (!Interface->HasSVDRPConnection() || UserShutdown)) || ForceShutdown)) {
-           time_t Now = time(NULL);
-           if (Now - LastActivity > ACTIVITYTIMEOUT) {
-              // Shutdown:
-              if (Shutdown && (Setup.MinUserInactivity || LastActivity == 1) && Now - LastActivity > Setup.MinUserInactivity * 60) {
-                 cTimer *timer = Timers.GetNextActiveTimer();
-                 time_t Next  = timer ? timer->StartTime() : 0;
-                 time_t Delta = timer ? Next - Now : 0;
-                 if (!LastActivity) {
-                    if (!timer || Delta > MANUALSTART) {
-                       // Apparently the user started VDR manually
-                       dsyslog("assuming manual start of VDR");
-                       LastActivity = Now;
-                       continue; // don't run into the actual shutdown procedure below
-                       }
-                    else
-                       LastActivity = 1;
-                    }
-                 if (timer && Delta < Setup.MinEventTimeout * 60 && ForceShutdown) {
-                    Delta = Setup.MinEventTimeout * 60;
-                    Next = Now + Delta;
-                    timer = NULL;
-                    dsyslog("reboot at %s", *TimeToString(Next));
-                    }
-                 if (!ForceShutdown && cPluginManager::Active()) {
-                    LastActivity = Now - Setup.MinUserInactivity * 60 + SHUTDOWNRETRY; // try again later
-                    continue;
-                    }
-                 if (!Next || Delta > Setup.MinEventTimeout * 60 || ForceShutdown) {
-                    ForceShutdown = false;
-                    if (timer)
-                       dsyslog("next timer event at %s", *TimeToString(Next));
-                    if (WatchdogTimeout > 0)
-                       signal(SIGALRM, SIG_IGN);
-                    if (Interface->Confirm(tr("Press any key to cancel shutdown"), UserShutdown ? 5 : SHUTDOWNWAIT, true)) {
-                       cControl::Shutdown();
-                       int Channel = timer ? timer->Channel()->Number() : 0;
-                       const char *File = timer ? timer->File() : "";
-                       if (timer)
-                          Delta = Next - time(NULL); // compensates for Confirm() timeout
-                       char *cmd;
-                       asprintf(&cmd, "%s %ld %ld %d \"%s\" %d", Shutdown, Next, Delta, Channel, *strescape(File, "\"$"), UserShutdown);
-                       isyslog("executing '%s'", cmd);
-                       SystemExec(cmd);
-                       free(cmd);
-                       LastActivity = time(NULL) - Setup.MinUserInactivity * 60 + SHUTDOWNRETRY; // try again later
-                       }
-                    else {
-                      LastActivity = Now;
-                      if (WatchdogTimeout > 0) {
-                         alarm(WatchdogTimeout);
-                         if (signal(SIGALRM, Watchdog) == SIG_IGN)
-                            signal(SIGALRM, SIG_IGN);
-                         }
-                      }
-                    UserShutdown = false;
-                    continue; // skip the rest of the housekeeping for now
-                    }
-                 }
-              // Disk housekeeping:
-              RemoveDeletedRecordings();
-              cSchedules::Cleanup();
-              // Plugins housekeeping:
-              PluginManager.Housekeeping();
-              }
+
+        // SIGHUP shall cause a restart:
+        if (LastSignal == SIGHUP) {
+           if (ShutdownHandler.ConfirmRestart(true) && Interface->Confirm(tr("Press any key to cancel restart"), RESTARTCANCELPROMPT, true))
+              EXIT(1);
+           LastSignal = 0;
            }
+
+        // Update the shutdown countdown:
+        if (ShutdownHandler.countdown && ShutdownHandler.countdown.Update()) {
+           if (!ShutdownHandler.ConfirmShutdown(false))
+              ShutdownHandler.countdown.Cancel();
+           }
+
+        if ((Now - LastInteract) > ACTIVITYTIMEOUT && !cRecordControls::Active() && !cCutter::Active() && !Interface->HasSVDRPConnection() && (Now - cRemote::LastActivity()) > ACTIVITYTIMEOUT) {
+           // Handle housekeeping tasks
+
+           // Shutdown:
+           // Check whether VDR will be ready for shutdown in SHUTDOWNWAIT seconds:
+           time_t Soon = Now + SHUTDOWNWAIT;
+           if (ShutdownHandler.IsUserInactive(Soon) && ShutdownHandler.Retry(Soon) && !ShutdownHandler.countdown) {
+              if (ShutdownHandler.ConfirmShutdown(false))
+                 // Time to shut down - start final countdown:
+                 ShutdownHandler.countdown.Start(tr("VDR will shut down in %s minutes"), SHUTDOWNWAIT); // the placeholder is really %s!
+              // Dont try to shut down again for a while:
+              ShutdownHandler.SetRetry(SHUTDOWNRETRY);
+              }
+           // Countdown run down to 0?
+           if (ShutdownHandler.countdown.Done()) {
+              // Timed out, now do a final check:
+              if (ShutdownHandler.IsUserInactive() && ShutdownHandler.ConfirmShutdown(false))
+                 ShutdownHandler.DoShutdown(false);
+              // Do this again a bit later:
+              ShutdownHandler.SetRetry(SHUTDOWNRETRY);
+              }
+
+           // Disk housekeeping:
+           RemoveDeletedRecordings();
+           cSchedules::Cleanup();
+           // Plugins housekeeping:
+           PluginManager.Housekeeping();
+           }
+
         // Main thread hooks of plugins:
         PluginManager.MainThreadHook();
         }
-  if (Interrupted)
-     isyslog("caught signal %d", Interrupted);
+
+  if (ShutdownHandler.EmergencyExitRequested())
+     esyslog("emergency exit requested - shutting down");
 
 Exit:
+
+  // Reset all signal handlers to default before Interface gets deleted:
+  signal(SIGHUP,  SIG_DFL);
+  signal(SIGINT,  SIG_DFL);
+  signal(SIGTERM, SIG_DFL);
+  signal(SIGPIPE, SIG_DFL);
+  signal(SIGALRM, SIG_DFL);
 
   PluginManager.StopPlugins();
   cRecordControls::Shutdown();
@@ -1238,7 +1277,7 @@ Exit:
   Remotes.Clear();
   Audios.Clear();
   Skins.Clear();
-  if (ExitCode != 2) {
+  if (ShutdownHandler.GetExitCode() != 2) {
      Setup.CurrentChannel = cDevice::CurrentChannel();
      Setup.CurrentVolume  = cDevice::CurrentVolume();
      Setup.Save();
@@ -1249,14 +1288,12 @@ Exit:
   ReportEpgBugFixStats();
   if (WatchdogTimeout > 0)
      dsyslog("max. latency time %d seconds", MaxLatencyTime);
-  isyslog("exiting");
+  isyslog("exiting, exit code %d", ShutdownHandler.GetExitCode());
+  if (ShutdownHandler.EmergencyExitRequested())
+     esyslog("emergency exit!");
   if (SysLogLevel > 0)
      closelog();
   if (HasStdin)
      tcsetattr(STDIN_FILENO, TCSANOW, &savedTm);
-  if (cThread::EmergencyExit()) {
-     esyslog("emergency exit!");
-     return 1;
-     }
-  return ExitCode;
+  return ShutdownHandler.GetExitCode();
 }

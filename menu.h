@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: menu.h 1.86 2006/10/20 13:09:57 kls Exp $
+ * $Id: menu.h 1.91 2008/02/10 16:01:53 kls Exp $
  */
 
 #ifndef __MENU_H
@@ -56,8 +56,6 @@ public:
 
 class cMenuMain : public cOsdMenu {
 private:
-  time_t lastDiskSpaceCheck;
-  int lastFreeMB;
   bool replaying;
   cOsdItem *stopReplayItem;
   cOsdItem *cancelEditingItem;
@@ -115,7 +113,7 @@ private:
   cSkinDisplayTracks *displayTracks;
   cTimeMs timeout;
   eTrackType types[ttMaxTrackTypes];
-  char *descriptions[ttMaxTrackTypes];
+  char *descriptions[ttMaxTrackTypes + 1]; // list is NULL terminated
   int numTracks, track, audioChannel;
   static cDisplayTracks *currentDisplayTracks;
   virtual void Show(void);
@@ -128,29 +126,22 @@ public:
   eOSState ProcessKey(eKeys Key);
   };
 
-class cMenuCam : public cOsdMenu {
+class cDisplaySubtitleTracks : public cOsdObject {
 private:
-  cCiMenu *ciMenu;
-  bool selected;
-  int offset;
-  void AddMultiLineItem(const char *s);
-  eOSState Select(void);
+  cSkinDisplayTracks *displayTracks;
+  cTimeMs timeout;
+  eTrackType types[ttMaxTrackTypes];
+  char *descriptions[ttMaxTrackTypes + 1]; // list is NULL terminated
+  int numTracks, track;
+  static cDisplaySubtitleTracks *currentDisplayTracks;
+  virtual void Show(void);
+  cDisplaySubtitleTracks(void);
 public:
-  cMenuCam(cCiMenu *CiMenu);
-  virtual ~cMenuCam();
-  virtual eOSState ProcessKey(eKeys Key);
-  };
-
-class cMenuCamEnquiry : public cOsdMenu {
-private:
-  cCiEnquiry *ciEnquiry;
-  char *input;
-  bool replied;
-  eOSState Reply(void);
-public:
-  cMenuCamEnquiry(cCiEnquiry *CiEnquiry);
-  virtual ~cMenuCamEnquiry();
-  virtual eOSState ProcessKey(eKeys Key);
+  virtual ~cDisplaySubtitleTracks();
+  static bool IsOpen(void) { return currentDisplayTracks != NULL; }
+  static cDisplaySubtitleTracks *Create(void);
+  static void Process(eKeys Key);
+  eOSState ProcessKey(eKeys Key);
   };
 
 cOsdObject *CamControl(void);
@@ -163,6 +154,7 @@ private:
   int level;
   int recordingsState;
   int helpKeys;
+  bool SetFreeDiskDisplay(bool Force = false);
   void SetHelpKeys(void);
   void Set(bool Refresh = false);
   bool Open(bool OpenSubMenus = false);
@@ -185,7 +177,7 @@ private:
   cTimer *timer;
   cRecorder *recorder;
   const cEvent *event;
-  char *instantId;
+  cString instantId;
   char *fileName;
   bool GetEvent(void);
 public:
@@ -206,7 +198,6 @@ private:
 public:
   static bool Start(cTimer *Timer = NULL, bool Pause = false);
   static void Stop(const char *InstantId);
-  static void Stop(cDevice *Device);
   static bool PauseLiveVideo(void);
   static const char *GetInstantId(const char *LastInstantId);
   static cRecordControl *GetRecordControl(const char *FileName);

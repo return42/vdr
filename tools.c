@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: tools.c 1.121 2006/12/02 11:12:59 kls Exp $
+ * $Id: tools.c 1.145 2008/03/05 17:23:47 kls Exp $
  */
 
 #include "tools.h"
@@ -158,19 +158,13 @@ char *strreplace(char *s, const char *s1, const char *s2)
      int l1 = strlen(s1);
      int l2 = strlen(s2);
      if (l2 > l1)
-        s = (char *)realloc(s, strlen(s) + l2 - l1 + 1);
+        s = (char *)realloc(s, l + l2 - l1 + 1);
+     char *sof = s + of;
      if (l2 != l1)
-        memmove(s + of + l2, s + of + l1, l - of - l1 + 1);
-     strncpy(s + of, s2, l2);
+        memmove(sof + l2, sof + l1, l - of - l1 + 1);
+     strncpy(sof, s2, l2);
      }
   return s;
-}
-
-char *skipspace(const char *s)
-{
-  while (*s && isspace(*s))
-        s++;
-  return (char *)s;
 }
 
 char *stripspace(char *s)
@@ -252,28 +246,28 @@ bool isempty(const char *s)
 
 int numdigits(int n)
 {
-  char buf[16];
-  snprintf(buf, sizeof(buf), "%d", n);
-  return strlen(buf);
+  int res = 1;
+  while (n >= 10) {
+        n /= 10;
+        res++;
+        }
+  return res;
 }
 
 bool isnumber(const char *s)
 {
   if (!*s)
      return false;
-  while (*s) {
-        if (!isdigit(*s))
-           return false;
-        s++;
-        }
+  do {
+     if (!isdigit(*s))
+        return false;
+     } while (*++s);
   return true;
 }
 
 cString AddDirectory(const char *DirName, const char *FileName)
 {
-  char *buf;
-  asprintf(&buf, "%s/%s", DirName && *DirName ? DirName : ".", FileName);
-  return cString(buf, true);
+  return cString::sprintf("%s/%s", DirName && *DirName ? DirName : ".", FileName);
 }
 
 cString itoa(int n)
@@ -281,6 +275,21 @@ cString itoa(int n)
   char buf[16];
   snprintf(buf, sizeof(buf), "%d", n);
   return buf;
+}
+
+bool EntriesOnSameFileSystem(const char *File1, const char *File2)
+{
+  struct statfs statFs;
+  if (statfs(File1, &statFs) == 0) {
+     fsid_t fsid1 = statFs.f_fsid;
+     if (statfs(File2, &statFs) == 0)
+        return memcmp(&statFs.f_fsid, &fsid1, sizeof(fsid1)) == 0;
+     else
+        LOG_ERROR_STR(File2);
+     }
+  else
+     LOG_ERROR_STR(File1);
+  return false;
 }
 
 int FreeDiskSpaceMB(const char *Directory, int *UsedMB)
@@ -356,15 +365,14 @@ bool RemoveFileOrDir(const char *FileName, bool FollowSymlinks)
            struct dirent *e;
            while ((e = d.Next()) != NULL) {
                  if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..")) {
-                    char *buffer;
-                    asprintf(&buffer, "%s/%s", FileName, e->d_name);
+                    cString buffer = AddDirectory(FileName, e->d_name);
                     if (FollowSymlinks) {
                        int size = strlen(buffer) * 2; // should be large enough
                        char *l = MALLOC(char, size);
                        int n = readlink(buffer, l, size);
                        if (n < 0) {
                           if (errno != EINVAL)
-                             LOG_ERROR_STR(buffer);
+                             LOG_ERROR_STR(*buffer);
                           }
                        else if (n < size) {
                           l[n] = 0;
@@ -376,10 +384,9 @@ bool RemoveFileOrDir(const char *FileName, bool FollowSymlinks)
                           esyslog("ERROR: symlink name length (%d) exceeded anticipated buffer size (%d)", n, size);
                        free(l);
                        }
-                    dsyslog("removing %s", buffer);
+                    dsyslog("removing %s", *buffer);
                     if (remove(buffer) < 0)
-                       LOG_ERROR_STR(buffer);
-                    free(buffer);
+                       LOG_ERROR_STR(*buffer);
                     }
                  }
            }
@@ -409,8 +416,7 @@ bool RemoveEmptyDirectories(const char *DirName, bool RemoveThis)
      struct dirent *e;
      while ((e = d.Next()) != NULL) {
            if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..") && strcmp(e->d_name, "lost+found")) {
-              char *buffer;
-              asprintf(&buffer, "%s/%s", DirName, e->d_name);
+              cString buffer = AddDirectory(DirName, e->d_name);
               struct stat st;
               if (stat(buffer, &st) == 0) {
                  if (S_ISDIR(st.st_mode)) {
@@ -421,10 +427,9 @@ bool RemoveEmptyDirectories(const char *DirName, bool RemoveThis)
                     empty = false;
                  }
               else {
-                 LOG_ERROR_STR(buffer);
+                 LOG_ERROR_STR(*buffer);
                  empty = false;
                  }
-              free(buffer);
               }
            }
      if (RemoveThis && empty) {
@@ -449,8 +454,7 @@ int DirSizeMB(const char *DirName)
      struct dirent *e;
      while (size >= 0 && (e = d.Next()) != NULL) {
            if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..")) {
-              char *buffer;
-              asprintf(&buffer, "%s/%s", DirName, e->d_name);
+              cString buffer = AddDirectory(DirName, e->d_name);
               struct stat st;
               if (stat(buffer, &st) == 0) {
                  if (S_ISDIR(st.st_mode)) {
@@ -464,10 +468,9 @@ int DirSizeMB(const char *DirName)
                     size += st.st_size / MEGABYTE(1);
                  }
               else {
-                 LOG_ERROR_STR(buffer);
+                 LOG_ERROR_STR(*buffer);
                  size = -1;
                  }
-              free(buffer);
               }
            }
      return size;
@@ -493,13 +496,12 @@ char *ReadLink(const char *FileName)
 
 bool SpinUpDisk(const char *FileName)
 {
-  char *buf = NULL;
   for (int n = 0; n < 10; n++) {
-      free(buf);
+      cString buf;
       if (DirectoryOk(FileName))
-         asprintf(&buf, "%s/vdr-%06d", *FileName ? FileName : ".", n);
+         buf = cString::sprintf("%s/vdr-%06d", *FileName ? FileName : ".", n);
       else
-         asprintf(&buf, "%s.vdr-%06d", FileName, n);
+         buf = cString::sprintf("%s.vdr-%06d", FileName, n);
       if (access(buf, F_OK) != 0) { // the file does not exist
          timeval tp1, tp2;
          gettimeofday(&tp1, NULL);
@@ -507,21 +509,19 @@ bool SpinUpDisk(const char *FileName)
          // O_SYNC doesn't work on all file systems
          if (f >= 0) {
             if (fdatasync(f) < 0)
-               LOG_ERROR_STR(buf);
+               LOG_ERROR_STR(*buf);
             close(f);
             remove(buf);
             gettimeofday(&tp2, NULL);
             double seconds = (((long long)tp2.tv_sec * 1000000 + tp2.tv_usec) - ((long long)tp1.tv_sec * 1000000 + tp1.tv_usec)) / 1000000.0;
             if (seconds > 0.5)
                dsyslog("SpinUpDisk took %.2f seconds", seconds);
-            free(buf);
             return true;
             }
          else
-            LOG_ERROR_STR(buf);
+            LOG_ERROR_STR(*buf);
          }
       }
-  free(buf);
   esyslog("ERROR: SpinUpDisk failed");
   return false;
 }
@@ -542,13 +542,48 @@ time_t LastModifiedTime(const char *FileName)
 
 // --- cTimeMs ---------------------------------------------------------------
 
-cTimeMs::cTimeMs(void)
+cTimeMs::cTimeMs(int Ms)
 {
-  Set();
+  Set(Ms);
 }
 
 uint64_t cTimeMs::Now(void)
 {
+#if _POSIX_TIMERS > 0 && defined(_POSIX_MONOTONIC_CLOCK)
+#define MIN_RESOLUTION 5 // ms
+  static bool initialized = false;
+  static bool monotonic = false;
+  struct timespec tp;
+  if (!initialized) {
+     // check if monotonic timer is available and provides enough accurate resolution:
+     if (clock_getres(CLOCK_MONOTONIC, &tp) == 0) {
+        long Resolution = tp.tv_nsec;
+        // require a minimum resolution:
+        if (tp.tv_sec == 0 && tp.tv_nsec <= MIN_RESOLUTION * 1000000) {
+           if (clock_gettime(CLOCK_MONOTONIC, &tp) == 0) {
+              dsyslog("cTimeMs: using monotonic clock (resolution is %ld ns)", Resolution);
+              monotonic = true;
+              }
+           else
+              esyslog("cTimeMs: clock_gettime(CLOCK_MONOTONIC) failed");
+           }
+        else
+           dsyslog("cTimeMs: not using monotonic clock - resolution is too bad (%ld s %ld ns)", tp.tv_sec, tp.tv_nsec);
+        }
+     else
+        esyslog("cTimeMs: clock_getres(CLOCK_MONOTONIC) failed");
+     initialized = true;
+     }
+  if (monotonic) {
+     if (clock_gettime(CLOCK_MONOTONIC, &tp) == 0)
+        return (uint64_t(tp.tv_sec)) * 1000 + tp.tv_nsec / 1000000;
+     esyslog("cTimeMs: clock_gettime(CLOCK_MONOTONIC) failed");
+     monotonic = false;
+     // fall back to gettimeofday()
+     }
+#else
+#  warning Posix monotonic clock not available
+#endif
   struct timeval t;
   if (gettimeofday(&t, NULL) == 0)
      return (uint64_t(t.tv_sec)) * 1000 + t.tv_usec / 1000;
@@ -568,6 +603,252 @@ bool cTimeMs::TimedOut(void)
 uint64_t cTimeMs::Elapsed(void)
 {
   return Now() - begin;
+}
+
+// --- UTF-8 support ---------------------------------------------------------
+
+static uint SystemToUtf8[128] = { 0 };
+
+int Utf8CharLen(const char *s)
+{
+  if (cCharSetConv::SystemCharacterTable())
+     return 1;
+#define MT(s, m, v) ((*(s) & (m)) == (v)) // Mask Test
+  if (MT(s, 0xE0, 0xC0) && MT(s + 1, 0xC0, 0x80))
+     return 2;
+  if (MT(s, 0xF0, 0xE0) && MT(s + 1, 0xC0, 0x80) && MT(s + 2, 0xC0, 0x80))
+     return 3;
+  if (MT(s, 0xF8, 0xF0) && MT(s + 1, 0xC0, 0x80) && MT(s + 2, 0xC0, 0x80) && MT(s + 3, 0xC0, 0x80))
+     return 4;
+  return 1;
+}
+
+uint Utf8CharGet(const char *s, int Length)
+{
+  if (cCharSetConv::SystemCharacterTable())
+     return (uchar)*s < 128 ? *s : SystemToUtf8[(uchar)*s - 128];
+  if (!Length)
+     Length = Utf8CharLen(s);
+  switch (Length) {
+    case 2: return ((*s & 0x1F) <<  6) |  (*(s + 1) & 0x3F);
+    case 3: return ((*s & 0x0F) << 12) | ((*(s + 1) & 0x3F) <<  6) |  (*(s + 2) & 0x3F);
+    case 4: return ((*s & 0x07) << 18) | ((*(s + 1) & 0x3F) << 12) | ((*(s + 2) & 0x3F) << 6) | (*(s + 3) & 0x3F);
+    }
+  return *s;
+}
+
+int Utf8CharSet(uint c, char *s)
+{
+  if (c < 0x80 || cCharSetConv::SystemCharacterTable()) {
+     if (s)
+        *s = c;
+     return 1;
+     }
+  if (c < 0x800) {
+     if (s) {
+        *s++ = ((c >> 6) & 0x1F) | 0xC0;
+        *s   = (c & 0x3F) | 0x80;
+        }
+     return 2;
+     }
+  if (c < 0x10000) {
+     if (s) {
+        *s++ = ((c >> 12) & 0x0F) | 0xE0;
+        *s++ = ((c >>  6) & 0x3F) | 0x80;
+        *s   = (c & 0x3F) | 0x80;
+        }
+     return 3;
+     }
+  if (c < 0x110000) {
+     if (s) {
+        *s++ = ((c >> 18) & 0x07) | 0xF0;
+        *s++ = ((c >> 12) & 0x3F) | 0x80;
+        *s++ = ((c >>  6) & 0x3F) | 0x80;
+        *s   = (c & 0x3F) | 0x80;
+        }
+     return 4;
+     }
+  return 0; // can't convert to UTF-8
+}
+
+int Utf8SymChars(const char *s, int Symbols)
+{
+  if (cCharSetConv::SystemCharacterTable())
+     return Symbols;
+  int n = 0;
+  while (*s && Symbols--) {
+        int sl = Utf8CharLen(s);
+        s += sl;
+        n += sl;
+        }
+  return n;
+}
+
+int Utf8StrLen(const char *s)
+{
+  if (cCharSetConv::SystemCharacterTable())
+     return strlen(s);
+  int n = 0;
+  while (*s) {
+        s += Utf8CharLen(s);
+        n++;
+        }
+  return n;
+}
+
+char *Utf8Strn0Cpy(char *Dest, const char *Src, int n)
+{
+  if (cCharSetConv::SystemCharacterTable())
+     return strn0cpy(Dest, Src, n);
+  char *d = Dest;
+  while (*Src) {
+        int sl = Utf8CharLen(Src);
+        n -= sl;
+        if (n > 0) {
+           while (sl--)
+                 *d++ = *Src++;
+           }
+        else
+           break;
+        }
+  *d = 0;
+  return Dest;
+}
+
+int Utf8ToArray(const char *s, uint *a, int Size)
+{
+  int n = 0;
+  while (*s && --Size > 0) {
+        if (cCharSetConv::SystemCharacterTable())
+           *a++ = (uchar)(*s++);
+        else {
+           int sl = Utf8CharLen(s);
+           *a++ = Utf8CharGet(s, sl);
+           s += sl;
+           }
+        n++;
+        }
+  if (Size > 0)
+     *a = 0;
+  return n;
+}
+
+int Utf8FromArray(const uint *a, char *s, int Size, int Max)
+{
+  int NumChars = 0;
+  int NumSyms = 0;
+  while (*a && NumChars < Size) {
+        if (Max >= 0 && NumSyms++ >= Max)
+           break;
+        if (cCharSetConv::SystemCharacterTable()) {
+           *s++ = *a++;
+           NumChars++;
+           }
+        else {
+           int sl = Utf8CharSet(*a);
+           if (NumChars + sl <= Size) {
+              Utf8CharSet(*a, s);
+              a++;
+              s += sl;
+              NumChars += sl;
+              }
+           else
+              break;
+           }
+        }
+  if (NumChars < Size)
+     *s = 0;
+  return NumChars;
+}
+
+// --- cCharSetConv ----------------------------------------------------------
+
+char *cCharSetConv::systemCharacterTable = NULL;
+
+cCharSetConv::cCharSetConv(const char *FromCode, const char *ToCode)
+{
+  if (!FromCode)
+     FromCode = systemCharacterTable;
+  if (!ToCode)
+     ToCode = "UTF-8";
+  cd = (FromCode && ToCode) ? iconv_open(ToCode, FromCode) : (iconv_t)-1;
+  result = NULL;
+  length = 0;
+}
+
+cCharSetConv::~cCharSetConv()
+{
+  free(result);
+  iconv_close(cd);
+}
+
+void cCharSetConv::SetSystemCharacterTable(const char *CharacterTable)
+{
+  free(systemCharacterTable);
+  systemCharacterTable = NULL;
+  if (!strcasestr(CharacterTable, "UTF-8")) {
+     // Set up a map for the character values 128...255:
+     char buf[129];
+     for (int i = 0; i < 128; i++)
+         buf[i] = i + 128;
+     buf[128] = 0;
+     cCharSetConv csc(CharacterTable);
+     const char *s = csc.Convert(buf);
+     int i = 0;
+     while (*s) {
+           int sl = Utf8CharLen(s);
+           SystemToUtf8[i] = Utf8CharGet(s, sl);
+           s += sl;
+           i++;
+           }
+     systemCharacterTable = strdup(CharacterTable);
+     }
+}
+
+const char *cCharSetConv::Convert(const char *From, char *To, size_t ToLength)
+{
+  if (cd != (iconv_t)-1 && From && *From) {
+     char *FromPtr = (char *)From;
+     size_t FromLength = strlen(From);
+     char *ToPtr = To;
+     if (!ToPtr) {
+        length = max(length, FromLength * 2); // some reserve to avoid later reallocations
+        result = (char *)realloc(result, length);
+        ToPtr = result;
+        ToLength = length;
+        }
+     else if (!ToLength)
+        return From; // can't convert into a zero sized buffer
+     ToLength--; // save space for terminating 0
+     char *Converted = ToPtr;
+     while (FromLength > 0) {
+           if (iconv(cd, &FromPtr, &FromLength, &ToPtr, &ToLength) == size_t(-1)) {
+              if (errno == E2BIG || errno == EILSEQ && ToLength < 1) {
+                 if (To)
+                    break; // caller provided a fixed size buffer, but it was too small
+                 // The result buffer is too small, so increase it:
+                 size_t d = ToPtr - result;
+                 size_t r = length / 2;
+                 length += r;
+                 Converted = result = (char *)realloc(result, length);
+                 ToLength += r;
+                 ToPtr = result + d;
+                 }
+              if (errno == EILSEQ) {
+                 // A character can't be converted, so mark it with '?' and proceed:
+                 FromPtr++;
+                 FromLength--;
+                 *ToPtr++ = '?';
+                 ToLength--;
+                 }
+              else if (errno != E2BIG)
+                 return From; // unknown error, return original string
+              }
+           }
+     *ToPtr = 0;
+     return Converted;
+     }
+  return From;
 }
 
 // --- cString ---------------------------------------------------------------
@@ -596,23 +877,48 @@ cString &cString::operator=(const cString &String)
   return *this;
 }
 
+cString &cString::Truncate(int Index)
+{
+  int l = strlen(s);
+  if (Index < 0)
+     Index = l + Index;
+  if (Index >= 0 && Index < l)
+     s[Index] = 0;
+  return *this;
+}
+
 cString cString::sprintf(const char *fmt, ...)
 {
   va_list ap;
   va_start(ap, fmt);
   char *buffer;
-  vasprintf(&buffer, fmt, ap);
+  if (!fmt || vasprintf(&buffer, fmt, ap) < 0) {
+     esyslog("error in vasprintf('%s', ...)", fmt);
+     buffer = strdup("???");
+     }
+  va_end(ap);
+  return cString(buffer, true);
+}
+
+cString cString::sprintf(const char *fmt, va_list &ap)
+{
+  char *buffer;
+  if (!fmt || vasprintf(&buffer, fmt, ap) < 0) {
+     esyslog("error in vasprintf('%s', ...)", fmt);
+     buffer = strdup("???");
+     }
   return cString(buffer, true);
 }
 
 cString WeekDayName(int WeekDay)
 {
-  char buffer[4];
+  char buffer[16];
   WeekDay = WeekDay == 0 ? 6 : WeekDay - 1; // we start with Monday==0!
   if (0 <= WeekDay && WeekDay <= 6) {
+     // TRANSLATORS: abbreviated weekdays, beginning with monday (must all be 3 letters!)
      const char *day = tr("MonTueWedThuFriSatSun");
-     day += WeekDay * 3;
-     strn0cpy(buffer, day, sizeof(buffer));
+     day += Utf8SymChars(day, WeekDay * 3);
+     strn0cpy(buffer, day, min(Utf8SymChars(day, 3) + 1, int(sizeof(buffer))));
      return buffer;
      }
   else
@@ -625,6 +931,27 @@ cString WeekDayName(time_t t)
   return WeekDayName(localtime_r(&t, &tm_r)->tm_wday);
 }
 
+cString WeekDayNameFull(int WeekDay)
+{
+  WeekDay = WeekDay == 0 ? 6 : WeekDay - 1; // we start with Monday==0!
+  switch (WeekDay) {
+    case 0: return tr("Monday");
+    case 1: return tr("Tuesday");
+    case 2: return tr("Wednesday");
+    case 3: return tr("Thursday");
+    case 4: return tr("Friday");
+    case 5: return tr("Saturday");
+    case 6: return tr("Sunday");
+    }
+  return "???";
+}
+
+cString WeekDayNameFull(time_t t)
+{
+  struct tm tm_r;
+  return WeekDayNameFull(localtime_r(&t, &tm_r)->tm_wday);
+}
+
 cString DayDateTime(time_t t)
 {
   char buffer[32];
@@ -632,7 +959,7 @@ cString DayDateTime(time_t t)
      time(&t);
   struct tm tm_r;
   tm *tm = localtime_r(&t, &tm_r);
-  snprintf(buffer, sizeof(buffer), "%s %02d.%02d %02d:%02d", *WeekDayName(tm->tm_wday), tm->tm_mday, tm->tm_mon + 1, tm->tm_hour, tm->tm_min);
+  snprintf(buffer, sizeof(buffer), "%s %02d.%02d. %02d:%02d", *WeekDayName(tm->tm_wday), tm->tm_mday, tm->tm_mon + 1, tm->tm_hour, tm->tm_min);
   return buffer;
 }
 
@@ -775,7 +1102,7 @@ const char *cBase64Encoder::NextLine(void)
   int r = 0;
   while (i < length && r < maxResult - 3) {
         result[r++] = b64[(data[i] >> 2) & 0x3F];
-        char c = (data[i] << 4) & 0x3F;
+        uchar c = (data[i] << 4) & 0x3F;
         if (++i < length)
            c |= (data[i] >> 4) & 0x0F;
         result[r++] = b64[c];
@@ -888,6 +1215,65 @@ cReadDir::~cReadDir()
 struct dirent *cReadDir::Next(void)
 {
   return directory && readdir_r(directory, &u.d, &result) == 0 ? result : NULL;
+}
+
+// --- cStringList -----------------------------------------------------------
+
+cStringList::~cStringList()
+{
+  Clear();
+}
+
+int cStringList::Find(const char *s) const
+{
+  for (int i = 0; i < Size(); i++) {
+      if (!strcmp(s, At(i)))
+         return i;
+      }
+  return -1;
+}
+
+void cStringList::Clear(void)
+{
+  for (int i = 0; i < Size(); i++)
+      free(At(i));
+  cVector<char *>::Clear();
+}
+
+// --- cFileNameList ---------------------------------------------------------
+
+// TODO better GetFileNames(const char *Directory, cStringList *List)?
+cFileNameList::cFileNameList(const char *Directory, bool DirsOnly)
+{
+  Load(Directory, DirsOnly);
+}
+
+bool cFileNameList::Load(const char *Directory, bool DirsOnly)
+{
+  Clear();
+  if (Directory) {
+     cReadDir d(Directory);
+     struct dirent *e;
+     if (d.Ok()) {
+        while ((e = d.Next()) != NULL) {
+              if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..")) {
+                 if (DirsOnly) {
+                    struct stat ds;
+                    if (stat(AddDirectory(Directory, e->d_name), &ds) == 0) {
+                       if (!S_ISDIR(ds.st_mode))
+                          continue;
+                       }
+                    }
+                 Append(strdup(e->d_name));
+                 }
+              }
+        Sort();
+        return true;
+        }
+     else
+        LOG_ERROR_STR(Directory);
+     }
+  return false;
 }
 
 // --- cFile -----------------------------------------------------------------
@@ -1254,7 +1640,7 @@ cLockFile::cLockFile(const char *Directory)
   fileName = NULL;
   f = -1;
   if (DirectoryOk(Directory))
-     asprintf(&fileName, "%s/%s", Directory, LOCKFILENAME);
+     fileName = strdup(AddDirectory(Directory, LOCKFILENAME));
 }
 
 cLockFile::~cLockFile()

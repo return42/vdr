@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: remote.h 1.38 2006/12/02 11:12:49 kls Exp $
+ * $Id: remote.h 1.41 2008/02/23 14:38:47 kls Exp $
  */
 
 #ifndef __REMOTE_H
@@ -28,8 +28,10 @@ private:
   static char *unknownCode;
   static cMutex mutex;
   static cCondVar keyPressed;
+  static time_t lastActivity;
   static const char *keyMacroPlugin;
   static const char *callPlugin;
+  static bool enabled;
   char *name;
 protected:
   cRemote(const char *Name);
@@ -44,6 +46,8 @@ public:
   const char *Name(void) { return name; }
   static void SetLearning(cRemote *Learning) { learning = Learning; }
   static bool IsLearning() { return learning != NULL; }
+  static bool Enabled(void) { return enabled; }
+  static void SetEnabled(bool Enabled) { enabled = Enabled; }
   static void Clear(void);
   static bool Put(eKeys Key, bool AtFront = false);
   static bool PutMacro(eKeys Key);
@@ -61,6 +65,11 @@ public:
       ///< plugin name will be reset to NULL by this call.
   static bool HasKeys(void);
   static eKeys Get(int WaitMs = 1000, char **UnknownCode = NULL);
+  static time_t LastActivity(void) { return lastActivity; }
+      ///< Absolute time when last key was delivered by Get().
+  static void TriggerLastActivity(void);
+      ///< Simulates user activity, for instance to keep the current menu open
+      ///< even if no remote control key has been pressed.
   };
 
 class cRemotes : public cList<cRemote> {};

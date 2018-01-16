@@ -1,24 +1,8 @@
 Installation of the Video Disk Recorder
 ---------------------------------------
 
-Version 1.4
+Version 1.6
 -----------
-
-IMPORTANT NOTES:
-----------------
-
-Please make sure your environment is NOT set to use UTF-8 or
-any other multibyte character representation. Check the value of your
-$LANG or $LC_CTYPE environment variable, and if it contains something
-like "de_DE.UTF-8", make sure you set it to something like "de_DE.iso8859-1"
-or whatever single byte character mode you want. If you run VDR with
-UTF-8 enabled, it may crash in case it encounters EPG or channel data
-that contains non-7-bit ASCII characters. Another problem may occur if
-you have mounted your video partition with "iocharset=utf8". In that case
-recordings that contain umlauts or other non-seven-bit ASCII characters
-may be displayed wrong, or not at all. Please make sure you mount your
-video partition with "iocharset=iso8859-1" or whatever single byte character
-mode you want.
 
 Compiling and running the program:
 ----------------------------------
@@ -35,11 +19,17 @@ Refer to http://linuxtv.org for more information about the Linux-DVB driver.
 VDR requires the Linux-DVB driver version dated 2003-08-23 or higher
 to work properly.
 
-You will also need to install the "libjpeg" and "libcap" libraries,
-as well as their "devel" packages to get the necessary header files
-for compiling VDR. If the "capability" module is not compiled into
-your kernel, you may need to do "modprobe capability" before running
-VDR.
+You will also need to install the following libraries, as well as their
+"devel" packages to get the necessary header files for compiling VDR:
+
+  fontconfig
+  freetype2
+  gettext
+  libcap
+  libjpeg
+
+If the "capability" module is not compiled into your kernel, you may
+need to do "modprobe capability" before running VDR.
 
 After extracting the package, change into the VDR directory
 and type 'make'. This should produce an executable file
@@ -76,8 +66,9 @@ to the 'make' command. Alternatively, you can call VDR with the command
 line option '--vfat'.
 
 When running, the 'vdr' program writes status information into the
-system log file (/var/log/messages). You may want to watch these
-messages (tail -f /var/log/mesages) to see if there are any problems.
+system log file, which is usually /var/log/messages (or /var/log/user.log,
+depending on your syslog configuration). You may want to watch these
+messages (tail -f /var/log/messages) to see if there are any problems.
 
 The program can be controlled via a network connection to its SVDRP
 port ("Simple Video Disk Recorder Protocol"). By default, it listens
@@ -123,6 +114,19 @@ in the log file, it is sufficient to just set
 which only influences the way strings are sorted and leaves error messages
 in English.
 
+Note that for VDR's internationalized texts to work, the LANG environment
+variable must be set to a valid locale!
+
+Workaround for providers not encoding their EPG data correctly
+--------------------------------------------------------------
+
+According to "ETSI EN 300 468" the default character set fo SI data is
+ISO6937. But unfortunately some broadcasters actually use ISO-8859-9 or
+other encodings, but fail to correctly announce that.
+Users who want to set the default character set to something different can
+do this by setting the environment variable VDR_CHARSET_OVERRIDE to something
+like ISO-8859-9.
+
 Automatic restart in case of hangups:
 -------------------------------------
 
@@ -160,30 +164,33 @@ and the next timer event is at least MinEventTimeout minutes in the future
 (see the Setup parameters in MANUAL).
 
 The command given in the '-s' option will be called with five parameters.
-The first one is the time (in UTC) of the next timer event (as a time_t
-type number), and the second one is the number of seconds from the current
-time until the next timer event. Your program can choose which one to use
-for programming some sort of hardware device that makes sure the computer
-will be restarted in time before the next timer event. Your program must
-also initiate the actual shutdown procedure of the computer. After this
-your program should return to VDR. VDR will not automatically exit after
-calling the shutdown program, but will rather continue normally until it
-receives a SIGTERM when the computer is actually shut down. So in case
-the shutdown fails, or the shutdown program for some reason decides not to
-perform a shutdown, VDR will stay up and running and will call the shutdown
-program again after another five minutes.
 
-If there are currently no timers active, both parameters will be '0'.
-In that case the program shall not set the hardware for automatic restart
-and only perform the system shutdown. A program that uses the second parameter
-to set the hardware for restart must therefore also check whether the first
-parameter is '0'.
+The first one is the time (in UTC) of the next timer event or plugin wakeup
+time (as a time_t type number), and the second one is the number of
+seconds from the current time until the next timer event. Your program can
+choose which one to use for programming some sort of hardware device that
+makes sure the computer will be restarted in time before the next timer
+event. Your program must also initiate the actual shutdown procedure of the
+computer. VDR will not automatically exit after calling the shutdown
+program, but will rather continue normally until it receives a SIGTERM when
+the computer is actually shut down. So in case the shutdown fails, or the
+shutdown program for some reason decides not to perform a shutdown, VDR
+will stay up and running and will call the shutdown program again after a
+while. The command will be started in a separate background session, so it
+can continue to run even after VDR has terminated.
 
-The third parameter contains the number of the channel that will be recorded
-by the next timer (or 0 if no timer is present), and the fourth parameter
-contains the file name of the recording as defined in the timer (or an empty
-string if no timer is present). These can be used by the shutdown program to
-show that information on some display interface etc.
+If there are currently no timers active and there is no plugin wakeup
+time, both parameters will be '0'. In that case the program shall not set
+the hardware for automatic restart and only perform the system shutdown.
+A program that uses the second parameter to set the hardware for restart
+must therefore also check whether the first parameter is '0'.
+
+If the wakeup time is given by a timer, the third parameter will be the
+number of the channel that will be recorded, otherwise it will be 0. The
+fourth parameter contains the file name of the recording as defined in the
+timer, the name of the plugin that requested the wakeup time, or an empty
+string if no wakeup time is present. These can be used by the shutdown
+program to show that information on some display interface etc.
 
 The fifth parameter indicates the reason why the shutdown was requested.
 '0' means this is an automatic shutdown due to some timeout, while '1' means

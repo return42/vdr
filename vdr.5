@@ -2,17 +2,17 @@
 .\" ** The above line should force tbl to be a preprocessor **
 .\" Man page for vdr file formats
 .\"
-.\" Copyright (C) 2006 Klaus Schmidinger
+.\" Copyright (C) 2008 Klaus Schmidinger
 .\"
 .\" You may distribute under the terms of the GNU General Public
 .\" License as specified in the file COPYING that comes with the
 .\" vdr distribution.
 .\"
-.\" $Id: vdr.5 1.61 2007/01/07 14:04:12 kls Exp $
+.\" $Id: vdr.5 1.68 2008/03/09 15:46:57 kls Exp $
 .\"
-.TH vdr 5 "07 Jan 2007" "1.4.5" "Video Disk Recorder Files"
+.TH vdr 5 "10 Feb 2008" "1.6" "Video Disk Recorder Files"
 .SH NAME
-vdr file formats - the Video Disk Recorder Files
+vdr_files \- the Video Disk Recorder Files
 .SH DESCRIPTION
 This page describes the formats of the various files \fBvdr\fR uses to
 store configuration data and recordings.
@@ -249,9 +249,14 @@ cause the timer to record on that day. Example:
 .B MTWTF\-\-
 
 will define a timer that records on Monday through Friday and does not record
-on weekends. The same result could be achieved with \fBABCDE\-\-\fR (this is
-used to allow setting the days with language specific characters).
+on weekends.
 Note that only letters may be used here, no digits.
+For compatibility with timers created with earlier versions of VDR,
+the same result could be achieved with \fBABCDE\-\-\fR (which was
+used to allow setting the days with language specific characters).
+Since version 1.5.3 VDR can use UTF-8 characters to present data to
+the user, but the weekday encoding in the \fItimers.conf\fR file
+always uses single byte characters.
 
 The day definition of a `repeating' timer may be followed by the date when that
 timer shall hit for the first time. The format for this is \fB@YYYY\-MM\-DD\fR,
@@ -537,9 +542,10 @@ you can provide language specific descriptions as
 .br
 \fBDescription.ger = Blaut\(:one\fR
 
-where the language code (as defined in VDR/i18n.c) is added to the keyword
+where the language code is added to the keyword
 "Description", separated by a dot. You can enter as many language specific
-descriptions as there are languages defined in VDR/i18n.h.
+descriptions as you like, but only those that have a corresponding locale
+messages file will be actually used.
 If a theme file doesn't contain a Description, the name of the theme (as
 given in the theme's file name) will be used.
 .SS AUDIO/VIDEO DATA
@@ -551,6 +557,8 @@ a recording is split into several files. The contents of these files is
 0xC0...0xDF for audio 1...32 (up to 32 audio tracks may occur).
 Dolby Digital data is stored in packets with ids 0xBD ("Private Stream 1")
 and substream ids 0x80...0x87.
+DVB subtitle data is stored in packets with ids 0xBD ("Private Stream 1")
+and substream ids 0x20...0x27.
 .SS INDEX
 The file \fIindex.vdr\fR (if present in a recording directory) contains
 the (binary) index data into each of the the recording files
@@ -640,7 +648,7 @@ l l.
 <title>        @is the title of the event
 <short text>   @is the short text of the event (typically the name of the episode etc.)
 <description>  @is the description of the event (any '|' characters will be interpreted as newlines)
-<stream>       @is the stream content (1 = video, 2 = audio)
+<stream>       @is the stream content (1 = video, 2 = audio, 3 = subtitles)
 <type>         @is the stream type according to ETSI EN 300 468
 <language>     @is the three letter language code (optionally two codes, separated by '+')
 <descr>        @is the description of this stream component
@@ -661,7 +669,7 @@ Written by Klaus Schmidinger.
 .SH REPORTING BUGS
 Report bugs to <vdr\-bugs@cadsoft.de>.
 .SH COPYRIGHT
-Copyright \(co 2006 Klaus Schmidinger.
+Copyright \(co 2008 Klaus Schmidinger.
 
 This is free software; see the source for copying conditions.  There is NO
 warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.

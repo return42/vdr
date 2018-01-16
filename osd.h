@@ -4,15 +4,21 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: osd.h 1.53 2006/02/26 14:45:05 kls Exp $
+ * $Id: osd.h 1.58 2007/10/12 14:28:44 kls Exp $
  */
 
 #ifndef __OSD_H
 #define __OSD_H
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdint.h>
+#include "config.h"
 #include "font.h"
+#include "tools.h"
+
+#define OSD_LEVEL_DEFAULT     0
+#define OSD_LEVEL_SUBTITLES  10
 
 #define MAXNUMCOLORS 256
 
@@ -41,7 +47,7 @@ enum eOsdError { oeOk,
                  oeUnknown,
                };
 
-typedef uint32_t tColor;
+typedef uint32_t tColor; // see also font.h
 typedef uint8_t tIndex;
 
 class cPalette {
@@ -50,20 +56,31 @@ private:
   int bpp;
   int maxColors, numColors;
   bool modified;
+  double antiAliasGranularity;
 protected:
   typedef tIndex tIndexes[MAXNUMCOLORS];
 public:
   cPalette(int Bpp = 8);
         ///< Initializes the palette with the given color depth.
-  int Bpp(void) { return bpp; }
+  void SetAntiAliasGranularity(uint FixedColors, uint BlendColors);
+        ///< Allows the system to optimize utilization of the limited color
+        ///< palette entries when generating blended colors for anti-aliasing.
+        ///< FixedColors is the maximum number of colors used, and BlendColors
+        ///< is the maximum number of foreground/background color combinations
+        ///< used with anti-aliasing. If this function is not called with
+        ///< useful values, the palette may be filled up with many shades of
+        ///< a single color combination, and may not be able to serve all
+        ///< requested colors. By default the palette assumes there will be
+        ///< 10 fixed colors and 10 color combinations.
+  int Bpp(void) const { return bpp; }
   void Reset(void);
         ///< Resets the palette, making it contain no colors.
   int Index(tColor Color);
         ///< Returns the index of the given Color (the first color has index 0).
         ///< If Color is not yet contained in this palette, it will be added if
         ///< there is a free slot. If the color can't be added to this palette,
-        ///< 0 will be returned.
-  tColor Color(int Index) { return Index < maxColors ? color[Index] : 0; }
+        ///< the closest existing color will be returned.
+  tColor Color(int Index) const { return Index < maxColors ? color[Index] : 0; }
         ///< Returns the color at the given Index. If Index is outside the valid
         ///< range, 0 will be returned.
   void SetBpp(int Bpp);
@@ -73,7 +90,7 @@ public:
         ///< Sets the palette entry at Index to Color. If Index is larger than
         ///< the number of currently used entries in this palette, the entries
         ///< in between will have undefined values.
-  const tColor *Colors(int &NumColors);
+  const tColor *Colors(int &NumColors) const;
         ///< Returns a pointer to the complete color table and stores the
         ///< number of valid entries in NumColors. If no colors have been
         ///< stored yet, NumColors will be set to 0 and the function will
@@ -88,6 +105,18 @@ public:
   void Replace(const cPalette &Palette);
         ///< Replaces the colors of this palette with the colors from the given
         ///< palette.
+  tColor Blend(tColor ColorFg, tColor ColorBg, uint8_t Level) const;
+        ///< Determines a color that consists of a linear blend between ColorFg
+        ///< and ColorBg. If Level is 0, the result is ColorBg, if it is 255,
+        ///< the result is ColorFg. If SetAntiAliasGranularity() has been called previously,
+        ///< Level will be mapped to a limited range of levels that allow to make best
+        ///< use of the palette entries.
+  int ClosestColor(tColor Color, int MaxDiff = INT_MAX) const;
+        ///< Returns the index of a color in this palette that is closest to the given
+        ///< Color. MaxDiff can be used to control the maximum allowed color difference.
+        ///< If no color with a maximum difference of MaxDiff can be found, -1 will
+        ///< be returned. With the default value of INT_MAX, there will always be
+        ///< a valid color index returned, but the color may be completely different.
   };
 
 enum eTextAlignment { taCenter  = 0x00,
@@ -97,6 +126,8 @@ enum eTextAlignment { taCenter  = 0x00,
                       taBottom  = 0x08,
                       taDefault = taTop | taLeft
                     };
+
+class cFont;
 
 class cBitmap : public cPalette {
 private:
@@ -202,6 +233,19 @@ public:
        ///< 7: vertical,   falling, upper
   const tIndex *Data(int x, int y);
        ///< Returns the address of the index byte at the given coordinates.
+  tColor GetColor(int x, int y) { return Color(*Data(x, y)); }
+       ///< Returns the color at the given coordinates.
+  void ReduceBpp(const cPalette &Palette);
+       ///< Reduces the color depth of the bitmap to that of the given Palette.
+       ///< If Palette's color depth is not smaller than the bitmap's current
+       ///< color depth, or if it is not one of 4bpp or 2bpp, nothing happens. After
+       ///< reducing the color depth the current palette is replaced with
+       ///< the given one.
+  void ShrinkBpp(int NewBpp);
+       ///< Shrinks the color depth of the bitmap to NewBpp by keeping only
+       ///< the 2^NewBpp most frequently used colors as defined in the current palette.
+       ///< If NewBpp is not smaller than the bitmap's current color depth,
+       ///< or if it is not one of 4bpp or 2bpp, nothing happens.
   };
 
 struct tArea {
@@ -217,13 +261,16 @@ struct tArea {
 class cOsd {
   friend class cOsdProvider;
 private:
-  static int isOpen;
+  static int osdLeft, osdTop, osdWidth, osdHeight;
+  static cVector<cOsd *> Osds;
   cBitmap *savedRegion;
   cBitmap *bitmaps[MAXOSDAREAS];
   int numBitmaps;
   int left, top, width, height;
+  uint level;
+  bool active;
 protected:
-  cOsd(int Left, int Top);
+  cOsd(int Left, int Top, uint Level);
        ///< Initializes the OSD with the given coordinates.
        ///< By default it is assumed that the full area will be able to display
        ///< full 32 bit graphics (ARGB with eight bit for each color and the alpha
@@ -239,14 +286,42 @@ protected:
        ///< and should require only the minimum necessary color depth. This is
        ///< because a derived cOsd class may or may not be able to handle more
        ///< than one area.
+       ///< There can be any number of cOsd objects at the same time, but only
+       ///< one of them will be active at any given time. The active OSD is the
+       ///< one with the lowest value of Level. If there are several cOsd objects
+       ///< with the same Level, the one that was created first will be active.
+  bool Active(void) { return active; }
+  virtual void SetActive(bool On) { active = On; }
+       ///< Sets this OSD to be the active one.
+       ///< A derived class must call cOsd::SetActive(On).
 public:
   virtual ~cOsd();
        ///< Shuts down the OSD.
-  static int IsOpen(void) { return isOpen; }
+  static int OsdLeft(void) { return osdLeft ? osdLeft : Setup.OSDLeft; }
+  static int OsdTop(void) { return osdTop ? osdTop : Setup.OSDTop; }
+  static int OsdWidth(void) { return osdWidth ? osdWidth : Setup.OSDWidth; }
+  static int OsdHeight(void) { return osdHeight ? osdHeight : Setup.OSDHeight; }
+  static void SetOsdPosition(int Left, int Top, int Width, int Height);
+       ///< Sets the position and size of the OSD to the given values.
+       ///< This may be useful for plugins that determine the scaling of the
+       ///< video image and need to scale the OSD accordingly to fit on the
+       ///< screen.
+  static int IsOpen(void) { return Osds.Size() && Osds[0]->level == OSD_LEVEL_DEFAULT; }
+       ///< Returns true if there is currently a level 0 OSD open.
   int Left(void) { return left; }
   int Top(void) { return top; }
   int Width(void) { return width; }
   int Height(void) { return height; }
+  void SetAntiAliasGranularity(uint FixedColors, uint BlendColors);
+       ///< Allows the system to optimize utilization of the limited color
+       ///< palette entries when generating blended colors for anti-aliasing.
+       ///< FixedColors is the maximum number of colors used, and BlendColors
+       ///< is the maximum number of foreground/background color combinations
+       ///< used with anti-aliasing. If this function is not called with
+       ///< useful values, the palette may be filled up with many shades of
+       ///< a single color combination, and may not be able to serve all
+       ///< requested colors. By default the palette assumes there will be
+       ///< 10 fixed colors and 10 color combinations.
   cBitmap *GetBitmap(int Area);
        ///< Returns a pointer to the bitmap for the given Area, or NULL if no
        ///< such bitmap exists.
@@ -266,6 +341,7 @@ public:
        ///< If the OSD has been divided into several sub-areas, all areas that
        ///< are part of the rectangle that surrounds a given drawing operation
        ///< will be drawn into, with the proper offsets.
+       ///< A new call overwrites any previous settings
   virtual void SaveRegion(int x1, int y1, int x2, int y2);
        ///< Saves the region defined by the given coordinates for later restoration
        ///< through RestoreRegion(). Only one saved region can be active at any
@@ -330,14 +406,14 @@ class cOsdProvider {
 private:
   static cOsdProvider *osdProvider;
 protected:
-  virtual cOsd *CreateOsd(int Left, int Top) = 0;
+  virtual cOsd *CreateOsd(int Left, int Top, uint Level) = 0;
       ///< Returns a pointer to a newly created cOsd object, which will be located
       ///< at the given coordinates.
 public:
   cOsdProvider(void);
       //XXX maybe parameter to make this one "sticky"??? (frame-buffer etc.)
   virtual ~cOsdProvider();
-  static cOsd *NewOsd(int Left, int Top);
+  static cOsd *NewOsd(int Left, int Top, uint Level = OSD_LEVEL_DEFAULT);
       ///< Returns a pointer to a newly created cOsd object, which will be located
       ///< at the given coordinates. When the cOsd object is no longer needed, the
       ///< caller must delete it. If the OSD is already in use, or there is no OSD

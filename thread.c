@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: thread.c 1.58 2006/09/24 12:54:47 kls Exp $
+ * $Id: thread.c 1.64 2008/02/15 14:17:42 kls Exp $
  */
 
 #include "thread.h"
@@ -12,6 +12,7 @@
 #include <linux/unistd.h>
 #include <malloc.h>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
@@ -200,7 +201,6 @@ void cMutex::Unlock(void)
 // --- cThread ---------------------------------------------------------------
 
 tThreadId cThread::mainThreadId = 0;
-bool cThread::emergencyExitRequested = false;
 
 cThread::cThread(const char *Description)
 {
@@ -231,7 +231,7 @@ void cThread::SetDescription(const char *Description, ...)
   if (Description) {
      va_list ap;
      va_start(ap, Description);
-     vasprintf(&description, Description, ap);
+     description = strdup(cString::sprintf(Description, ap));
      va_end(ap);
      }
 }
@@ -249,17 +249,29 @@ void *cThread::StartThread(cThread *Thread)
   return NULL;
 }
 
+#define THREAD_STOP_TIMEOUT  3000 // ms to wait for a thread to stop before newly starting it
+#define THREAD_STOP_SLEEP      30 // ms to sleep while waiting for a thread to stop
+
 bool cThread::Start(void)
 {
-  if (!active) {
-     active = running = true;
-     if (pthread_create(&childTid, NULL, (void *(*) (void *))&StartThread, (void *)this) == 0) {
-        pthread_detach(childTid); // auto-reap
+  if (!running) {
+     if (active) {
+        // Wait until the previous incarnation of this thread has completely ended
+        // before starting it newly:
+        cTimeMs RestartTimeout;
+        while (!running && active && RestartTimeout.Elapsed() < THREAD_STOP_TIMEOUT)
+              cCondWait::SleepMs(THREAD_STOP_SLEEP);
         }
-     else {
-        LOG_ERROR;
-        active = running = false;
-        return false;
+     if (!active) {
+        active = running = true;
+        if (pthread_create(&childTid, NULL, (void *(*) (void *))&StartThread, (void *)this) == 0) {
+           pthread_detach(childTid); // auto-reap
+           }
+        else {
+           LOG_ERROR;
+           active = running = false;
+           return false;
+           }
         }
      }
   return true;
@@ -306,14 +318,6 @@ void cThread::Cancel(int WaitSeconds)
      childTid = 0;
      active = false;
      }
-}
-
-bool cThread::EmergencyExit(bool Request)
-{
-  if (!Request)
-     return emergencyExitRequested;
-  esyslog("initiating emergency exit");
-  return emergencyExitRequested = true; // yes, it's an assignment, not a comparison!
 }
 
 tThreadId cThread::ThreadId(void)
@@ -412,7 +416,7 @@ bool cPipe::Open(const char *Command, const char *Mode)
      return false;
      }
 
-  char *mode = "w";
+  const char *mode = "w";
   int iopipe = 0;
 
   if (pid > 0) { // parent process
@@ -493,7 +497,7 @@ int cPipe::Close(void)
 
 // --- SystemExec ------------------------------------------------------------
 
-int SystemExec(const char *Command)
+int SystemExec(const char *Command, bool Detached)
 {
   pid_t pid;
 
@@ -503,7 +507,7 @@ int SystemExec(const char *Command)
      }
 
   if (pid > 0) { // parent process
-     int status;
+     int status = 0;
      if (waitpid(pid, &status, 0) < 0) {
         LOG_ERROR;
         return -1;
@@ -511,6 +515,19 @@ int SystemExec(const char *Command)
      return status;
      }
   else { // child process
+     if (Detached) {
+        // Fork again and let first child die - grandchild stays alive without parent
+        if (fork() > 0)
+           _exit(0);
+        // Start a new session
+        pid_t sid = setsid();
+        if (sid < 0)
+           LOG_ERROR;
+        // close STDIN and re-open as /dev/null
+        int devnull = open("/dev/null", O_RDONLY);
+        if (devnull < 0 || dup2(devnull, 0) < 0)
+           LOG_ERROR;
+        }
      int MaxPossibleFileDescriptors = getdtablesize();
      for (int i = STDERR_FILENO + 1; i < MaxPossibleFileDescriptors; i++)
          close(i); //close all dup'ed filedescriptors

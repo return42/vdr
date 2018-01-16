@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: osdbase.c 1.29 2006/02/05 14:37:03 kls Exp $
+ * $Id: osdbase.c 1.32 2008/02/17 11:33:04 kls Exp $
  */
 
 #include "osdbase.h"
@@ -86,10 +86,8 @@ cOsdMenu::cOsdMenu(const char *Title, int c0, int c1, int c2, int c3, int c4)
   subMenu = NULL;
   helpRed = helpGreen = helpYellow = helpBlue = NULL;
   status = NULL;
-  if (!displayMenuCount++) {
-     displayMenu = Skins.Current()->DisplayMenu();
-     displayMenuItems = displayMenu->MaxItems();
-     }
+  if (!displayMenuCount++)
+     SetDisplayMenu();
 }
 
 cOsdMenu::~cOsdMenu()
@@ -103,15 +101,25 @@ cOsdMenu::~cOsdMenu()
      DELETENULL(displayMenu);
 }
 
+void cOsdMenu::SetDisplayMenu(void)
+{
+  if (displayMenu) {
+     displayMenu->Clear();
+     delete displayMenu;
+     }
+  displayMenu = Skins.Current()->DisplayMenu();
+  displayMenuItems = displayMenu->MaxItems();
+}
+
 const char *cOsdMenu::hk(const char *s)
 {
-  static char buffer[64];
+  static cString buffer;
   if (s && hasHotkeys) {
      if (digit == 0 && '1' <= *s && *s <= '9' && *(s + 1) == ' ')
         digit = -1; // prevents automatic hotkeys - input already has them
      if (digit >= 0) {
         digit++;
-        snprintf(buffer, sizeof(buffer), " %c %s", (digit < 10) ? '0' + digit : ' ' , s);
+        buffer = cString::sprintf(" %c %s", (digit < 10) ? '0' + digit : ' ' , s);
         s = buffer;
         }
      }
@@ -127,9 +135,9 @@ void cOsdMenu::SetCols(int c0, int c1, int c2, int c3, int c4)
   cols[4] = c4;
 }
 
-void cOsdMenu::SetHasHotkeys(void)
+void cOsdMenu::SetHasHotkeys(bool HasHotkeys)
 {
-  hasHotkeys = true;
+  hasHotkeys = HasHotkeys;
   digit = 0;
 }
 
@@ -228,6 +236,7 @@ void cOsdMenu::Display(void)
          i++;
          }
      }
+  displayMenu->SetScrollbar(count, first);
   if (!isempty(status))
      displayMenu->SetMessage(mtStatus, status);
 }
@@ -253,6 +262,20 @@ void cOsdMenu::DisplayCurrent(bool Current)
         cStatus::MsgOsdCurrentItem(item->Text());
      if (!Current)
         item->SetFresh(true); // leaving the current item resets 'fresh'
+     }
+}
+
+void cOsdMenu::DisplayItem(cOsdItem *Item)
+{
+  if (Item) {
+     int Index = Item->Index();
+     int Offset = Index - first;
+     if (Offset >= 0 && Offset < first + displayMenuItems) {
+        bool Current = Index == current;
+        displayMenu->SetItem(Item->Text(), Offset, Current && Item->Selectable(), Item->Selectable());
+        if (Current && Item->Selectable())
+           cStatus::MsgOsdCurrentItem(Item->Text());
+        }
      }
 }
 
@@ -432,6 +455,8 @@ eOSState cOsdMenu::HotKey(eKeys Key)
       if (s && (s = skipspace(s)) != NULL) {
          if (*s == Key - k1 + '1') {
             current = item->Index();
+            RefreshCurrent();
+            Display();
             cRemote::Put(kOk, true);
             break;
             }
@@ -499,4 +524,3 @@ eOSState cOsdMenu::ProcessKey(eKeys Key)
     }
   return osContinue;
 }
-

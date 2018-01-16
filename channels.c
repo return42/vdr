@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: channels.c 1.53 2006/05/28 15:03:40 kls Exp $
+ * $Id: channels.c 1.60 2008/03/05 16:42:50 kls Exp $
  */
 
 #include "channels.h"
@@ -18,7 +18,7 @@
 // format characters in order to allow any number of blanks after a numeric
 // value!
 
-// -- Channel Parameter Maps -------------------------------------------------
+// --- Channel Parameter Maps ------------------------------------------------
 
 const tChannelParameterMap InversionValues[] = {
   {   0, INVERSION_OFF },
@@ -123,7 +123,7 @@ int MapToDriver(int Value, const tChannelParameterMap *Map)
   return -1;
 }
 
-// -- tChannelID -------------------------------------------------------------
+// --- tChannelID ------------------------------------------------------------
 
 const tChannelID tChannelID::InvalidID;
 
@@ -158,7 +158,7 @@ tChannelID &tChannelID::ClrPolarization(void)
   return *this;
 }
 
-// -- cChannel ---------------------------------------------------------------
+// --- cChannel --------------------------------------------------------------
 
 cChannel::cChannel(void)
 {
@@ -440,12 +440,12 @@ static int IntArrayToString(char *s, const int *a, int Base = 10, const char n[]
   return q - s;
 }
 
-void cChannel::SetPids(int Vpid, int Ppid, int *Apids, char ALangs[][MAXLANGCODE2], int *Dpids, char DLangs[][MAXLANGCODE2], int Tpid)
+void cChannel::SetPids(int Vpid, int Ppid, int *Apids, char ALangs[][MAXLANGCODE2], int *Dpids, char DLangs[][MAXLANGCODE2], int *Spids, char SLangs[][MAXLANGCODE2], int Tpid)
 {
   int mod = CHANNELMOD_NONE;
   if (vpid != Vpid || ppid != Ppid || tpid != Tpid)
      mod |= CHANNELMOD_PIDS;
-  int m = IntArraysDiffer(apids, Apids, alangs, ALangs) | IntArraysDiffer(dpids, Dpids, dlangs, DLangs);
+  int m = IntArraysDiffer(apids, Apids, alangs, ALangs) | IntArraysDiffer(dpids, Dpids, dlangs, DLangs) | IntArraysDiffer(spids, Spids, slangs, SLangs);
   if (m & STRDIFF)
      mod |= CHANNELMOD_LANGS;
   if (m & VALDIFF)
@@ -468,7 +468,16 @@ void cChannel::SetPids(int Vpid, int Ppid, int *Apids, char ALangs[][MAXLANGCODE
         q += IntArrayToString(q, Dpids, 10, DLangs);
         }
      *q = 0;
-     dsyslog("changing pids of channel %d from %d+%d:%s:%d to %d+%d:%s:%d", Number(), vpid, ppid, OldApidsBuf, tpid, Vpid, Ppid, NewApidsBuf, Tpid);
+     const int SBufferSize = MAXSPIDS * (5 + 1 + MAXLANGCODE2) + 10; // 5 digits plus delimiting ',' or ';' plus optional '=cod', +10: paranoia
+     char OldSpidsBuf[SBufferSize];
+     char NewSpidsBuf[SBufferSize];
+     q = OldSpidsBuf;
+     q += IntArrayToString(q, spids, 10, slangs);
+     *q = 0;
+     q = NewSpidsBuf;
+     q += IntArrayToString(q, Spids, 10, SLangs);
+     *q = 0;
+     dsyslog("changing pids of channel %d from %d+%d:%s:%s:%d to %d+%d:%s:%s:%d", Number(), vpid, ppid, OldApidsBuf, OldSpidsBuf, tpid, Vpid, Ppid, NewApidsBuf, NewSpidsBuf, Tpid);
      vpid = Vpid;
      ppid = Ppid;
      for (int i = 0; i < MAXAPIDS; i++) {
@@ -481,6 +490,11 @@ void cChannel::SetPids(int Vpid, int Ppid, int *Apids, char ALangs[][MAXLANGCODE
          strn0cpy(dlangs[i], DLangs[i], MAXLANGCODE2);
          }
      dpids[MAXDPIDS] = 0;
+     for (int i = 0; i < MAXSPIDS; i++) {
+         spids[i] = Spids[i];
+         strn0cpy(slangs[i], SLangs[i], MAXLANGCODE2);
+         }
+     spids[MAXSPIDS] = 0;
      tpid = Tpid;
      modification |= mod;
      Channels.SetModified();
@@ -644,12 +658,12 @@ cString cChannel::ToText(const cChannel *Channel)
      q += sprintf(q, ";%s", Channel->provider);
   *q = 0;
   strreplace(FullName, ':', '|');
-  char *buffer;
+  cString buffer;
   if (Channel->groupSep) {
      if (Channel->number)
-        asprintf(&buffer, ":@%d %s\n", Channel->number, FullName);
+        buffer = cString::sprintf(":@%d %s\n", Channel->number, FullName);
      else
-        asprintf(&buffer, ":%s\n", FullName);
+        buffer = cString::sprintf(":%s\n", FullName);
      }
   else {
      char vpidbuf[32];
@@ -671,9 +685,9 @@ cString cChannel::ToText(const cChannel *Channel)
      q = caidbuf;
      q += IntArrayToString(q, Channel->caids, 16);
      *q = 0;
-     asprintf(&buffer, "%s:%d:%s:%s:%d:%s:%s:%d:%s:%d:%d:%d:%d\n", FullName, Channel->frequency, *Channel->ParametersToString(), *cSource::ToString(Channel->source), Channel->srate, vpidbuf, apidbuf, Channel->tpid, caidbuf, Channel->sid, Channel->nid, Channel->tid, Channel->rid);
+     buffer = cString::sprintf("%s:%d:%s:%s:%d:%s:%s:%d:%s:%d:%d:%d:%d\n", FullName, Channel->frequency, *Channel->ParametersToString(), *cSource::ToString(Channel->source), Channel->srate, vpidbuf, apidbuf, Channel->tpid, caidbuf, Channel->sid, Channel->nid, Channel->tid, Channel->rid);
      }
-  return cString(buffer, true);
+  return buffer;
 }
 
 cString cChannel::ToText(void) const
@@ -836,7 +850,7 @@ bool cChannel::Save(FILE *f)
   return fprintf(f, "%s", *ToText()) > 0;
 }
 
-// -- cChannelSorter ---------------------------------------------------------
+// --- cChannelSorter --------------------------------------------------------
 
 class cChannelSorter : public cListObject {
 public:
@@ -852,7 +866,7 @@ public:
     }
   };
 
-// -- cChannels --------------------------------------------------------------
+// --- cChannels -------------------------------------------------------------
 
 cChannels Channels;
 
@@ -933,9 +947,10 @@ int cChannels::GetPrevNormal(int Idx)
   return channel ? Idx : -1;
 }
 
-void cChannels::ReNumber( void )
+void cChannels::ReNumber(void)
 {
   channelsHashSid.Clear();
+  maxNumber = 0;
   int Number = 1;
   for (cChannel *channel = First(); channel; channel = Next(channel)) {
       if (channel->GroupSep()) {
@@ -1005,6 +1020,17 @@ cChannel *cChannels::GetByChannelID(tChannelID ChannelID, bool TryWithoutRid, bo
             }
         }
      }
+  return NULL;
+}
+cChannel *cChannels::GetByTransponderID(tChannelID ChannelID)
+{
+  int source = ChannelID.Source();
+  int nid = ChannelID.Nid();
+  int tid = ChannelID.Tid();
+  for (cChannel *channel = First(); channel; channel = Next(channel)) {
+      if (channel->Tid() == tid && channel->Nid() == nid && channel->Source() == source)
+         return channel;
+      }
   return NULL;
 }
 

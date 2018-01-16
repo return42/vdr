@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: channels.h 1.42 2006/05/28 15:03:56 kls Exp $
+ * $Id: channels.h 1.47 2008/02/08 13:48:31 kls Exp $
  */
 
 #ifndef __CHANNELS_H
@@ -33,7 +33,7 @@
 
 #define MAXAPIDS 32 // audio
 #define MAXDPIDS 16 // dolby (AC3 + DTS)
-#define MAXSPIDS  8 // subtitles
+#define MAXSPIDS 32 // subtitles
 #define MAXCAIDS  8 // conditional access
 
 #define MAXLANGCODE1 4 // a 3 letter language code, zero terminated
@@ -179,6 +179,7 @@ public:
   const char *Dlang(int i) const { return (0 <= i && i < MAXDPIDS) ? dlangs[i] : ""; }
   const char *Slang(int i) const { return (0 <= i && i < MAXSPIDS) ? slangs[i] : ""; }
   int Tpid(void) const { return tpid; }
+  const int *Caids(void) const { return caids; }
   int Ca(int Index = 0) const { return Index < MAXCAIDS ? caids[Index] : 0; }
   int Nid(void) const { return nid; }
   int Tid(void) const { return tid; }
@@ -211,7 +212,7 @@ public:
   void SetId(int Nid, int Tid, int Sid, int Rid = 0);
   void SetName(const char *Name, const char *ShortName, const char *Provider);
   void SetPortalName(const char *PortalName);
-  void SetPids(int Vpid, int Ppid, int *Apids, char ALangs[][MAXLANGCODE2], int *Dpids, char DLangs[][MAXLANGCODE2], int Tpid);
+  void SetPids(int Vpid, int Ppid, int *Apids, char ALangs[][MAXLANGCODE2], int *Dpids, char DLangs[][MAXLANGCODE2], int *Spids, char SLangs[][MAXLANGCODE2], int Tpid);
   void SetCaIds(const int *CaIds); // list must be zero-terminated
   void SetCaDescriptors(int Level);
   void SetLinkChannels(cLinkChannels *LinkChannels);
@@ -238,6 +239,7 @@ public:
   cChannel *GetByNumber(int Number, int SkipGap = 0);
   cChannel *GetByServiceID(int Source, int Transponder, unsigned short ServiceID);
   cChannel *GetByChannelID(tChannelID ChannelID, bool TryWithoutRid = false, bool TryWithoutPolarization = false);
+  cChannel *GetByTransponderID(tChannelID ChannelID);
   int BeingEdited(void) { return beingEdited; }
   void IncBeingEdited(void) { beingEdited++; }
   void DecBeingEdited(void) { beingEdited--; }

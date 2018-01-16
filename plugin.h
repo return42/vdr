@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: plugin.h 1.13 2006/04/17 09:18:16 kls Exp $
+ * $Id: plugin.h 1.15 2007/08/04 09:56:26 kls Exp $
  */
 
 #ifndef __PLUGIN_H
@@ -41,6 +41,7 @@ public:
   virtual void Housekeeping(void);
   virtual void MainThreadHook(void);
   virtual cString Active(void);
+  virtual time_t WakeupTime(void);
 
   virtual const char *MainMenuEntry(void);
   virtual cOsdObject *MainMenuAction(void);
@@ -50,7 +51,7 @@ public:
   void SetupStore(const char *Name, const char *Value = NULL);
   void SetupStore(const char *Name, int Value);
 
-  void RegisterI18n(const tI18nPhrase * const Phrases);
+  void RegisterI18n(const void *); ///< This function is obsolete and may be removed in future versions of VDR!
 
   virtual bool Service(const char *Id, void *Data = NULL);
   virtual const char **SVDRPHelpPages(void);
@@ -93,6 +94,7 @@ public:
   void Housekeeping(void);
   void MainThreadHook(void);
   static bool Active(const char *Prompt = NULL);
+  static cPlugin *GetNextWakeupPlugin(void);
   static bool HasPlugins(void);
   static cPlugin *GetPlugin(int Index);
   static cPlugin *GetPlugin(const char *Name);

@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: keys.h 1.10 2006/10/14 10:41:20 kls Exp $
+ * $Id: keys.h 1.14 2007/08/26 12:34:50 kls Exp $
  */
 
 #ifndef __KEYS_H
@@ -43,6 +43,7 @@ enum eKeys { // "Up" and "Down" must be the first two keys!
              kVolDn,
              kMute,
              kAudio,
+             kSubtitles,
              kSchedule,
              kChannels,
              kTimers,
@@ -74,6 +75,7 @@ enum eKeys { // "Up" and "Down" must be the first two keys!
 #define ISRAWKEY(k)      ((k) != kNone && ((k) & k_Flags) == 0)
 #define NORMALKEY(k)     (eKeys((k) & ~k_Repeat))
 #define ISMODELESSKEY(k) (RAWKEY(k) > k9)
+#define ISREALKEY(k)     (k != kNone && k != k_Plugin)
 
 #define BASICKEY(k)      (eKeys((k) & 0xFFFF))
 #define KBDKEY(k)        (eKeys(((k) << 16) | kKbd))
@@ -81,7 +83,7 @@ enum eKeys { // "Up" and "Down" must be the first two keys!
 
 struct tKey {
   eKeys type;
-  char *name;
+  const char *name;
   };
 
 class cKey : public cListObject {
@@ -99,7 +101,7 @@ public:
   bool Parse(char *s);
   bool Save(FILE *f);
   static eKeys FromString(const char *Name);
-  static const char *ToString(eKeys Key);
+  static const char *ToString(eKeys Key, bool Translate = false);
   };
 
 class cKeys : public cConfig<cKey> {

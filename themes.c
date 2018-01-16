@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: themes.c 1.6 2005/11/04 14:19:54 kls Exp $
+ * $Id: themes.c 1.8 2008/02/10 16:25:00 kls Exp $
  */
 
 #include "themes.h"
@@ -18,7 +18,6 @@
 cTheme::cTheme(void)
 {
   name = strdup("default");
-  memset(descriptions, 0, sizeof(descriptions));
   memset(colorNames, 0, sizeof(colorNames));
   memset(colorValues, 0, sizeof(colorValues));
   descriptions[0] = strdup("Default");
@@ -27,8 +26,6 @@ cTheme::cTheme(void)
 cTheme::~cTheme()
 {
   free(name);
-  for (int i = 0; i < I18nNumLanguages; i++)
-      free(descriptions[i]);
   for (int i = 0; i < MaxThemeColors; i++)
       free(colorNames[i]);
 }
@@ -77,7 +74,7 @@ bool cTheme::FileNameOk(const char *FileName, bool SetName)
 
 const char *cTheme::Description(void)
 {
-  char *s = descriptions[Setup.OSDLanguage];
+  char *s = descriptions[I18nCurrentLanguage()];
   if (!s)
      s = descriptions[0];
   return s ? s : name;
@@ -167,7 +164,7 @@ bool cTheme::Save(const char *FileName)
   bool result = true;
   cSafeFile f(FileName);
   if (f.Open()) {
-     for (int i = 0; i < I18nNumLanguages; i++) {
+     for (int i = 0; i < I18nLanguages()->Size(); i++) {
          if (descriptions[i])
             fprintf(f, "Description%s%.*s = %s\n", i ? "." : "", 3, i ? I18nLanguageCode(i) : "", descriptions[i]);
          }
@@ -288,18 +285,14 @@ void cThemes::SetThemesDirectory(const char *ThemesDirectory)
 
 void cThemes::Load(const char *SkinName, const char *ThemeName, cTheme *Theme)
 {
-  char *FileName = NULL;
-  asprintf(&FileName, "%s/%s-%s.theme", themesDirectory, SkinName, ThemeName);
+  cString FileName = cString::sprintf("%s/%s-%s.theme", themesDirectory, SkinName, ThemeName);
   if (access(FileName, F_OK) == 0) // the file exists
      Theme->Load(FileName);
-  free(FileName);
 }
 
 void cThemes::Save(const char *SkinName, cTheme *Theme)
 {
-  char *FileName = NULL;
-  asprintf(&FileName, "%s/%s-%s.theme", themesDirectory, SkinName, Theme->Name());
+  cString FileName = cString::sprintf("%s/%s-%s.theme", themesDirectory, SkinName, Theme->Name());
   if (access(FileName, F_OK) != 0) // the file does not exist
      Theme->Save(FileName);
-  free(FileName);
 }

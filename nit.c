@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: nit.c 1.14 2007/04/29 11:35:33 kls Exp $
+ * $Id: nit.c 1.18 2008/02/08 13:48:31 kls Exp $
  */
 
 #include "nit.h"
@@ -140,13 +140,15 @@ void cNitFilter::Process(u_short Pid, u_char Tid, const u_char *Data, int Length
                         }
                     break;
                     }
-                 bool found = false;
-                 for (cChannel *Channel = Channels.First(); Channel; Channel = Channels.Next(Channel)) {
-                     if (!Channel->GroupSep() && Channel->Source() == Source && Channel->Nid() == ts.getOriginalNetworkId() && Channel->Tid() == ts.getTransportStreamId()) {
-                        if (Setup.UpdateChannels >= 5) {
-                           if (!ISTRANSPONDER(cChannel::Transponder(Frequency, Polarization), Channel->Transponder())) {
+                 if (Setup.UpdateChannels >= 5) {
+                    bool found = false;
+                    for (cChannel *Channel = Channels.First(); Channel; Channel = Channels.Next(Channel)) {
+                        if (!Channel->GroupSep() && Channel->Source() == Source && Channel->Nid() == ts.getOriginalNetworkId() && Channel->Tid() == ts.getTransportStreamId()) {
+                           int transponder = Channel->Transponder();
+                           found = true;
+                           if (!ISTRANSPONDER(cChannel::Transponder(Frequency, Polarization), transponder)) {
                               for (int n = 0; n < NumFrequencies; n++) {
-                                  if (ISTRANSPONDER(cChannel::Transponder(Frequencies[n], Polarization), Channel->Transponder())) {
+                                  if (ISTRANSPONDER(cChannel::Transponder(Frequencies[n], Polarization), transponder)) {
                                      Frequency = Frequencies[n];
                                      break;
                                      }
@@ -155,18 +157,17 @@ void cNitFilter::Process(u_short Pid, u_char Tid, const u_char *Data, int Length
                            if (ISTRANSPONDER(cChannel::Transponder(Frequency, Polarization), Transponder())) // only modify channels if we're actually receiving this transponder
                               Channel->SetSatTransponderData(Source, Frequency, Polarization, SymbolRate, CodeRate);
                            }
-                        found = true;
                         }
-                     }
-                 if (!found && Setup.UpdateChannels >= 5) {
-                    for (int n = 0; n < NumFrequencies; n++) {
-                        cChannel *Channel = new cChannel;
-                        Channel->SetId(ts.getOriginalNetworkId(), ts.getTransportStreamId(), 0, 0);
-                        if (Channel->SetSatTransponderData(Source, Frequencies[n], Polarization, SymbolRate, CodeRate))
-                           EITScanner.AddTransponder(Channel);
-                        else
-                           delete Channel;
-                        }
+                    if (!found) {
+                       for (int n = 0; n < NumFrequencies; n++) {
+                           cChannel *Channel = new cChannel;
+                           Channel->SetId(ts.getOriginalNetworkId(), ts.getTransportStreamId(), 0, 0);
+                           if (Channel->SetSatTransponderData(Source, Frequencies[n], Polarization, SymbolRate, CodeRate))
+                              EITScanner.AddTransponder(Channel);
+                           else
+                              delete Channel;
+                           }
+                       }
                     }
                  }
                  break;
@@ -190,13 +191,15 @@ void cNitFilter::Process(u_short Pid, u_char Tid, const u_char *Data, int Length
                         }
                     break;
                     }
-                 bool found = false;
-                 for (cChannel *Channel = Channels.First(); Channel; Channel = Channels.Next(Channel)) {
-                     if (!Channel->GroupSep() && Channel->Source() == Source && Channel->Nid() == ts.getOriginalNetworkId() && Channel->Tid() == ts.getTransportStreamId()) {
-                        if (Setup.UpdateChannels >= 5) {
-                           if (!ISTRANSPONDER(Frequency / 1000, Channel->Transponder())) {
+                 if (Setup.UpdateChannels >= 5) {
+                    bool found = false;
+                    for (cChannel *Channel = Channels.First(); Channel; Channel = Channels.Next(Channel)) {
+                        if (!Channel->GroupSep() && Channel->Source() == Source && Channel->Nid() == ts.getOriginalNetworkId() && Channel->Tid() == ts.getTransportStreamId()) {
+                           int transponder = Channel->Transponder();
+                           found = true;
+                           if (!ISTRANSPONDER(Frequency / 1000, transponder)) {
                               for (int n = 0; n < NumFrequencies; n++) {
-                                  if (ISTRANSPONDER(Frequencies[n] / 1000, Channel->Transponder())) {
+                                  if (ISTRANSPONDER(Frequencies[n] / 1000, transponder)) {
                                      Frequency = Frequencies[n];
                                      break;
                                      }
@@ -205,18 +208,17 @@ void cNitFilter::Process(u_short Pid, u_char Tid, const u_char *Data, int Length
                            if (ISTRANSPONDER(Frequency / 1000, Transponder())) // only modify channels if we're actually receiving this transponder
                               Channel->SetCableTransponderData(Source, Frequency, Modulation, SymbolRate, CodeRate);
                            }
-                        found = true;
                         }
-                     }
-                 if (!found && Setup.UpdateChannels >= 5) {
-                    for (int n = 0; n < NumFrequencies; n++) {
-                        cChannel *Channel = new cChannel;
-                        Channel->SetId(ts.getOriginalNetworkId(), ts.getTransportStreamId(), 0, 0);
-                        if (Channel->SetCableTransponderData(Source, Frequencies[n], Modulation, SymbolRate, CodeRate))
-                           EITScanner.AddTransponder(Channel);
-                        else
-                           delete Channel;
-                        }
+                    if (!found) {
+                        for (int n = 0; n < NumFrequencies; n++) {
+                           cChannel *Channel = new cChannel;
+                           Channel->SetId(ts.getOriginalNetworkId(), ts.getTransportStreamId(), 0, 0);
+                           if (Channel->SetCableTransponderData(Source, Frequencies[n], Modulation, SymbolRate, CodeRate))
+                              EITScanner.AddTransponder(Channel);
+                           else
+                              delete Channel;
+                           }
+                       }
                     }
                  }
                  break;
@@ -247,13 +249,15 @@ void cNitFilter::Process(u_short Pid, u_char Tid, const u_char *Data, int Length
                         }
                     break;
                     }
-                 bool found = false;
-                 for (cChannel *Channel = Channels.First(); Channel; Channel = Channels.Next(Channel)) {
-                     if (!Channel->GroupSep() && Channel->Source() == Source && Channel->Nid() == ts.getOriginalNetworkId() && Channel->Tid() == ts.getTransportStreamId()) {
-                        if (Setup.UpdateChannels >= 5) {
-                           if (!ISTRANSPONDER(Frequency / 1000000, Channel->Transponder())) {
+                 if (Setup.UpdateChannels >= 5) {
+                    bool found = false;
+                    for (cChannel *Channel = Channels.First(); Channel; Channel = Channels.Next(Channel)) {
+                        if (!Channel->GroupSep() && Channel->Source() == Source && Channel->Nid() == ts.getOriginalNetworkId() && Channel->Tid() == ts.getTransportStreamId()) {
+                           int transponder = Channel->Transponder();
+                           found = true;
+                           if (!ISTRANSPONDER(Frequency / 1000000, transponder)) {
                               for (int n = 0; n < NumFrequencies; n++) {
-                                  if (ISTRANSPONDER(Frequencies[n] / 1000000, Channel->Transponder())) {
+                                  if (ISTRANSPONDER(Frequencies[n] / 1000000, transponder)) {
                                      Frequency = Frequencies[n];
                                      break;
                                      }
@@ -262,17 +266,16 @@ void cNitFilter::Process(u_short Pid, u_char Tid, const u_char *Data, int Length
                            if (ISTRANSPONDER(Frequency / 1000000, Transponder())) // only modify channels if we're actually receiving this transponder
                               Channel->SetTerrTransponderData(Source, Frequency, Bandwidth, Constellation, Hierarchy, CodeRateHP, CodeRateLP, GuardInterval, TransmissionMode);
                            }
-                        found = true;
                         }
-                     }
-                 if (!found && Setup.UpdateChannels >= 5) {
-                    for (int n = 0; n < NumFrequencies; n++) {
-                        cChannel *Channel = new cChannel;
-                        Channel->SetId(ts.getOriginalNetworkId(), ts.getTransportStreamId(), 0, 0);
-                        if (Channel->SetTerrTransponderData(Source, Frequencies[n], Bandwidth, Constellation, Hierarchy, CodeRateHP, CodeRateLP, GuardInterval, TransmissionMode))
-                           EITScanner.AddTransponder(Channel);
-                        else
-                           delete Channel;
+                    if (!found) {
+                       for (int n = 0; n < NumFrequencies; n++) {
+                           cChannel *Channel = new cChannel;
+                           Channel->SetId(ts.getOriginalNetworkId(), ts.getTransportStreamId(), 0, 0);
+                           if (Channel->SetTerrTransponderData(Source, Frequencies[n], Bandwidth, Constellation, Hierarchy, CodeRateHP, CodeRateLP, GuardInterval, TransmissionMode))
+                              EITScanner.AddTransponder(Channel);
+                           else
+                              delete Channel;
+                           }
                         }
                     }
                  }
