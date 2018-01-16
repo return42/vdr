@@ -1,0 +1,282 @@
+Thanks go to the following people for patches and contributions:
+
+Carsten Koch <Carsten.Koch@icem.de>
+ for adding LIRC support
+ for making the 'Recordings' menu be listed alphabetically
+ for implementing the 'Summary' feature
+ for adding the 'epg2timers' tool (see Tools/epg2timers)
+ for his idea of using multiple disks (and for testing this feature)
+ for implementing the 'new recording' indicator
+ for suggesting that the "Back" button in replay mode should bring up the "Recordings" menu
+ for fixing the watchdog timer if the program hangs in OSD activities
+
+Plamen Ganev <pganev@com-it.net>
+ for fixing the frequency offset for Hotbird channels
+ for adding the 'xtvrc2vdr' tool (see Tools/xtvrc2vdr)
+ for adding the 'dvbrc2vdr' tool (see Tools/dvbrc2vdr)
+ for implementing "channel grouping"
+
+Heino Goldenstein <heino.goldenstein@microplex.de>
+ for modifying scrolling through lists to make it page up and down
+
+Guido Fiala <gfiala@s.netic.de>
+ for implementing slow forward/back
+ for implementing the SVDRP command 'HITK'
+ for implementing image grabbing
+ for implementing overlay capabilities (see his 'kvdr' tool at http://www.s.netic.de/gfiala)
+ (overlay capabilities have been removed again in VDR 0.98, since kvdr version 0.4
+ now does these things itself)
+ for making the replay progress display avoid unnecessary code execution
+
+Robert Schneider <Robert.Schneider@lotus.com>
+ for implementing EIT support for displaying the current/next info
+ for extending EIT support to implement a complete EPG
+
+Niels de Carpentier <niels@casema.net>
+ for adding a workaround for a driver timing problem in cDvbApi::Cmd()
+
+Martin Hammerschmid <martin@hammerschmid.com>
+ for suggesting to display the direct channel select input on the OSD
+ for suggesting to use the "Blue" button in the main menu to resume replay
+ for implementing pege up/down with the "Left" and "Right" keys
+ for detecting a deadlock when switching channels via Schedule/Now|Next/Switch
+
+Bastian Guse <bastian@nocopy.de>
+ for writing the FORMATS entry for timers.conf
+
+Matthias Schniedermeyer <ms@citd.de>
+ for implementing the 'MarkInstantRecord' setup option
+ for his "schnitt" tools
+ for his "master-timer" tool
+ for helping to debug the "move to last position in list" bug
+
+Miha Setina <mihasetina@softhome.net>
+ for translating OSD texts to the Slovenian language
+
+Alberto Carraro <bertocar@tin.it>
+ for translating OSD texts to the Italian language
+
+Deti Fliegl <deti@fliegl.de>
+ for implementing the 'CurrentChannel' setup parameter
+ for fixing setting the OSD size in the 'Confirm' interface call
+ for fixing handling improper buffer lengths in the EIT parser
+
+Dave Chapman <dave@dchapman.com>
+ for implementing support for the teletext PID
+ for his great support in switching to the NAPI
+ for implementing DVB-T support
+
+Hans-Peter Raschke <Hans-Peter.Raschke@Wintermann-DatenService.de>
+ for his support in adapting VDR to DVB-C
+ for adding the 'statdvb2vdr' tool (see Tools/statdvb2vdr)
+
+Peter Hofmann <software@pxh.de>
+ for his support in adapting VDR to DVB-C
+
+Axel Gruber <axel@agm.de>
+ for his support in keeping the Premiere World channels up to date in 'channels.conf'
+
+Arnold Niessen <niessen@iae.nl> <arnold.niessen@philips.com>
+ for translating OSD texts to the Dutch language
+
+Jürgen Sauer <jojo@automatix.de>
+ for implementing the -t option to set the controlling terminal
+
+Benjamin Reichardt <reichard@math.uni-goettingen.de>
+ for his help in debugging the transition to the new API
+
+Henning Holtschneider <hh@holtschneider.com>
+ for patching 'runvdr' to check whether the driver is already loaded
+ for reporting a bug in parsing group separators in channels.conf
+ for pointing out a possible hangup when reading a broken epg.data file
+
+Paulo Lopes <pmml@netvita.pt>
+ for translating OSD texts to the Portugese language
+
+Markus Lang <pretender@gaze.de> and Ulrich Röder <dynamite@efr-net.de>
+ for making DiSEqC support configurable
+
+Markus Lang <pretender@gaze.de>
+ for some initial code for grouping the Setup menu into several sub-menus
+
+Jean-Claude Repetto <jc@repetto.org>
+ for translating OSD texts to the French language
+
+Andre Valentin <av2000@topmail.de>
+ for increasing the key name buffer size for LIRC
+
+Jørgen Tvedt <pjtvedt@online.no>
+ for translating OSD texts to the Norwegian language
+
+Stefan Huelswitt <huels@iname.com>
+ for fixing the repeat function with LIRC
+ for making the position of the channel display configurable
+ for making the width and height of the OSD configurable
+ for implementing the "Jump" function in replay mode
+ for implementing "Multi Speed Mode"
+ for implementing backtracing for fast forward/rewind
+ for implementing the replay mode display
+ for fixing a crash when replaying with DEBUG_OSD=1
+
+Ulrich Röder <roeder@efr-net.de>
+ for pointing out that there are channels that have a symbol rate higher than
+ 27500
+ for his support in keeping the Premiere World channels up to date in 'channels.conf'
+
+Mel Schächner <schaechner@yahoo.com>
+ for his support in keeping the Premiere World channels up to date in 'channels.conf'
+
+Andreas Schultz <aschultz@warp10.net>
+ for adding support for replaying DVDs (much of this was derived from
+ dvdplayer-0.5 by Matjaz Thaler <matjaz.thaler@guest.arnes.si>)
+ for adding PTS to the converted PCM audio when replaying a DVD
+ for fixing a crash in case there is no 'epg.data' at program start
+ for fixing a bug in the EPG bugfix mechanism if the extended description is shorter
+ than 3 characters
+
+Aaron Holtzman
+ for writing 'ac3dec'
+
+Wolfgang Henselmann-Weiss <Wolfgang_Henselmann@betaresearch.de>
+ for fixing calculating the timeout value in cFile::FileReady()
+
+Uwe Scheffler <UweScheffler@t-online.de>
+ for his help in keeping 'channels.conf.cable' up to date
+
+Matjaz Thaler <matjaz.thaler@guest.arnes.si>
+ for improving AC3 decoding when replaying DVDs
+ for translating OSD texts to the Slovenian language
+
+Artur Skawina <skawina@geocities.com>
+ for improving the font file generation in the Makefile
+ for pointing out a problem with the ERR macro defined by ncurses.h
+
+Werner Fink <werner@suse.de>
+ for making I/O more robust by handling EINTR
+ for fixing closing all unused file descriptors when opening a pipe
+ for helping to debug leftover 'zombie' processes when closing a pipe
+ for making the Dolby Digital thread start only if the recording actually
+ contains Dolby Digital data
+
+Rolf Hakenes <hakenes@hippomi.de>
+ for providing 'libdtv' and adapting the EIT mechanisms to it
+
+Andreas Vitting <Andreas@huji.de>
+ for providing code that closes all unused file descriptors in the child
+ process of a pipe (used in cPipe)
+
+Matthias Weingart <matthias@pentax.boerde.de>
+ for fixing handling of the volume, mute and power keys when menus are active
+ for fixing the repeat function when using the LIRC remote control
+
+Andreas Share <a.share@t-online.de>
+ for his support in keeping the Premiere World channels up to date in 'channels.conf'
+
+Simon Bauschulte <SemiSchwabe@Brutzel.de>
+ for his support in keeping the Premiere World channels up to date in 'channels.conf'
+
+Andy Grobb <Charly98@01019freenet.de>
+ for completing storing the current audio volume in the setup.conf file
+ for fixing the EPG display in case Setup.ShowInfoOnChSwitch is set to "no"
+
+Thomas Heiligenmann <thomas@heiligenmann.de>
+ for implementing the SVDRP commands LSTR and DELR
+
+Norbert Schmidt <nschmidt-nrw@t-online.de>
+ for filling in some missing teletext PIDs
+
+Thilo Wunderlich <tw@ubcom.net>
+ for his help in keeping 'channels.conf' up to date
+ for reporting a problem with accessing the epg.data file before it is fully written
+
+Stephan Schreiber <stephan@sschreiber.de>
+ for his support in keeping the Premiere World channels up to date in 'channels.conf.cable'
+
+Lauri Pesonen <lauri.pesonen@firsthop.com>
+ for avoiding linking in 'libncurses' if compiling without DEBUG_OSD=1 and
+ REMOTE=KBD
+
+Sergei Haller <Sergei.Haller@math.uni-giessen.de>
+ for fixing the LastActivity timestamp after a shutdown prompt
+ for fixing the "Low disk space!" message
+ for adding the TPID to Hessen-3 in 'channels.conf'
+ for suggesting that the EPG scan should skip channels with their 'Ca' parameter
+ explicitly set to an other DVB card
+
+Andreas Gebel <andreas@xcapenet.de>
+ for his help in keeping 'channels.conf' up to date
+
+Davide Achilli <davide@objsystem.it>
+ for pointing out a bug in error handling while establishing an SVDRP connection
+
+Michael Paar <mpaar@uumail.de>
+ for enabling recording of radio channels
+
+Hannu Savolainen <hannu@opensound.com>
+ for translating OSD texts to the Finnish language
+
+Jürgen Schmidt <ju@ct.heise.de>
+ for fixing a problem with 'in_addr_t' on systems with glibc < 2.2.
+
+Uwe Freese <mail@uwe-freese.de>
+ for suggesting to automatically close an empty recordings page after deleting
+ an entry
+
+Rainer Zocholl <vdrcontrib@zocki.toppoint.de>
+ for suggesting a confirmation prompt when the user presses the "Power" button
+ and there is an upcoming timer event
+ for reporting a bug in skipping the next hit of a repeating timer
+
+Oleg Assovski <assen@bitcom.msk.ru>
+ for adding EPG scanning for another 4 days
+
+Adrian Stabiszewski <as@nitegate.de>
+ for fixing the SVDRP GRAB command in case the video device can't be opened
+
+Bernd Schweikert <bernd.schweikert@dit-gmbh.de>
+ for adding 'Ca' code 201 for 'Cryptoworks, GOD-DIGITAL' to 'ca.conf'
+
+Mirko Günther <mi.guenther@ib-helms.de>
+ for suggesting the -m command line option
+ for suggesting the SVDRP command VOLU
+
+Achim Lange <Achim_Lange@t-online.de>
+ for replacing 'killproc' with 'killall' in 'runvdr' to make it work on Debian
+ for reporting a bug in switching back the replay mode display in time shift mode
+
+Klaus Wolf <klaus@wolfsoft.de>
+ for reporting a bug in restoring the CICAM values for a fourth DVB card
+
+Bernd Zierath <b.zierath@ebv.com>
+ for helping to debug scrolling the "Channels" menu in case the cursor ends up on
+ a group separator
+
+Truls Slevigen <truls@slevigen.no>
+ for translating OSD texts to the Norwegian language
+
+Ruben Nunez Francisco <ruben.nunez@tang-it.com>
+ for implementing FreeDiskSpaceMB() without external 'df' command
+ for translating OSD texts to the Spanish language
+
+Mirko Dölle <mdoelle@linux-user.de>
+  for reporting a bug when a timer records over midnight of a day that had a
+  change in Daylight Saving Time
+
+Michael Rakowski <mrak@gmx.de>
+ for translating OSD texts to the Polish language
+
+Michael Moster <dvb@juelich-gmbh.de>
+ for initally reporting the problem with wrong EPG data in the Schedules menu
+ (somehow I had misplaced his message...)
+
+Tobias Kerner <tobschle@gmx.de>
+ for helping to debug a problem with wrong EPG data in the Schedules menu
+
+Dirk Wiebel <dirk@wiebel.de>
+ for reporting a bug in the editing process in case a previously edited file
+ with the same name was manually deleted on a system with more than one video
+ directory
+
+Gerald Raaf <graaf@attglobal.net>
+ for helping to fix the still picture workaround in case the progress display
+ is active

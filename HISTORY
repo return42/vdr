@@ -1,0 +1,1192 @@
+Video Disk Recorder Revision History
+------------------------------------
+
+2000-02-19: Version 0.01 (Initial revision).
+
+2000-03-11: Version 0.02
+
+- Fixed compilation with only DEBUG_REMOTE=1.
+- Menus now use colors.
+- Support for "Red", "Green", "Yellow", "Blue" buttons.
+- Channels and Timers can now be added, deleted and moved.
+- Basic record/play file handling support (no actual record/playback yet).
+
+2000-04-15: Version 0.03
+
+- Actual record/replay now works.
+- Dropped the idea of different "recording qualities" (a 36GB harddisk is
+  able to store some 18 hours in full quality, so we don't really need that).
+- Termination signals are now caught and the program cleans up before exiting.
+- Support for CICAM.
+
+2000-04-24: Version 0.04
+
+- Changed name from 'osm' to 'vdr' to avoid mixups with the 'oms' program that
+  appears to be in use with DVD replay.
+- Implemented a channel display in the top menu line.
+- Implemented replay progress display (press "Ok" when replaying to bring it up).
+- Implemented direct channel selecting by pressing the numeric keys.
+- Added several 'const' keywords to please stricter compilers.
+- The repeat function for the remote control no longer adapts dynamically
+  to the timing of the RCU (this sometimes caused the repeat function to
+  kick in too early).
+- Channel selection is now blocked when recording or replaying.
+- Improved process handling.
+
+2000-05-27: Version 0.05
+
+- Support for more than one DVB card.
+- Simultaneous record and replay (with two DVB cards).
+- Instant recordings no longer get the name "instant". They now get the name
+  of the channel, with a prepended '@' character.
+- Timers that are not given an explicit Name now use the channel name with
+  a prepended '@' character.
+- If an instant recording is currently active, the "Main" menu now contains
+  an option to stop that recording.
+- Timers are now only processed when the Menu is not active. So after editing
+  a timer the effect will take place only after the menu has been closed.
+  In order to avoid missing a timer event by inadvertently leaving the menu
+  open, the menu will be closed automatically after about two minutes of
+  inactivity.
+- If a recording is currently being replayed, the "Main" menu now contains an
+  option to stop replaying.
+- Displaying the recording DVB interface status in the decimal points of the
+  RCU display.
+- Reduced the number of remote control keys. Modified the key assignments for
+  the PC keyboard to better resemble the "up-down-left-right-ok" layout on
+  menu controlling remote control units.
+
+2000-07-25: Version 0.6
+
+- Added support for LIRC remote control (thanks to Carsten Koch!).
+  There are now three different remote control modes: KBD (PC-Keyboard), RCU
+  and LIRC. See the INSTALL file for information on how to enable either of
+  these modes. The default mode is now KBD, not RCU as before (to make it
+  work immediately even if there is no actual remote control).
+- Fixed small bug in dvbapi.c that was causing some channels (many on hotbird)
+  not to be correctly tuned (thanks to Plamen Ganev!).
+- Now clearing the replay buffer in search forward/back, which results in
+  faster reaction.
+- The 'Recordings' menu is now listed alphabetically (thanks to Carsten Koch!).
+- The new 'epg2timers' tool (thanks to Carsten Koch!) can be used to convert
+  an EPG "merkliste" page (http://www.tvtv.de) to vdr timer entries.
+- The new 'xtvrc2vdr' tool (thanks to Plamen Ganev!) can be used to convert
+  'xtvrc' channel files into 'vdr' format.
+- When more than one timer matches at the same time, the first one in the list
+  with the highest 'Priority' is selected.
+- The MANUAL section on "Programming the Timer" has been filled in.
+- The year in the "Recordings" menu as well as in the progress display during
+  replay has been reduced to 2 digits to allow more space for the recording's
+  title. In the internal file structure the year is still stored with 4 digits,
+  so there will be no problem at the next turn of the century ;-)
+- Channel names and timer filenames can now contain blanks. To avoid problems
+  with file names that contain blanks, all blanks in recording file names are
+  converted to underscores.
+- The polarization can now be given in uppercase or lowercase characters in
+  'channels.conf'.
+- Fixed buffer initialization to work with DVB driver version 0.6.
+- Implemented the "Simple Video Disk Recorder Protocol" (SVDRP) to control
+  the VDR over a network connection.
+- Implemented command line option handling.
+- The program can now run in full background mode by using the --daemon option.
+- Added a "summary" field to the timers (thanks to Carsten Koch!).
+  This field can contain a descriptive text of the programme and will be
+  displayed when the "Blue" key is pressed on a recording that was created by
+  this timer. If the text contains the special character '|', a newline will
+  be inserted at that place.  When pressing "Ok" on a timer that contains a
+  summary field, the summary will be displayed. To edit such a timer the "Red"
+  key must be pressed. Timers without a summary still go into Edit mode when
+  pressing "Ok".  The summary field can only be filled in directly by editing
+  the 'timers.conf' file with a text editor, or by defining/modifying the timer
+  via the SVDRP interface.
+
+2000-08-06: Version 0.61
+
+- When scrolling through a list it now moves a full page up or down when the
+  cursor reaches the top or bottom of the menu (thanks to Heino Goldenstein!).
+- Added missing '#include <sys/stat.h>' to recording.c.
+- The video directory can now be defined with the command line option -v.
+- There can now be more than one video directory (in case you have several
+  disks).
+- Fixed learning key codes for PC keyboard.
+- New command line option '-l' to set the log level.
+- Times in timers.conf are now always printed with 4 digits (leading '0').
+- Slow forward/back mode (thanks to Guido Fiala!).
+- The "Up" key in replay mode no longer restarts replay at the very beginning,
+  but rather resumes normal replay mode after a "pause", "forward" or "backward"
+  operation. Use the "Skip -60s" function repeatedly to go back to the beginning
+  of the recording.
+- Improved reaction on user input in fast/slow forward/back modes.
+- No more upper limit for the value of 'Pnr'.
+- Checking if the video card is really a DVB card.
+- New SVDRP command UPDT to update an existing timer (or add a new one if it
+  doesn't yet exist).
+- New version of the 'epg2timers' tool (with a modified channel list).
+- Bugfix in closing window in DEBUG_OSD mode.
+
+2000-09-03: Version 0.62
+
+- The Makefile now defines DVBDIR to easily point to where the DVB driver
+  source is located.
+- When switching channels the current/next information is now displayed if
+  available (thanks to Robert Schneider). Since there is now more information
+  to read when switching channels, the timeout for displaying it has been
+  increased from 2 to 5 seconds (remember that this info can always be recalled
+  by pressing the "Ok" button).
+  For this feature to work it is necessary that the 'Pnr' parameter in the
+  channel setup ('channels.conf') is set to the proper value. This has been
+  done for some of the channels in the default 'channels.conf'. Some other
+  parameters in the default 'channels.conf' have also been updated, so please
+  make sure your timers still use the correct channels!
+
+2000-09-10: Version 0.63
+
+- The new "Setup" menu allows the user to configure several parameters to his/her
+  personal taste (see MANUAL for details).
+- Workaround for a driver timing problem in cDvbApi::Cmd(), which sometimes caused
+  the OSD to no longer be displayed (thanks to Niels de Carpentier).
+- Added the '-m486' option to the compiler call.
+- If a channel name contains a colon (':') it is now replaced with a '|' in
+  'channels.conf'.
+- Not everybody appears to like the "page scrolling" mechanism introduced by
+  Heino Goldenstein in version 0.61, so this is now configurable via the "Setup"
+  menu.
+- The new 'dvbrc2vdr' tool (thanks to Plamen Ganev!) can be used to convert
+  'dvbrc' channel files into 'vdr' format.
+- Channels can now be "grouped" (thanks to Plamen Ganev!). See MANUAL for details.
+  There is currently no mechanism to define and maintain "Channel groups" via
+  the menu, so you'll have to insert "Channel group" control lines into your
+  'channels.conf' file manually (for example with a text editor).
+- Started a new file named FORMATS with a description of the various file
+  formats used by VDR.
+- The "Primary DVB interface" can now be chosen via the "Setup" menu.
+- Display of the "current/next" information when switching channels can now
+  be disabled via the "Setup" menu.
+- The "current/next" display now only shows those lines that actually contain
+  information.
+- When directly selecting a channel by entering the channel number, the digits
+  entered so far together with the name of that channel are displayed on the
+  OSD (suggested by Martin Hammerschmid).
+
+2000-09-20: Version 0.64
+
+- NOTE: If you are using DVB driver version 0.7 you need to load the dvb.o
+  module with option outstream=0, so your insmod statement should read
+  'insmod dvb.o outstream=0'. This is currently necessary because 'vdr'
+  still works with AV_PES data.
+- Video files now have the 'group read' bit set.
+- Fixed handling errors in 'readstring()'.
+- Handling SIGPIPE and re-establishing handler after intercepting a signal.
+- The configuration files are now by default read from the video directory.
+  This can be changed by using the new '-c' option. Make sure you copy your
+  current '*.conf' files to your video directory ('/video' by default), or
+  use "-c ." to get the old behaviour of loading the configuration files
+  from the current directory.
+- Waiting for input is now handled by a common function, which improves
+  response time on user actions. As a consequence the EIT data may sometimes
+  not be displayed, but this will change later when cEIT runs as a separate
+  thread.
+- The new SVDRP command 'HITK' (thanks to Guido Fiala!) can be used to 'hit'
+  a remote control key.  Establish an SVDRP connection and enter HITK without
+  a parameter for a list of all valid key names.
+- The new SVDRP command 'GRAB' (thanks to Guido Fiala!) can be used to grab
+  the current frame and save it to a file.
+- The new SVDRP commands 'OVL*' can be used to control video overlays (thanks
+  to Guido Fiala!). This is mainly for use in the 'kvdr' tool (see the 'kvdr'
+  page at http://www.s.netic.de/gfiala).
+- If the name of the video directory used with the '-v' option had trailing
+  slashes, the recording file names have been damaged. Trailing slashes are
+  now silently removed.
+- Fixed a buffer overflow in EIT parsing.
+- Added a security warning regarding SVDRP to the INSTALL file.
+- Fixed 'confirm' dialog.
+- The daemon mode (option '-d') now no longer works with REMOTE=KBD (there
+  is no stdin in daemon mode, so KBD makes no sense - plus it sometimes
+  crashed).
+
+2000-10-03: Version 0.65
+
+- Modified LIRC interface to better handle repeat function.
+- Faster OSD by first writing into a bitmap and then sending the entire bitmap
+  to the DVB driver at once (requires the patch 'dvb.c.071.diff' to be applied
+  against the version 0.71 DVB driver file 'dvb.c').
+- When switching channels the channel is now immediately displayed, and the
+  current/next information is shown as soon as it becomes available.
+- No longer displaying the year in the 'Recordings' menu to save space for the
+  title.
+- The 'Recordings' menu now displays a '*' to indicate new recordings.
+- Added the description of the timers.conf file to the FORMATS file (thanks to
+  Bastian Guse).
+- Displaying as much as possible of the current/next info (dropping characters
+  that would display only partially).
+- In normal viewing mode the '0' key now toggles between the current and the
+  previous channel.
+
+2000-10-08: Version 0.66
+
+- Remote control data is now received in a separate thread, which makes things
+  a lot smoother.
+- Repeat and release of remote control keys is now explicitly distinguished.
+- In replay mode the search forward/back and skip functions now have two modes:
+  Pressing the key shortly and releasing it starts the function, and pressing it
+  again stops it. Pressing and holding down the key starts the function and
+  releasing the key stops it.
+- The '@' character that marks an "instant recording" can now be turned off
+  in the "Setup" menu (thanks to Matthias Schniedermeyer).
+- Pressing the "Back" button while replaying now stops replaying and brings up
+  the "Recordings" menu (suggested by Carsten Koch). This can be used to easily
+  delete a recording after watching it, or to switch to a different recording.
+- The "Recordings" menu now places the cursor on the last replayed recording, if
+  that file still exists.
+- The "Blue" button in the "Main" menu can now be used to "Resume" a previously
+  stopped replay session (suggested by Martin Hammerschmid).
+- The low and high LNB frequencies can now be changed in the "Setup" menu.
+
+2000-11-01: Version 0.67
+
+- The EIT information is now gathered in a separate thread.
+- The sytem time can now be synchronized to the time broadcast in the DVB data
+  stream. This can be enabled in the "Setup" menu by setting "SetSystemTime" to
+  1.  Note that this works only if VDR is running under a user id that has
+  permisson to set the system time.
+- The new item "Schedule" in the "Main" menu opens VDR's EPG (thanks to Robert
+  Schneider). See the MANUAL file for a detailed description.
+- The new setup parameters MarginStart and MarginStop define how long (in
+  minutes) before the official start time of a broadcast VDR shall begin
+  recording, and how long after the official end time it shall stop recording.
+  These are used when a recording is programmed from the "Schedules" menu.
+- The delay value in the dvb.c.071.diff patch to the driver has been increased
+  to '3', because on some systems the OSD was not displayed correctly. If you
+  are running an already patched version 0.71 driver and encounter problems
+  with the OSD, please make sure the parameter in the ddelay call is '3', not
+  '2'.
+- Fixed initializing the RCU remote control code (didn't work after switching
+  on the system).
+- Problematic characters in recording names (which can come from timers that
+  are programmed via the "Schedules" menu) are now replaced by suitable
+  substitutes.
+
+2000-11-19: Version 0.68
+
+- Date and time in the title of an event info page are now always right adjusted.
+- The 'current channel' is now handled device specific (in case there is more
+  than one DVB card).
+- The 'SetSystemTime' option in the "Setup" menu is now shown as "yes/no".
+- Implemented "internationalization" (see 'i18n.c' for information on how to
+  add new languages). Thanks to Miha Setina for translating the OSD texts to
+  the Slovenian language.
+- Fixed learning keys on the PC keyboard (display oscillated).
+- Fixed a timing problem with OSD refresh and SVDRP.
+- Avoiding multiple definitions of the same timer in the "Schedule" menu (this
+  could happen when pressing the "Red" button while editing the timer).
+- There can now be a configuration file named 'commands.conf' that defines
+  commands that can be executed through the "Main" menu's "Commands" option
+  (see FORMATS for details on how to define these commands).
+- Added a 'fixed' font for use with the output of system commands.
+- The 'Priority' parameter of the timers is now also used to interrupt a low
+  priority timer recording if a higher priority timer wants to record.
+- A timer recording on a DVB card with a CAM module will now be interrupted
+  by a timer that needs to use this specific DVB card to record an encrypted
+  channel, if the timer currently occupying this DVB card doesn't need the
+  CAM module (and thus can continue recording on a different DVB card).
+- The "Yellow" button in the "What's on now/next?" menus now displays the
+  schedule of the current channel from that menu.
+- All DVB cards in a multi-card system now write their EIT information into the
+  same data structure.
+- If there is more than one DVB card in the system, the non-primary cards are
+  now used to periodically scan through the channels in order to keep the
+  EPG info up-to-date. Scanning kicks in after 60 seconds of user inactivity
+  (timeout in order to keep user interactions instantaneously) and each channel
+  that has the 'pnr' parameter defined in 'channels.conf' is switched to for
+  20 seconds. If there is only one DVB card in the system, that card will start
+  scanning after 5 hours (configurable through the "Setup" menu) of user inactivity
+  and will switch back to the channel it originally displayed at the first sign of
+  user activity. Any scanning will only occur if that particular card is not
+  currently recording or replaying.
+- Now shifting the 'Subtitle' info into the 'ExtendedDescription' on stations
+  that don't send the EIT information correctly (like, e.g., 'VOX').
+- Implemented a 10 seconds latency when removing files.
+- Fixed unwanted reaction on the "Green" and "Yellow" button in the "Event" display.
+- Implemented 'Transfer Mode' to display video data from the DVB card that actually
+  can receive a certain channel on the primary interface. This is currently in
+  an early state and may still cause some problems, but it appears to work nice
+  already.
+
+2001-01-18: Version 0.70
+
+- VDR now requires driver version 0.8.1 or higher.
+- Recordings are now saved in PES mode. Note that you now need to install the
+  driver *WITHOUT* 'outstream=0'! This is the default when you 'make insmod' in
+  the DVB/driver directory.
+  Old recordings (in AV_PES mode) can still be replayed (as long as the driver
+  still supports replaying AV_PES files). The only limitation with this is that
+  in fast forward/back mode the picture may be slightly distorted and there may
+  be sound fragments.
+- The EPG data is now dumped into the file /video/epg.data every ten minutes.
+  Use the Perl script 'epg2html.pl' to convert the raw EPG data into a simple
+  HTML programme listing.
+- Fixed handling of channel switching with the "Blue" button in the "What's on
+  now/next?" menus.
+- Fixed saving the MarginStop setup parameter.
+- Fixed missing initialization in cConfig.
+- Implemented "On Disk Editing".
+- There is no more default 'timers.conf' file.
+- Added Italian language texts (thanks to Alberto Carraro).
+- Fixed starting a replay session when the program is currently in 'Transfer
+  Mode'.
+- Fixed setting/modifying timers via SVDRP with empty summary fields.
+- Fixed a problem with recordings that have a single quote character in their
+  name (this is now mapped to 0x01).
+- Changed the value for Diseqc to '0' in the default 'channels.conf'.
+- Fixed displaying channels and recording status in the RCU's LED display when
+  a recording is interrupted due to higher priority.
+- Implemented safe writing of config files (first writes into a temporary file
+  and then renames it).
+- In case the video data stream is broken the log message will come only every
+  5 seconds.
+- The current channel is now saved in the 'setup.conf' file when VDR is cancelled,
+  and will be restored next time it is started (thanks to Deti Fliegl).
+- The EIT scanning thread is now locked when switching channels to avoid problems.
+- Encrypted channels can now be selected even without knowing the PNR (however, it
+  is still necessary for the EPG info).
+
+2001-02-24: Version 0.71
+
+- Fixed 'Transfer Mode' in cases where a non-primary interface was switched to
+  a channel that only the primary interface can receive (which could happen in
+  the EPG scanner).
+- The EPG scanner now starts with the first channel (it used to start with the
+  second channel).
+- Reacitvated setting the PNR.
+- Adapted the frame scanning to the new muxing of the driver.
+- The new compile time option REMOTE=NONE can be used to compile VDR without
+  any remote control support (for applications where it shall be controlled
+  exclusively via SVDRP).
+- The new command line option -D can be used to define which DVB interfaces
+  a certain instance of VDR shall use.
+- The "Left" and "Right" keys are now used to page up and down in lists (thanks
+  to Martin Hammerschmid). Since the "Timers" menu already uses these keys to
+  (de)activate timers, this functionality is not available there.
+- The "Main" and "Commands" menu now support "hotkeys", which means that if the
+  first non-blank character of a menu item is a digit in the range 1..9, that
+  item can be selected by pressing the respective numeric key on the remote
+  control.
+- The channel data in 'channels.conf' now contains the teletext PID (thanks to
+  Dave Chapman). Existing files will be read normally (and the teletext PID set
+  to 0), but once they are written back (due to some channel editing) the file
+  will have the new format.
+- The EPG scanner now scans each transponder only once per cycle.
+- Deleted recordings are now automatically removed from disk after a while (not
+  only when disk space is being needed for a new recording).
+- Fixed repeat function in LIRC remote control.
+- Changed the MAXDVBAPI macro in dvbapi.c to 4 in order to directly support the
+  maximum possible number of DVB cards.
+- The 'Ca' parameter in the default 'channels.conf' has been changed from '2'
+  to '3' because the VDR prototype now has 3 DVB cards (and currently the CAM
+  module only works if it is inserted into the last DVB card).
+- The "Now", "Next" and "Schedule" menus now remember the current channel and
+  restore the list when switching between them.
+- The "Green" button in the "Recordings" menu can now be used to rewind a
+  recording and play it from the very beginning.
+- Fixed handling ':' in timer filenames and '\n' in timer summaries (see FORMATS).
+- When removing recordings empty directories are now removed from the video
+  directory.
+- Added the "schnitt" tools from Matthias Schniedermeyer.
+- New SVDRP command MESG to display a short message on the OSD.
+- The Perl script 'svdrpsend.pl' can be used to send SVDRP commands to VDR.
+- SVDRP can now immediately reuse the same port if VDR is restarted.
+- SVDRP now has a timeout after which the connection is automatically closed
+  (default is 300 seconds, can be changed in "Setup").
+- The compile time switch VFAT can be used to make VDR avoid the ':' character
+  in file names (VFAT can't handle them). Do 'make VFAT=1' to enable this.
+- Support for DVB-C (thanks to Hans-Peter Raschke and Peter Hofmann).
+  See the INSTALL file for more information about the use of VDR with cable.
+- Fixed an occasional segfault in the EIT processor.
+- A value of '0' for the EPGScanTimeout setup parameter now completely turns off
+  scanning for EPG data on both single and multiple card systems.
+- New setup parameter "PrimaryLimit" that allows to prevent timers from using the
+  primary DVB interface in multi card systems. Default value is 0, which means
+  that every timer may use the primary interface.
+- The 'active' field of a timer will now be explicitly set to '1' if the user
+  modifies an active timer (see FORMATS for details).
+- The new command line option -w can be used to activate a watchdog that makes
+  VDR exit in case the main program loop does not respond for more than the
+  given number of seconds. This is mainly useful in combination with the new
+  'runvdr' script that restarts VDR in case is has exited.
+
+2001-04-01: Version 0.72
+
+- Fixed SVDRP commands LSTC and LSTT to make them return an error message if
+  no channels or timers are defined.
+- Enhanced 'channels.conf.cable' (thanks to Hans-Peter Raschke).
+- Fixed switching to another channel via the EPG while a recording is being
+  replayed.
+- Fixed a memory leak in the EIT processor that happened when the system time
+  was set.
+- Removed some redundant code from the cListBase destructor.
+- Fixed internationalization of some "Main" menu texts.
+- Updated 'channels.conf' after the recent changes of Premiere World (thanks
+  to Axel Gruber).
+- Redesigned the ring buffer to make it work with two separate threads for
+  input and output (also prepared for using a remultiplexer).
+- Fixed setting system time from transponders.
+- Fixed a segfault in the Schedule menu in case there is no EPG information.
+- The 'runvdr' script now kills any leftover vdr threads before restarting it.
+- Fixed a problem with Daylight Saving Time when displaying the times of
+  recordings.
+- Added Dutch language texts (thanks to Arnold Niessen).
+- The new command line option -t can be used to set the controlling terminal
+  (thanks to Jürgen Sauer). This is especially useful when starting VDR through
+  an entry in /etc/inittab (see INSTALL).
+- Since the CAM module only works if it is installed in the "highest" DVB card,
+  recordings now search for a free DVB card from lowest to highest index (as
+  opposed to the previous "highest to lowest" search) in order to not use the
+  CAM card for FTA recordings unless necessary. This is only important for
+  systems with three or more DVB cards.
+- Added the "statdvb2vdr" tool from Hans-Peter Raschke.
+- Fixed a segfault that sometimes happened when killing VDR.
+- VDR now returns an exit status of '2' in case of an error at startup, instead
+  of terminating with 'abort()' (which caused a core dump).
+- SVDRP now also works with clients that don't do line buffering (like the
+  Windows 'telnet').
+- Empty lines in config files no longer cause error messages.
+- New SVDRP command LSTE to list the EPG data.
+- The SVDRP HELP command now prints the topics in several columns.
+
+2001-06-02: Version 0.80
+
+- VDR now requires driver version 0.9.0 or higher.
+- Switched to the "new API" (thanks to Dave Chapman for his great support in
+  this task).
+- New setup parameter "LnbSLOF" that defines the switching frequency of the LNB.
+- Fixed a bug in the EPG scanner with more than one DVB card.
+- Fixed checking for free disk space, so that it works with NFS mounted drives.
+- Files are now created with mode 644.
+- Fixed checking the exit status in the 'runvdr' script.
+- Activated loading the driver in 'runvdr'. Please read the comments in 'runvdr'
+  for details.
+- The new "emergency exit" feature automatically triggers a restart of VDR (if
+  used with 'runvdr', otherwise it simply exists) if
+  * tuning the channel for a recording fails
+  * no useful data is received within the first 1MB of a recording
+  * no data is received within a recording for more than 5 seconds
+  This should make sure that a recording is successfully restarted after any
+  problems.
+- Processing the EIT data is now disabled during replay and 'Transfer Mode' in
+  order to avoid video and audio glitches (there appears to be a bandwidth
+  problem somewhere in the driver/firmware/hardware).
+- Due to the reduced amount of OSD memory provided by the driver the number of
+  lines in the OSD had to be reduced by 2. By rearranging some of the display
+  items the amount of visible information remained the same as before, though.
+  If your DVB card has even less memory (which would result in only the
+  channel switching display and the replay progress display being visible, but
+  no "Main" menu), try reducing the constant 'MenuLines' in dvbapi.h (currently
+  '13') even further.
+- There are two new setup parameters to define the "Default Priority" and
+  "Default Lifetime" when creating a new timer event.
+- The meaning of the "Lifetime" parameter has been modified: a value of '99'
+  now means that the recording will live "forever", and a value of '0' means
+  that the recording has no guaranteed lifetime and will be deleted whenever
+  a new recording with higher priority needs disk space.
+- Updated version of Matthias Schniedermeyer's 'schnitt' tools.
+- New 'master-timer' tool (thanks to Matthias Schniedermeyer).
+
+2001-06-12: Version 0.81
+
+- Fixed handling the case where the driver reports EAGAIN during recording,
+  but no data comes within 5 seconds.
+- Fixed EPG scanning on single DVB card systems.
+- There can now be two audio PIDs per channel, which can be toggled via the
+  "Green" button in the "Main" menu. The "Edit Channel" menu therefore now
+  has two audio PID fields (Apid1 and Apid2). By default, Apid2 is 0, which
+  means there is no alternate audio track.
+- Fixed replaying in case the driver reports EAGAIN.
+- Now 'runvdr' checks if the driver is already loaded (thanks to Henning
+  Holtschneider).
+- Fixed removing recordings with Lifetime = 99.
+- Improved channel switching.
+
+2001-06-16: Version 0.82
+
+- Increased timeout until reporting "broken video data stream" when recording.
+- Increased amount of non-useful data received by cRemux before assuming the
+  recording will fail.
+- If there are two audio PIDs defined for a channel, both audio tracks will
+  now be recorded and can be selectively replayed later. See the FORMATS file
+  for details on how these different audio tracks are stored in the recorded
+  files. In order for this to work properly you need to use a driver version
+  dated 2001-06-16 or later, where the default PES filter buffer size has been
+  reduced. This will create packets for the second audio track that are small
+  enough to multiplex smoothly with the video data.
+- Fixed a bug in the editing mechanism (didn't work with recordings that
+  consist of more than one data file).
+- The compile time switch VFAT has been fixed to recognize the ':' character
+  in recording names, too.
+- Setting all PIDs to 0x1FFF before switching channel.
+- New setup parameter "VideoFormat" to define the aspect ratio of the tv set
+  in use (4:3 or 16:9).
+
+2001-06-26: Version 0.83
+
+- Avoiding "Device or resource busy" error message when setting PIDs.
+- Added Portugese language texts (thanks to Paulo Lopes).
+- Recording and replaying Dolby Digital (AC3) sound.
+- No longer getting stuck when a channel doesn't sync while switching
+  with the 'Up' and 'Down' keys.
+
+2001-07-22: Version 0.84
+
+- Fixed video packet scanning to make it recognize the whole range of
+  allowed video packet ids.
+- Added an additional "emergency exit" in case channel switching doesn't
+  work several times in a row (when will the driver finally become stable
+  enough to allow rock solid channel switching??).
+- No longer sending a Diseqc command if the Diseqc value for a given channel
+  is '0'. Previously this caused problems with some multi-switches (thanks to
+  Markus Lang and Ulrich Röder).
+- When switching channels by entering the channel number via the numeric keys
+  on the remote control, the channel number displayed is now followed by the
+  '-' character to indicate that additional digits can be entered.
+- Increased the timeout for numeric channel switching from 500ms to 1s.
+- Fixed handling the "Green" button in the "Schedules" menu for channels that
+  have a second audio PID.
+- Fixed high system load when displaying a still picture in replay.
+- Fixed a hanging SVDRP connection if the client dies without issuing QUIT.
+- Increased the frame buffer size to 192KB.
+- Removed a superfluous VIDEO_FREEZE call in the replay buffer.
+- Added French language texts (thanks to Jean-Claude Repetto).
+- Modified OSD to use 2bpp windows (4 colors) in order to work with less
+  memory, allow a larger OSD window and be faster. The group separators in the
+  "Channels" menu had to be given a different color.
+- Moved the channel display to the bottom of the screen.
+- Displaying the frame counter in the replay progress display only when editing
+  a mark.
+- Fixed handling characters above 0xEF in SVDRP.
+- Fixed a possible crash in parsing incorrect lines in 'channels.conf'.
+- New channel settings for Premiere World (Dolby Digital PIDs not yet
+  available).
+- Increased the buffer for key names received from LIRC (thanks to Andre
+  Valentin).
+- Fixed handling a channel group separator at the very beginning of the
+  'channels.conf' file.
+
+2001-07-29: Version 0.85
+
+- Added Norwegian language texts (thanks to Jørgen Tvedt).
+- Increased the usleep value in cDvbOsd::Cmd() to 5000 in order to work on
+  systems with the KURT/utime-patch (thanks to Guido Fiala).
+- Changed the check whether the driver is loaded in runvdr to check for the
+  'dvb' module (the last one loaded).
+- Fixed repeat function with LIRC (thanks to Stefan Huelswitt).
+- Increased the upper limit for the symbol rate to 30000 (thanks to Ulrich
+  Röder).
+- Made the position of the channel display configurable (thanks to Stefan
+  Huelswitt).
+- Made the width and height of the OSD configurable (thanks to Stefan Huelswitt).
+- DiSEqC support can now be generally enabled/disabled in the Setup menu. This
+  may be necessary if your multiswitch gets irritated by the default DiSEqC
+  codes '0' (thanks to Markus Lang).
+- Fixed replaying in case there is no index file.
+- Fixed jumping to an editing mark when replay has been paused.
+- Avoiding unnecessary code execution in the replay progress display (thanks
+  to Guido Fiala).
+- When entering time values the digits that still have to be entered are now
+  shown as '-' (as in "1-:--").
+- When setting an editing mark while the progress display is not active, the
+  display will now be turned on for a short while to indicate the successful
+  setting of the mark.
+- Updated 'channels.conf' for Premiere World (thanks to Mel Schächner).
+  Check your timers if you use this channels.conf file, since the sequence of
+  several PW channels has been changed.
+- Changed the color of "Info" messages to "black on green" and that of the
+  confirmation messages (like "Delete...") to "black on yellow".
+- Fixed display with DEBUG_OSD (it still crashes sometimes, esp. when replaying,
+  but I can't seem to find what causes this... any ideas anybody?).
+- Avoiding audio/video distortions in 'Transfer Mode' by no longer actually
+  tuning the primary interface (which can't receive this channel, anyway).
+  Apparently the driver gets irritated when the channel is switched and a
+  replay session is started immediately after that.
+- Increased timeout until reporting "video data stream broken" when recording.
+- Explicitly switching back to the previously active channel after ending a
+  replay session (to have it shown correctly in case it was in 'Transfer Mode').
+
+2001-08-06: Version 0.90
+
+- Modified the display of the channel group separators (thanks to Markus Lang
+  for this suggestion).
+- Added support for replaying DVDs (thanks to Andreas Schultz). See INSTALL for
+  instructions on how to compile VDR with DVD support.
+- Fixed replay progress display in case replay is paused while watching an
+  ongoing recording.
+- Ringbuffer uses semaphores to signal empty/full conditions.
+- Fixed calculating the timeout value in cFile::FileReady() (thanks to
+  Wolfgang Henselmann-Weiss).
+
+2001-08-12: Version 0.91
+
+- Fixed displaying colored button texts that are too long.
+- Suppressing replay progress display when replaying a DVD.
+- Updated channels.conf.cable (thanks to Uwe Scheffler).
+- Updated French OSD texts (thanks to Jean-Claude Repetto).
+- Improved AC3 decoding when replaying DVDs (thanks to Matjaz Thaler).
+- Fixed handling DVB card indexes when using only one card in a multi-card
+  system.
+- Changed the 'Eject DVD' button text to a simple 'Eject' (the German text
+  was too long...).
+- Made the font file generation more stable (thanks to Artur Skawina).
+- Changed the default value for the "DiSEqC" setup parameter to "off".
+- The new command line option '-E' can be used to define where the EPG data
+  shall be written to. This is especially useful if VDR runs in a system
+  that turns off the video disk when it is not used, and therefore needs
+  to write the EPG file to a ramdisk (or turn off writing it alltogether).
+  See 'vdr --help' for details.
+- Making sure the disk is up and running before starting recording (this
+  is important for systems that turn off the video disk when it is not used).
+- Added the "Jump" function in replay mode (thanks to Stefan Huelswitt).
+  See the description of the "Red" key in MANUAL under "Replay Control" for
+  details.
+- Fixed displaying editing marks when toggling a mark in "pause" mode.
+- If there is no free DVB device to record, the log message will now be given
+  only once.
+- Made I/O more robust by handling EINTR (thanks to Werner Fink).
+
+2001-08-18: Version 0.92
+
+- The "channel not sync'ed" log message now also lists the card number.
+- Now using the EIT services from 'libdtv' (thanks to Rolf Hakenes), which
+  provides EPG information for NVOD ("Near Video On Demand") channels.
+- Doing some bug fixing on the EPG data (some tv stations apparently have
+  their own idea on how to fill in the data...). The level up to which EPG
+  bugs are fixed can be controlled with the EPGBugfixLevel parameter in the
+  "Setup" menu (see MANUAL for details, and cEventInfo::FixEpgBugs() in eit.c
+  for the actual implementation).
+- Fixed broken recordings after a driver buffer overflow.
+- Fixed the chirping sound after Pause/Play of a DVD (thanks to Andreas
+  Schultz).
+
+2001-08-26: Version 0.93
+
+- The menus and the channel display now show the current date and time.
+- The new Setup parameter MaxVideoFileSize can be used to customize the
+  maximum size of the recorded video files.
+- Fixed a bug in handling repeating timers that record over midnight (the
+  calculation of matching timers has been completely rewritten).
+- Timers that are currently recording are now marked with '#' in the "Timers"
+  menu.
+- Timers are now sorted in the "Timers" menu, showing the sequence in which
+  they will be recording. This can be disabled in the "Setup" menu. Note
+  that the "Mark" button doesn't work if timers are displayed sorted.
+
+2001-09-02: Version 0.94
+
+- Implemented automatic shutdown (see INSTALL and MANUAL for details).
+- New SVDRP command NEXT to show the next timer event.
+- The new remote control key "Power" can be used to turn the VDR machine
+  off (this requires the presence of the '-s' option).
+- Fixed code for the default "Ok" button on the PC keyboard (was 0x162 on
+  the "good old" keyboards (with the F-keys at the left side), while it changed
+  to 0x15E on the newer keyboards).
+- When a recording is edited, the summary information (if present) is now
+  also copied.
+- When a recording is running on the primary interface, any attempt to change
+  the current channel will now lead to a "Channel locked" message.
+- The main program loop now first checks whether any timer recordings are
+  finished, before starting a new timer recording. This is important in case
+  one timer ends at the same time another timer starts.
+- New setup parameter OSDMessageTime to define how long an OSD message shall
+  be displayed.
+- The "File" parameter of a timer can now contain the '~' character to store
+  the recording in a hierarchical directory structure. The '~' character has
+  been chosen since the file system's directory delimiter '/' may be part of
+  a regular programme name (showing the directory hierarchy in the "Recordings"
+  menu will follow later).
+- Repeating timers now create recordings that contain the 'Subtitle' information
+  from the EPG data in their file name. Typically (on tv stations that care
+  about their viewers) this contains the episode title of a series. The
+  subtitle is appended to the timer's file name, separated by a '~' character,
+  so that it results in all recordings of this timer being collected in a
+  common subdirectory. You can disable this with the 'UseSubtitle' parameter
+  in the "Setup" menu.
+- The summary information is now taken from the EPG data at the actual time of
+  recording (no longer at the time the timer is created in the "Schedule" menu).
+  If a timer already has summary data, that data will be used. If you have
+  repeating timers in your 'timers.conf', you may want to make sure they do
+  NOT contain any summary information (that's the last field in the timer
+  definitions). Use your favourite text editor to delete that information.
+  That way every recording will store the actual summary data at the time of
+  the recording.
+
+2001-09-16: Version 0.95
+
+- Fixed behaviour in case the shutdown didn't take place (there were many
+  "next timer event at..." messages in that case).
+- Reduced the default value for MinEventTimeout to 30 minutes.
+- Fixed detecting manual start in shutdown feature.
+- An error message is now displayed in case the Transfer Mode can't be
+  started because the necessary DVB card is currently recording (or there
+  is no DVB card that can access this channel).
+- Fixed toggling channels with the '0' key in case the "Ok" button has been
+  pressed to display the current/next information.
+- Pressing the "Power" key now always initiates the shutdown sequence (after
+  user confirmation in case of a recording timer), event if there is currently
+  a menu or a replay session active. Note the additional remarks in INSTALL
+  regarding the values of the two parameters given to the shutdown program
+  in case of a currently recording timer.
+- Switching through channel groups with the "Left" and "Right" keys now
+  always starts at the group that contains the current channel.
+- Implemented "Multi Speed Mode" (thanks to Stefan Huelswitt).
+- Implemented backtracing to hit the right spot after fast forward/rewind
+  (thanks to Stefan Huelswitt).
+- Implemented replay mode display (thanks to Stefan Huelswitt, with a few
+  rewrites by kls).
+- Changed the size of all input buffers used to parse config files or receive
+  SVDRP commands to the same value of 10KB. This allows long strings to be
+  used in the 'summary' field of a timer, for instance.
+- The pipe to the Dolby Digital replay command (option '-a') now closes all
+  unused file descriptors in the child process to avoid crashing when the
+  OSD is used (thanks to Andreas Vitting).
+- Switched to the driver's new tuning API (VDR now requires a driver version
+  dated 2001-09-14 or higher).
+- Changed obsolete macro VIDEO_WINDOW_CHROMAKEY to VID_TYPE_CHROMAKEY (thanks
+  to Guido Fiala).
+- New version of the "Master-Timer" tool (thanks to Matthias Schniedermeyer).
+- Better error handling when writing configuration files.
+- Fixed putting the final editing mark into the edited version's marks file.
+- Fixed manipulating an editing mark at the very end of a recording.
+- Fixed starting a new replay immediately after stopping a previous one (had
+  caused a mix between live video and replay).
+- Three new keys ("Volume+", Volume-" and "Mute") to control the DVB card's
+  audio output volume.
+- New version of the 'epg2timers' tool (thanks to Carsten Koch).
+
+2001-09-23: Version 0.96
+
+- Made VDR compile with libdvdread-0.9.1 (thanks to Andreas Schultz).
+  Note that you now _need_ version 0.9.1 of libdvdread to compile VDR with
+  DVD support!
+- Several fixes to the replay mode display (thanks to Stefan Huelswitt):
+  no more replay mode display when pressing the "Green" or "Yellow" button
+  (Skip +/-60s); fixed timeout when pressing '0' to set an editing mark while
+  the progress display is not shown; mode display is shown after progress
+  display is closed; pressing "Ok" while the mode display is on brings up
+  the progress display; no more unnecessary display of "normal play mode".
+- Supplying the new frontend parameter 'Inversion' (currently it is always
+  set to INVERSION_AUTO, which should work with all channels on Astra).
+- Removing unnecessary double quotes from EPG Subtitle in EPGBugfixLevel >=1.
+- EPG info is now updated if the contents changes but the ID remains the same.
+- Fixed handling SVDRP commands whith more than one blank between the command
+  word and the options.
+- The current volume setting is now saved to setup.conf and restored at the
+  next program start.
+- New command line option '-r' to define a command that gets called before and
+  after each recording (see INSTALL for details).
+- Implemented a check to see whether the system time is running linearly.
+- Writing the current time (as seen by VDR) into the log file when starting
+  a timer recording (this may help debugging cases where timers don't start
+  at the expected time).
+- Made the volume, mute and power keys work when a menu is active, too (thanks
+  to Matthias Weingart).
+
+2001-10-21: Version 0.97
+
+- Implemented a lock file to prevent more than one instance of VDR from removing
+  files from the video directory at the same time.
+- The new setup parameter SplitEditedFiles can be used to control whether or
+  not the result of an editing process shall be written into separate files.
+- Fixed handling repeat function when using LIRC (thanks to Matthias Weingart).
+- The shutdown program (defined with the '-s' option) now also gets the channel
+  number and recording title of the timer (see INSTALL).
+- New channel data for 'Premiere One', 'Premiere X-Action', 'Fox Kids Türkce'
+  and 'N24' (thanks to Andreas Share, Ulrich Röder, Uwe Scheffler and Simon
+  Bauschulte). Note that if you are using the default 'channels.conf' or
+  'channels.conf.cable' files you may need to check any exiting timers to see
+  whether they still use the correct channel number.
+- Fixed the "EPG bugfix" (sometimes had duplicate information in Subtitle and
+  Extended Description).
+- Fixed checking for valid video device when setting the video mode.
+- The external command 'sort' is no longer required. VDR now sorts the list of
+  recordings itself, making sure that recordings that stem from repeating timers
+  are sorted chronologically. Sorting is done according to the setting of the
+  current locale, so you may want to make sure LC_COLLATE is set to the desired
+  value (see INSTALL).
+- Fixed handling 'newline' characters in EPG texts (thanks to Rolf Hakenes for
+  an improved version of his 'libdtv').
+  Newline characters are always mapped to a single "blank" in VDR, because they
+  would otherwise disturb the Title and Subtitle layout in the channel display
+  (where these are assumed to be single line texts) and would have to be
+  specially handled in the 'epg.data' file and the LSTE command in SVDRP.
+- Mapping ` ("backtick") characters in EPG texts to ' (single quote).
+- Fixed timers starting and ending at unexpected times. 'localtime()' was not
+  thread safe, now using localtime_r().
+- Removed the "system time seen..." message.
+- Fixed a bug in the replay mode display when pressing the Green or Yellow
+  button while in trick mode (thanks to Stefan Huelswitt)
+- Closing all open file descriptors when calling external programs.
+- The menu timeout now also works when pressing the "Back" button during replay
+  to enter the "Recordings" menu.
+- Updated 'channels.conf' for the "Bundesliga" channels of Premiere World
+  (thanks to Mel Schächner).
+- Fixed reading timers.conf and channels.conf that contain blanks after numeric
+  values.
+- Fixed handling trick modes near the beginning and end of a recording.
+- Pressing the "Back" button while replaying a DVD now leads to the DVD menu.
+
+2001-11-04: Version 0.98
+
+- Completed storing the current audio volume in the setup.conf file (thanks
+  to Andy Grobb).
+- Fixed closing the progress display with the "Back" key when in trick mode
+  and Setup.ShowReplayMode is enabled (thanks to Stefan Huelswitt).
+- New SVDRP commands LSTR and DELR to list and delete recordings (thanks to
+  Thomas Heiligenmann).
+- Fixed a crash when pressing the '2' button while replaying a DVD.
+- Updated 'channels.conf' for the "Bundesliga" channels of Premiere World
+  (thanks to Mel Schächner).
+- Changed the tuning code to use FrontendInfo to detect the type of DVB card.
+- Removed the recursion stuff from cThread (cMutex already does this).
+- Fixed handling the repeat function in the channel display.
+- Avoiding multiple EPG entries for the same event (thanks to Rolf Hakenes
+  for some valuable information on how to do this).
+- A recording on the primary interface can now be stopped to make it continue
+  on an other free DVB card (if one is free at the moment). See MANUAL for
+  details.
+- Added some missing teletext PIDs (thanks to Norbert Schmidt).
+- Added PTS to the converted PCM audio when replaying a DVD (thanks to Andreas
+  Schultz). Now the audio and video of a DVD replayed over the DVB card's A/V
+  out should always be in sync.
+- Fixed handling the "Power" key in case Setup.MinUserInactivity is set to 0 to
+  disable automatic shutdown.
+- Added a fifth parameter to the 'shutdown' call that indicates the reason for
+  this shutdown request (see INSTALL).
+- Fixed releasing 'index' memory after recording or playback.
+- Fixed ejecting a DVD while it is being replayed.
+- Removed all video overlay stuff from cDvbApi and SVDRP. Guido Fiala's new
+  'kvdr' version 0.4 now does these things itself. As a consequence of this you
+  will now need to use kvdr 0.4 or later.
+- The device /dev/video is now opened only if necessary (to GRAB an image),
+  allowing other programs (like 'kvdr', for instance) to use that device.
+
+2001-11-25: Version 0.99pre1
+
+- Fixed several channel definitions in 'channels.conf' (thanks to Thilo
+  Wunderlich).
+- Added MPEG audio support for DVD (thanks to Andreas Schultz).
+- Implemented DVB-T support (thanks to Dave Chapman).
+  This currently works only for UK channels.
+- Removed the range limits for the Frequency and Srate parameters of channel
+  definitions.
+- Changed the maximum value for PIDs in channels.conf from 0xFFFE to 0x1FFF.
+- Fixed DVD audio sync problems (thanks to Andreas Schultz).
+- Fixed external AC3 replay for DVDs (thanks to Andreas Schultz).
+
+2002-01-27: Version 0.99pre2
+
+- Fixed setting the OSD size in the 'Confirm' interface call (thanks to
+  Deti Fliegl).
+- Removed the 'read incomplete section...' error message in the EIT processor.
+- Fixed channel data for "DW TV" (thanks to Axel Gruber).
+- Added DPID to "PREMIERE MOVIE 1" in channels.conf.cable (thanks to Stephan
+  Schreiber).
+- Prepared the OSD functions for multiple overlapping windows.
+- Removed the check to see whether the system time is running linearly.
+- Improved performance of SVDRP command entry.
+- Removed EPGBugfixLevel '3' - after more than a year Pro-7 finally managed to
+  broadcast the correct timestamps for EPG events between 0:00 and 6:00!
+- Fixed failing watchdog timer if program hangs in OSD activities (thanks to
+  Carsten Koch).
+- No longer requiring 'libncurses' if compiling without DEBUG_OSD=1 and
+  REMOTE=KBD (thanks to Lauri Pesonen).
+- The "Recordings" menu now displays a hierarchical structure if there are
+  subdirectories for the recordings. This can be controlled through the
+  "RecordingDirs" parameter in the "Setup" menu.
+  See "MANUAL/Replaying a Recording" for details.
+- Improved speed of setting the Help button texts.
+- Fixed handling file names that contain single quotes (') or dollar signs ($)
+  in the call to the shutdown command (option '-s') and the recording command
+  (option '-r').
+- Improved error handling in the editing process; the resulting file will be
+  deleted if an error occured.
+- A message is now prompted at the end of the editing process, indicating
+  whether the process succeeded or failed.
+- Fixed setting the LastActivity timestamp after a shutdown prompt (thanks to
+  Sergei Haller).
+- A message is now prompted if free disk space becomes low during recording.
+- The editing process now calls AssertFreeDiskSpace() to remove deleted
+  recordings if the disk becomes full.
+- The "Main" menu now displays in its title the used disk space (in percent)
+  and the estimated free disk space (in hh:mm), assuming a data rate of 30 MB
+  per minute.
+- Activating the "Recordings" menu now displays "scanning recordings..." to
+  give the user some feedback in case this takes longer.
+- Status messages are now displayed centered.
+- Removed the 'Tools' subdirectory from the VDR archive. All contributed tools
+  can now be found at ftp://ftp.cadsoft.de/pub/people/kls/vdr/Tools.
+
+2002-01-29: Version 0.99pre3
+
+- Fixed handling improper buffer lengths in the EIT parser (thanks to Deti
+  Fliegl).
+
+2002-01-30: Version 0.99pre4
+
+- Fixed handling improperly formatted EIT data (thanks to Rolf Hakenes).
+
+2002-02-03: Version 0.99pre5
+
+- Updated channel settings for 'N24' (thanks to Andreas Gebel).
+- Fixed handling hierarchical recordings menu in case of directories starting
+  with the same sequence of characters.
+- Fixed handling timers on the 29th, 30th or 31st of a month in case the next
+  month has less than 31 days.
+- Added a description of the sort order of individual episodes in the
+  recordings menu to the MANUAL.
+- Removed the EPG bugfix for "Title / Subtitle" cleanup. Apparently Pro-7 has
+  finally stopped this nasty habit.
+- Added some EPG bugfix statistics (printed to the log file every time the EPG
+  data is cleaned up and when VDR is terminated). Maybe somebody in charge of
+  the EPG data at the listed channels will read this and take the necessary
+  actions to fix these things...
+- Changed the [dei]syslog macros in tools.h to use a variable number of args,
+  thus making it safe to use them in nested 'if/else' statements.
+- Fixed error handling in establishing an SVDRP connection (thanks to Davide
+  Achilli) for pointing this out).
+- The new configuration file 'svdrphosts.conf' is now used to define which
+  hosts may access the SVDRP port (by default only 'localhost' has access).
+  See FORMATS for details.
+- The special keywords TITLE and EPISODE can now be used in timer file names
+  (see MANUAL and FORMATS for details).
+- The new setup parameter NameInstantRecord can be used to define how an
+  instant recording will be named (see MANUAL for details).
+- When looking for the EPG record of the timer that starts a recording, now
+  that record is taken which covers the time calculated as
+  'start + (Setup.MarginStart * 2) + 1)' in order to have a better chance of
+  hitting the right record in case of an instant recording. Timers that start
+  further in the future should always be programmed via the "Schedules" menu.
+- The special VPIDs '0' and '1' are now used to enable recording radio channels.
+  Actually '0' should be enough, but '1' must be used with encrypted channels
+  (driver bug?). Note, though, that since VDR is mainly a *video recorder*, some
+  features like, e. g.,  the progress display, may not work as expected with
+  radio recordings. Thanks to Michael Paar.
+- Fixed a problem with the ERR macro defined by ncurses.h (thanks to Artur
+  Skawina).
+
+2002-02-10: Version 0.99
+
+- Fixed a bug in moving timers or channels to the last position in the list
+  (thanks to Matthias Schniedermeyer for helping to debug this one).
+- Changed the estimated data rate for calculating the remaining disk capacity
+  to 25.75 MB/min.
+- Only reporting the 'EPG bugfix statistics' if there really were any fixes.
+- Added Finnish language texts (thanks to Hannu Savolainen).
+- Reverted to the previous way of searching for the EPG record of the current
+  recording in case of a repeating timer (i.e. taking the one that is in the
+  middle between start and end time).
+- Added a typedef for 'in_addr_t' to make it work with glibc < 2.2 (thanks to
+  Jürgen Schmidt).
+- When the last entry in a "Recordings" menu page is deleted, that page is now
+  automatically closed (suggested by Uwe Freese).
+- Changed the default name for instant recordings to "TITLE EPISODE" (avoiding
+  the '-').
+- If Setup.ShowInfoOnChSwitch is set to "no", the box for the EPG display is no
+  longer shown (thanks to Andy Grobb).
+- If compiled with VFAT=1, characters that can't be handled by a VFAT system are
+  now encoded to '#XX'.
+- When the user presses the "Power" button and there is a timer about to start
+  recording within Setup.MinEventTimeout minutes, there is now a confirmation
+  prompt telling the user that there is an upcoming timer event.
+- If a recording has no episode title, the trailing '~' is no longer shown in
+  the progress display.
+
+2002-02-24: Version 1.0.0pre1
+
+- Added scanning for EPG data for another 4 days on channels that support this
+  (thanks to Oleg Assovski).
+- Removed '#define VFAT 1' from recording.c (was a leftover from testing).
+- Fixed the "Low disk space!" message (thanks to Sergei Haller).
+- Added the TPID to Hessen-3 in 'channels.conf' (thanks to Sergei Haller).
+- Fixed a crash when replaying with DEBUG_OSD=1 (thanks to Stefan Huelswitt).
+- Implemented the "First day" parameter for repeating timers. See FORMATS for
+  information about the enhanced 'timers.conf' file format, and MANUAL for
+  a description of the new item in the "Edit Timer" menu and the enhanced
+  functionality of the "Blue" button in the "Timers" menu.
+- When deleting a recording that is currently still being recorded, the related
+  timer will now automatically be terminated. If this is a repeating timer, it
+  will receive a "First day" setting that skips the timer for this day.
+- Fixed closing all unused file descriptors when opening a pipe (thanks to
+  Werner Fink).
+- Instant recordings now take the EPG data from the point in time at 5 minutes
+  from the start time of the recording. In order for this to work the 'active'
+  parameter of a timer now uses the second bit to indicate that this is an
+  "instant" recording (see FORMATS for details).
+- Fixed the SVDRP GRAB command in case the video device can't be opened (thanks
+  to Adrian Stabiszewski).
+- At startup the data written into 'epg.data' is now read into the EPG data
+  structures. In order for this to work, the 'E' record has been extended to
+  (optionally) contain the 'table ID' (see FORMATS for details).
+- The new SVDRP command PUTE can be used to put EPG data into the EPG list.
+  See FORMATS for details about the required data format.
+- Taking the German umlauts 'as is' when compiled with VFAT.
+- The new Setup parameter RecordDolbyDigital can be used to generally turn off
+  recording the Dolby Digital audio channels in case you want to save disk space
+  or don't have the equipment to replay Dolby Digital audio.
+- Reading the 'setup.conf' file no longer terminates in case of an error, but
+  rather attempts to read the rest of the file.
+- Removed DVD support from the core VDR source, since the current version from
+  Andreas Schultz is already much further developed (DVD menu navigation) and
+  the concept of "additional players" in VDR is going to change in version 1.1.0,
+  where a new "plugin" interface shall allow the easy implementation of new
+  players without having to patch the core VDR source. Until then, Andreas has
+  agreed to provide his DVD support as a completely external patch.
+- The contents of the distribution archive now contains the directory name with
+  the current version number, as in 'vdr-1.0.0pre1/...' in order to avoid
+  inadvertently overwriting an existing VDR directory with a new version.
+- Added a missing error message in SVDRP command LSTC in case the given channel
+  can't be found.
+
+2002-02-25: Version 1.0.0pre2
+
+- Fixed a crash in case there is no 'epg.data' at program start (thanks to
+  Andreas Schultz).
+
+2002-03-03: Version 1.0.0pre3
+
+- Fixed parsing 'E' records in epg2html.pl.
+- Fixed a deadlock when switching channels via Schedule/Now|Next/Switch (reported
+  by Martin Hammerschmid).
+- Changed the meaning of the 'Ca' parameter in 'channels.conf'. Each channel can
+  now define which decryption method it needs in order to be accessed. The new
+  configuration file 'ca.conf' contains the defined values, and the default
+  'channels.conf' has been modifed to contain the new values for 'Premiere World'
+  and 'ORF'. If you use the default 'channels.conf' and have the conditional
+  access hardware to receive encrypted channels, please make sure you copy the
+  file 'ca.conf' into your /video directory (or wherever your configuration files
+  are located) and go into the "Setup" menu and set the CICAM values according
+  to your hardware setup. Currently there are two possible CICAM entries per
+  DVB card, so any card can implement up to two different conditional access
+  modes (besides the default "Free To Air" mode, which is always assumed to be
+  available on any DVB card).
+- Updated French language texts (thanks to Jean-Claude Repetto).
+
+2002-03-17: Version 1.0.0pre4
+
+- Added 'Ca' code 201 for 'Cryptoworks, GOD-DIGITAL' to 'ca.conf' (thanks to
+  Bernd Schweikert).
+- Fixed avoiding the primary DVB interface in case Setup.PrimaryLimit is 0.
+- Fixed handling CICAM settings if the first one of a DVB card was FTA.
+- Fixed reacting on changes in CICAM settings (needed to restart VDR before).
+- The "Blue" button in the "Main" menu now works as "Stop" button if a recording
+  is currently being replayed.
+- New command line option '-m' to mute audio of the primary DVB device at
+  startup (suggested by Mirko Günther).
+- The new SVDRP command VOLU can be used to control the audio volume (suggested
+  by Mirko Günther).
+- Fixed resetting 'mute' state when setting the volume to a non-zero value.
+- Added log messages when deleting recordings in case the disk runs full while
+  recording.
+- Fixed closing a pipe (used for replaying Dolby Digital audio), which
+  sometimes left 'zombie' processes behind (thanks to Werner Fink for helping
+  to debug this one).
+- Now starting the Dolby Digital output thread only if the recording actually
+  contains Dolby Digital audio data (thanks to Werner Fink).
+- Implemented OSD for Volume and Mute (works only if there is no other OSD
+  activity, but this should be no problem for normal use).
+- Changed the MANUAL description of the "Conditional Access" setup parameters
+  to reflect the actual "CICAM DVBn m" notation in the "Setup" menu.
+- The new Setup parameter "Use time from transponder" can be used to define which
+  transponder shall be used to set the system time (see MANUAL for details).
+  If you have been using the SetSystemTime option previously, you now MUST
+  select a channel that you trust to have a reliable time base.
+- Grouped the Setup parameters into several sub-menus, so that each group of
+  parameters fits on a single screen - unless the height of the OSD has been
+  set to a small value (based on code from Markus Lang).
+- Changed the title of the "Main" menu to "VDR".
+- Fixed displaying a system message while the replay mode is being shown.
+- Physically removing a deleted recording if one with the same name shall be
+  deleted again.
+- The "Left" and "Right" keys are now used to page up and down in text displays
+  (like the EPG descriptions or the results of commands executed from the
+  "Commands" menu).
+- Fixed high CPU usage in transfer mode.
+- Replaced 'killproc' with 'killall' in 'runvdr', since apparently 'killproc'
+  is not available by default on some Linux distributions, whereas 'killall' is.
+  Please check if your system provides 'killall' - if it doesn't, please change
+  this back in 'runvdr' and report this (thanks to Achim Lange).
+- The "Commands" menu now automatically assigns number keys as hotkeys to the
+  commands. If you have preceeded your commands with digits you may want to
+  remove these from your 'commands.conf' file.
+- The new Setup item "Restart" can be used to force a complete restart of VDR,
+  including reloading the driver. Note that this can only work if VDR and the
+  driver are wrapped into a mechanism that actually performs this action if VDR
+  exits. The 'runvdr' script can be used for this purpose.
+- Refined texts of the "Setup" menu.
+
+2002-04-01: Version 1.0.0pre5
+
+- Fixed restoring CICAM setup values for a fourth DVB card (thanks to Klaus Wolf).
+- Completed internationalization of OSD texts (thanks to Hannu Savolainen,
+  Arnold Niessen, Paulo Lopes, Jean-Claude Repetto, Alberto Carraro, Matjaz
+  Thaler and Truls Slevigen).
+- Improved file I/O in case of EINTR, which may occur e.g. with heavy system
+  load (thanks to Werner Fink).
+- Now writing the title of a recording into the 'summary.vdr' file.
+- Workaround for displaying still frames with the unpatched LinuxDVB driver
+  (if anybody ever finds out why the unpatched driver doesn't display VDR's
+  still frames, please let me know).
+- When executing a command from the "Commands" menu, the title of that command
+  is now immediately shown in the status line (followed by "...") to give the
+  user some feedback that the command is being executed, which is especially
+  important if this takes some time.
+- Fixed scrolling the "Channels" menu in case the cursor ends up on a group
+  delimiter (thanks to Bernd Zierath for helping to debug this one).
+- Added manual pages vdr(1) and vdr(5) (which made the FORMATS file obsolete).
+- New command command line option '-V' to display the VDR version.
+- Adjusting column width for channel numbers in case there are more than 999
+  channels.
+- Checking the return value of '...FileRady...' calls in dvbapi.c for better
+  performance under heavy system load.
+- New 'make' target 'install', which copies the manual pages and executables
+  to their appropriate system locations and creates the /video directory if
+  it doesn't exist yet.
+- Automatic hotkey assignment is now suppressed if the first entry in
+  commands.conf starts with a digit in the range '1'...'9', followed by a blank.
+- Fixed a bug in switching back the replay mode display in time shift mode
+  (thanks to Achim Lange for reporting this one).
+- Fixed a bug in the "First day" timer parameter for timers that record over
+  midnight.
+- Added units to Setup parameters.
+- Changed time entry in the 'Jump' command during replay, so that it is filled
+  up from right to left.
+- Now using statfs() to determine the amount of free disk space, which avoids
+  the use of an external 'df' command (thanks to Ruben Nunez Francisco).
+- Fixed skipping the next hit of a repeating timer (thanks to Rainer Zocholl
+  for reporting this one).
+- Fixed a bug when a timer records over midnight of a day that had a change in
+  Daylight Saving Time (thanks to Mirko Dölle for reporting this one).
+- Added Polish language texts (thanks to Michael Rakowski).
+- Fixed a bug in parsing group separators in channels.conf (thanks to Henning
+  Holtschneider for reporting this one).
+- Changed the default 'Ok' key when using the PC keyboard from '5' (in the
+  numeric block) to 'Enter', because the '5' key didn't work on keyboards with
+  the F-keys on top.
+- Fixed a bug in the EPG bugfix mechanism if the extended description is shorter
+  than 3 characters (thanks to Andreas Schultz).
+
+2002-04-07: Version 1.0.0
+
+- Fixed a problem with wrong EPG data in the Schedules menu (thanks to Tobias
+  Kerner, problem was initially reported by Michel Moster, but somehow I had
+  misplaced his message...).
+- Added Spanish language texts (thanks to Ruben Nunez Francisco).
+- Fixed resetting the "First day" timer parameter once the timer actually starts
+  recording.
+- Fixed the still picture workaround in case the progress display is active
+  (thanks to Gerald Raaf).
+- Fixed a problem with accessing the epg.data file before it is fully written
+  (thanks to Thilo Wunderlich for reporting this one).
+- Now the EPG scan skips channels that have their 'Ca' parameter explicitly set
+  to an other DVB card (suggested by Sergei Haller).
+- Fixed a possible hangup when reading a broken epg.data file (thanks to Henning
+  Holtschneider for pointing this one out).
+- Fixed a bug in the editing process in case a previously edited file with the
+  same name was manually deleted on a system with more than one video directory
+  (thanks to Dirk Wiebel for reporting this one).
