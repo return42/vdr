@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: timers.c 1.62 2006/08/05 12:03:36 kls Exp $
+ * $Id: timers.c 1.65 2006/09/15 14:15:53 kls Exp $
  */
 
 #include "timers.h"
@@ -83,6 +83,14 @@ cTimer::cTimer(const cEvent *Event)
   event = NULL; // let SetEvent() be called to get a log message
 }
 
+cTimer::cTimer(const cTimer &Timer)
+{
+  channel = NULL;
+  aux = NULL;
+  event = NULL;
+  *this = Timer;
+}
+
 cTimer::~cTimer()
 {
   free(aux);
@@ -90,11 +98,26 @@ cTimer::~cTimer()
 
 cTimer& cTimer::operator= (const cTimer &Timer)
 {
-  memcpy(this, &Timer, sizeof(*this));
-  if (aux)
-     aux = strdup(aux);
-  event = NULL;
-  lastSetEvent = 0;
+  if (&Timer != this) {
+     startTime    = Timer.startTime;
+     stopTime     = Timer.stopTime;
+     lastSetEvent = 0;
+     recording    = Timer.recording;
+     pending      = Timer.pending;
+     inVpsMargin  = Timer.inVpsMargin;
+     flags        = Timer.flags;
+     channel      = Timer.channel;
+     day          = Timer.day;
+     weekdays     = Timer.weekdays;
+     start        = Timer.start;
+     stop         = Timer.stop;
+     priority     = Timer.priority;
+     lifetime     = Timer.lifetime;
+     strncpy(file, Timer.file, sizeof(file));
+     free(aux);
+     aux = Timer.aux ? strdup(Timer.aux) : NULL;
+     event = NULL;
+     }
   return *this;
 }
 
@@ -415,13 +438,7 @@ int cTimer::Matches(const cEvent *Event, int *Overlap) const
 
 bool cTimer::Expired(void) const
 {
-  if (IsSingleEvent() && !Recording() && StopTime() + EXPIRELATENCY <= time(NULL)) {
-     if (HasFlags(tfVps) && event && event->Vps())
-        return event->RunningStatus() == SI::RunningStatusNotRunning;
-     else
-        return true;
-     }
-  return false;
+  return IsSingleEvent() && !Recording() && StopTime() + EXPIRELATENCY <= time(NULL) && (!HasFlags(tfVps) || !event);
 }
 
 time_t cTimer::StartTime(void) const
