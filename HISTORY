@@ -4283,7 +4283,7 @@ Video Disk Recorder Revision History
 - Speeded up cVideoRepacker (thanks to Reinhard Nissl).
 - Added an 'Id' parameter to cDevice::PlayAudio() to allow plugins to easier
   process the audio data (thanks to Marco Schlüßler).
-- Added Czech language texts (thanks to Bárta Vladimír).
+- Added Czech language texts (thanks to Vladimír Bárta).
   Plugin authors may want to add the new entries to their I18N texts and contact
   the translators to have their texts translated. Note that there are now 21
   different OSD languages, so please make sure you have 21 versions for each of
@@ -4687,3 +4687,98 @@ Video Disk Recorder Revision History
 - Fixed a memory leak in closing the video file during replay (thanks to Tobias Grimm).
 - Updated the Italian OSD texts (thanks to Nino Gerbino and Antonio Ospite).
 - Updated the Estonian OSD texts (thanks to Arthur Konovalov).
+
+2006-05-14: Version 1.4.0-1
+
+- Updated 'S110W' in 'sources.conf'.
+- Adjusted the 'runvdr' script so that the user can fill in the functions to
+  detect, load and unload the necessary driver modules (thanks to M. Kiesel for
+  reporting that it still used DVBDIR).
+- Added 'eval' to the $VDRCMD call in 'runvdr' to avoid problems with quoting
+  (suggested by Udo Richter).
+- Fixed missing ',' in the Italian and Polish OSD texts (thanks to Marko Mäkelä).
+- Updated the Czech OSD texts (thanks to Vladimír Bárta).
+- Fixed handling the "Power" key in case a timer is about to start recording
+  (thanks to Udo Richter).
+- Fixed the character 'r' in fontosd and fontsml for iso8859-2 (thanks to Vladimír
+  Bárta).
+- When checking whether a VPS timer has entered the "VPS margin", the event's start
+  time is now used instead of the timer's start time, because otherwise events that
+  start way off of their VPS time wouldn't be recorded correctly.
+- If VPS timers are active, their events are now being kept up to date if there
+  are any free devices available.
+- Fixed the character #207 in fontosd for iso8859-2 (thanks to Vladimír Bárta).
+- Fixed handling unknown codes when learning LIRC remote control codes (reported
+  by Helmut Auer).
+- Since some channels (especially the Austrian ORF) randomly change the ids of their
+  EPG events, VDR now gives the start time precedence when searching for existing
+  events.
+- Fixed automatically updating the CAM menu in case the whole operation (for
+  instance a firmware update) takes longer than the menu timeout.
+
+2006-05-28: Version 1.4.0-2
+
+- Removed leftover LSMOD=... line from 'runvdr'.
+- Modified the Makefile to copy additional libraries a plugin might provide (suggested
+  by Wayne Keer). See PLUGINS.html for details.
+- Fixed handling Transfer Mode when replaying Dolby Digital audio and the option
+  '-a' was given (based on a patch from Werner Fink). To avoid having to increment
+  the API version, several #if checks have been introduced around this. These will
+  be removed once the API version actually needs to be incremented.
+- Fixed deleting the 'skinDescriptions' in cMenuSetupOSD::~cMenuSetupOSD() (thanks
+  to Tobias Grimm).
+- Fixed calculating the start time of repeated timers with "first day" (thanks to
+  Udo Richter).
+- Now setting a timer's cached start time to 0 after a call to Skip() (thanks to
+  Udo Richter).
+- Fixed handling the running status of EPG events in case the "Schedule" menu is
+  currently open (i.e. a write lock on the schedules data can't be achieved).
+- Fixed handling VPS timers in case the EPG event hasn't been 'seen' in a while.
+- Fixed calculating the cache size in cUnbufferedFile::Read() (thanks to Artur Skawina).
+- Removed -fPIC from VDR's and libsi's Makefile (suggested by Prakash Punnoor).
+- Modifed the device selection to better handle timer conflicts (reported by
+  Christian Wieninger).
+- Avoiding a compiler warning in libsi's TypeLoop::operator[].
+- Now processing the "frequency list descriptor" (based on a patch from Anssi Hannula).
+- Improved the repeat function for LIRC remote controls (thanks to Joerg Riechardt).
+- Fixed moving channels, which sometimes stopped the current replay session
+  (reported by Mirko Dölle).
+- Fixed deleting channels in case the current channel's number changes (reported
+  by Mirko Dölle).
+
+2006-06-04: Version 1.4.0-3
+
+- Fixed the PremiereContentTransmissionDescriptor in 'libsi' (thanks to Stefan
+  Huelswitt).
+- Removed all the compatibility '#if APIVERSNUM...' stuff and instead increased
+  the API version number - plugins will have to be recompiled.
+- Removed the call to pthread_setschedparam(childTid, SCHED_RR, 0) in thread.c,
+  because it caused a compiler warning with post-2.4 glibc (reported by Ville Skyttä).
+  Since the third parameter has to be non-null to have any effect, the call was
+  presumably a NOP, anyway.
+- Fixed the 'clean-plugins' target in the Makefile to also remove additional
+  plugin libraries (thanks to Wayne Keer).
+- Applied the fixes to moving and deleting channels from version 1.4.0-2 to the
+  SVDRP commands MOVC and DELC as well.
+- Fixed handling the display of the '*' indicator in the "What's on now/next?"
+  menu, so that events that haven't been "seen" in the data stream within 30
+  seconds won't be shown as "running".
+- Fixed handling tabbed item display in 'skincurses'.
+- Increased the column spacing in the "Recordings" menu (was too small for the
+  'skincurses' plugin).
+- When the 'skincurses' plugin is loaded, it automatically sets the 'curses'
+  skin as the current one. This doesn't modify the Setup.OSDSkin parameter, so
+  that after using 'skincurses' (for instance for debugging) the previously
+  selected skin will be used again.
+- Added some log messages when setting the current skin.
+- Only making a second attempt to set the current skin at startup if the first
+  attempt has failed.
+- Now switching to non-VPS timers' channels 60 seconds before the timer starts
+  (if a free device is available), to allow for the updating of EPG data and CA
+  descriptors before the actual recording starts.
+
+2006-06-11: Version 1.4.1
+
+- Changed the log messages when grabbing an image from 'isyslog()' to 'dsyslog()'
+  so that they can be suppressed in normal operation mode to avoid clogging the
+  log file in case this function is used frequently (suggested by Helmut Auer).

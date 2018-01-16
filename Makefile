@@ -4,15 +4,15 @@
 # See the main source file 'vdr.c' for copyright information and
 # how to reach the author.
 #
-# $Id: Makefile 1.91 2006/04/24 17:18:06 kls Exp $
+# $Id: Makefile 1.94 2006/06/02 14:45:33 kls Exp $
 
 .DELETE_ON_ERROR:
 
 CC       ?= gcc
-CFLAGS   ?= -O2
+CFLAGS   ?= -g -O2 -Wall
 
 CXX      ?= g++
-CXXFLAGS ?= -fPIC -g -O2 -Wall -Woverloaded-virtual
+CXXFLAGS ?= -g -O2 -Wall -Woverloaded-virtual
 
 LSIDIR   = ./libsi
 MANDIR   = /usr/local/man
@@ -191,7 +191,7 @@ plugins: include-dir
 
 clean-plugins:
 	@for i in `ls $(PLUGINDIR)/src | grep -v '[^a-z0-9]'`; do $(MAKE) -C "$(PLUGINDIR)/src/$$i" clean; done
-	@-rm -f $(PLUGINDIR)/lib/libvdr-*.so.$(APIVERSION)
+	@-rm -f $(PLUGINDIR)/lib/lib*-*.so.$(APIVERSION)
 
 # Install the files:
 
@@ -223,7 +223,7 @@ install-doc:
 
 install-plugins: plugins
 	@mkdir -p $(PLUGINLIBDIR)
-	@cp $(PLUGINDIR)/lib/libvdr-*.so.$(APIVERSION) $(PLUGINLIBDIR)
+	@cp $(PLUGINDIR)/lib/lib*-*.so.$(APIVERSION) $(PLUGINLIBDIR)
 
 # Source documentation:
 

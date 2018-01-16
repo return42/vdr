@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: channels.c 1.51 2006/04/17 12:18:57 kls Exp $
+ * $Id: channels.c 1.53 2006/05/28 15:03:40 kls Exp $
  */
 
 #include "channels.h"
@@ -922,6 +922,14 @@ int cChannels::GetNextNormal(int Idx)
   cChannel *channel = Get(++Idx);
   while (channel && channel->GroupSep())
         channel = Get(++Idx);
+  return channel ? Idx : -1;
+}
+
+int cChannels::GetPrevNormal(int Idx)
+{
+  cChannel *channel = Get(--Idx);
+  while (channel && channel->GroupSep())
+        channel = Get(--Idx);
   return channel ? Idx : -1;
 }
 

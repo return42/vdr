@@ -22,7 +22,7 @@
  *
  * The project's page is at http://www.cadsoft.de/vdr
  *
- * $Id: vdr.c 1.267 2006/04/29 09:14:06 kls Exp $
+ * $Id: vdr.c 1.274 2006/06/04 09:04:47 kls Exp $
  */
 
 #include <getopt.h>
@@ -72,8 +72,11 @@
 #define DEVICEREADYTIMEOUT 30 // seconds to wait until all devices are ready
 #define MENUTIMEOUT       120 // seconds of user inactivity after which an OSD display is closed
 #define SHUTDOWNRETRY     300 // seconds before trying again to shut down
-#define VPSCHECKDELTA      10 // seconds between checks for timers that have entered the VPS margin
-#define VPSDEVICETIMEOUT    8 // seconds before a device used for VPS may be reused
+#define TIMERCHECKDELTA    10 // seconds between checks for timers that need to see their channel
+#define TIMERDEVICETIMEOUT  8 // seconds before a device used for timer check may be reused
+#define TIMERLOOKAHEADTIME 60 // seconds before a non-VPS timer starts and the channel is switched if possible
+#define VPSLOOKAHEADTIME   24 // hours within which VPS timers will make sure their events are up to date
+#define VPSUPTODATETIME  3600 // seconds before the event or schedule of a VPS timer needs to be refreshed
 
 #define EXIT(v) { ExitCode = (v); goto Exit; }
 
@@ -500,8 +503,9 @@ int main(int argc, char *argv[])
   int MaxLatencyTime = 0;
   bool ForceShutdown = false;
   bool UserShutdown = false;
-  bool TimerInVpsMargin = false;
+  bool InhibitEpgScan = false;
   bool IsInfoMenu = false;
+  cSkin *CurrentSkin = NULL;
 
   // Load plugins:
 
@@ -603,6 +607,7 @@ int main(int argc, char *argv[])
   new cSkinSTTNG;
   Skins.SetCurrent(Setup.OSDSkin);
   cThemes::Load(Skins.Current()->Name(), Setup.OSDTheme, Skins.Current()->Theme());
+  CurrentSkin = Skins.Current();
 
   // Start plugins:
 
@@ -611,8 +616,10 @@ int main(int argc, char *argv[])
 
   // Set skin and theme in case they're implemented by a plugin:
 
-  Skins.SetCurrent(Setup.OSDSkin);
-  cThemes::Load(Skins.Current()->Name(), Setup.OSDTheme, Skins.Current()->Theme());
+  if (!CurrentSkin || CurrentSkin == Skins.Current() && strcmp(Skins.Current()->Name(), Setup.OSDSkin) != 0) {
+     Skins.SetCurrent(Setup.OSDSkin);
+     cThemes::Load(Skins.Current()->Name(), Setup.OSDTheme, Skins.Current()->Theme());
+     }
 
   // Remote Controls:
   if (RcuDevice)
@@ -756,14 +763,35 @@ int main(int argc, char *argv[])
               else
                  LastTimerChannel = Timer->Channel()->Number();
               }
-           // Make sure VPS timers "see" their channel early enough:
-           static time_t LastVpsCheck = 0;
-           if (Now - LastVpsCheck > VPSCHECKDELTA) { // don't do this too often
-              TimerInVpsMargin = false;
+           // Make sure timers "see" their channel early enough:
+           static time_t LastTimerCheck = 0;
+           if (Now - LastTimerCheck > TIMERCHECKDELTA) { // don't do this too often
+              InhibitEpgScan = false;
               static time_t DeviceUsed[MAXDEVICES] = { 0 };
               for (cTimer *Timer = Timers.First(); Timer; Timer = Timers.Next(Timer)) {
-                  if (Timer->HasFlags(tfActive | tfVps) && !Timer->Recording() && Timer->Matches(Now, true, Setup.VpsMargin)) {
-                     Timer->SetInVpsMargin(true);
+                  bool InVpsMargin = false;
+                  bool NeedsTransponder = false;
+                  if (Timer->HasFlags(tfActive) && !Timer->Recording()) {
+                     if (Timer->HasFlags(tfVps)) {
+                        if (Timer->Matches(Now, true, Setup.VpsMargin))
+                           InVpsMargin = true;
+                        else if (Timer->Event())
+                           NeedsTransponder = Timer->Event()->StartTime() - Now < VPSLOOKAHEADTIME * 3600 && !Timer->Event()->SeenWithin(VPSUPTODATETIME);
+                        else {
+                           cSchedulesLock SchedulesLock;
+                           const cSchedules *Schedules = cSchedules::Schedules(SchedulesLock);
+                           if (Schedules) {
+                              const cSchedule *Schedule = Schedules->GetSchedule(Timer->Channel());
+                              NeedsTransponder = Schedule && !Schedule->PresentSeenWithin(VPSUPTODATETIME);
+                              }
+                           }
+                        InhibitEpgScan |= InVpsMargin | NeedsTransponder;
+                        }
+                     else
+                        NeedsTransponder = Timer->Matches(Now, true, TIMERLOOKAHEADTIME);
+                     }
+                  Timer->SetInVpsMargin(InVpsMargin);
+                  if (NeedsTransponder || InVpsMargin) {
                      // Find a device that provides the required transponder:
                      cDevice *Device = NULL;
                      for (int i = 0; i < cDevice::NumDevices(); i++) {
@@ -774,20 +802,20 @@ int main(int argc, char *argv[])
                                Device = d;
                                break;
                                }
-                            else if (Now - DeviceUsed[d->DeviceNumber()] > VPSDEVICETIMEOUT) {
+                            else if (Now - DeviceUsed[d->DeviceNumber()] > TIMERDEVICETIMEOUT) {
                                // only check other devices if they have been left alone for a while
                                if (d->MaySwitchTransponder())
                                   // this one can be switched without disturbing anything else
                                   Device = d;
-                               else if (!Device && !d->Receiving() && d->ProvidesTransponderExclusively(Timer->Channel()))
+                               else if (!Device && InVpsMargin && !d->Receiving() && d->ProvidesTransponderExclusively(Timer->Channel()))
                                   // use this one only if no other with less impact can be found
                                   Device = d;
                                }
                             }
                          }
-                     if (!Device) {
+                     if (!Device && InVpsMargin) {
                         cDevice *d = cDevice::ActualDevice();
-                        if (!d->Receiving() && d->ProvidesTransponder(Timer->Channel()) && Now - DeviceUsed[d->DeviceNumber()] > VPSDEVICETIMEOUT)
+                        if (!d->Receiving() && d->ProvidesTransponder(Timer->Channel()) && Now - DeviceUsed[d->DeviceNumber()] > TIMERDEVICETIMEOUT)
                            Device = d; // use the actual device as a last resort
                         }
                      // Switch the device to the transponder:
@@ -805,12 +833,9 @@ int main(int argc, char *argv[])
                            Skins.Message(mtInfo, tr("Upcoming VPS recording!"));
                            }
                         }
-                     TimerInVpsMargin = true;
                      }
-                  else
-                     Timer->SetInVpsMargin(false);
                   }
-              LastVpsCheck = time(NULL);
+              LastTimerCheck = time(NULL);
               }
            // Delete expired timers:
            Timers.DeleteExpired();
@@ -970,7 +995,7 @@ int main(int argc, char *argv[])
                   }
                break;
           // Power off:
-          case kPower:
+          case kPower: {
                isyslog("Power button pressed");
                DELETE_MENU;
                if (!Shutdown) {
@@ -985,8 +1010,20 @@ int main(int argc, char *argv[])
                   }
                if (cPluginManager::Active(tr("shut down anyway?")))
                   break;
+               cTimer *timer = Timers.GetNextActiveTimer();
+               time_t Next  = timer ? timer->StartTime() : 0;
+               time_t Delta = timer ? Next - time(NULL) : 0;
+               if (Next && Delta <= Setup.MinEventTimeout * 60) {
+                  char *buf;
+                  asprintf(&buf, tr("Recording in %ld minutes, shut down anyway?"), Delta / 60);
+                  bool confirm = Interface->Confirm(buf);
+                  free(buf);
+                  if (!confirm)
+                     break;
+                  }
                ForceShutdown = true;
                break;
+               }
           default: break;
           }
         Interact = Menu ? Menu : cControl::Control(); // might have been closed in the mean time
@@ -1004,6 +1041,9 @@ int main(int argc, char *argv[])
               else if (time(NULL) - LastActivity > MENUTIMEOUT)
                  state = osEnd;
               }
+           // TODO make the CAM menu stay open in case of automatic updates and have it return osContinue; then the following two lines can be removed again
+           else if (state == osEnd && LastActivity > 1)
+              LastActivity = time(NULL);
            switch (state) {
              case osPause:  DELETE_MENU;
                             cControl::Shutdown(); // just in case
@@ -1094,7 +1134,7 @@ int main(int argc, char *argv[])
              }
            }
         if (!Menu) {
-           if (!TimerInVpsMargin)
+           if (!InhibitEpgScan)
               EITScanner.Process();
            if (!cCutter::Active() && cCutter::Ended()) {
               if (cCutter::Error())
@@ -1120,15 +1160,6 @@ int main(int argc, char *argv[])
                        }
                     else
                        LastActivity = 1;
-                    }
-                 if (UserShutdown && Next && Delta <= Setup.MinEventTimeout * 60 && !ForceShutdown) {
-                    char *buf;
-                    asprintf(&buf, tr("Recording in %ld minutes, shut down anyway?"), Delta / 60);
-                    if (Interface->Confirm(buf))
-                       ForceShutdown = true;
-                    else
-                       UserShutdown = false;
-                    free(buf);
                     }
                  if (!Next || Delta > Setup.MinEventTimeout * 60 || ForceShutdown) {
                     ForceShutdown = false;

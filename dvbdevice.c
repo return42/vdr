@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: dvbdevice.c 1.156 2006/04/01 14:19:43 kls Exp $
+ * $Id: dvbdevice.c 1.159 2006/06/11 09:03:55 kls Exp $
  */
 
 #include "dvbdevice.h"
@@ -356,7 +356,7 @@ void cDvbTuner::Action(void)
 // --- cDvbDevice ------------------------------------------------------------
 
 int cDvbDevice::devVideoOffset = -1;
-bool cDvbDevice::setTransferModeForDolbyDigital = true;
+int cDvbDevice::setTransferModeForDolbyDigital = 1;
 
 cDvbDevice::cDvbDevice(int n)
 {
@@ -570,7 +570,7 @@ uchar *cDvbDevice::GrabImage(int &Size, bool Jpeg, int Quality, int SizeX, int S
                  if (Quality < 0)
                     Quality = 100;
 
-                 isyslog("grabbing to %s %d %d %d", Jpeg ? "JPEG" : "PNM", Quality, vm.width, vm.height);
+                 dsyslog("grabbing to %s %d %d %d", Jpeg ? "JPEG" : "PNM", Quality, vm.width, vm.height);
                  if (Jpeg) {
                     // convert to JPEG:
                     result = RgbToJpeg(mem, vm.width, vm.height, Size, Quality);
@@ -653,7 +653,7 @@ eVideoSystem cDvbDevice::GetVideoSystem(void)
 
 bool cDvbDevice::SetAudioBypass(bool On)
 {
-  if (!setTransferModeForDolbyDigital)
+  if (setTransferModeForDolbyDigital != 1)
      return false;
   return ioctl(fd_audio, AUDIO_SET_BYPASS_MODE, On) == 0;
 }
@@ -914,9 +914,9 @@ void cDvbDevice::SetDigitalAudioDevice(bool On)
      }
 }
 
-void cDvbDevice::SetTransferModeForDolbyDigital(bool On)
+void cDvbDevice::SetTransferModeForDolbyDigital(int Mode)
 {
-  setTransferModeForDolbyDigital = On;
+  setTransferModeForDolbyDigital = Mode;
 }
 
 void cDvbDevice::SetAudioTrackDevice(eTrackType Type)
@@ -932,7 +932,7 @@ void cDvbDevice::SetAudioTrackDevice(eTrackType Type)
            }
         }
      else if (IS_DOLBY_TRACK(Type)) {
-        if (!setTransferModeForDolbyDigital)
+        if (setTransferModeForDolbyDigital == 0)
            return;
         // Currently this works only in Transfer Mode
         ForceTransferMode();

@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: menu.c 1.435 2006/04/28 12:48:01 kls Exp $
+ * $Id: menu.c 1.441 2006/06/03 13:32:42 kls Exp $
  */
 
 #include "menu.h"
@@ -499,6 +499,8 @@ eOSState cMenuChannels::New(void)
 eOSState cMenuChannels::Delete(void)
 {
   if (!HasSubMenu() && Count() > 0) {
+     int CurrentChannelNr = cDevice::CurrentChannel();
+     cChannel *CurrentChannel = Channels.GetByNumber(CurrentChannelNr);
      int Index = Current();
      cChannel *channel = GetChannel(Current());
      int DeletedChannel = channel->Number();
@@ -508,10 +510,23 @@ eOSState cMenuChannels::Delete(void)
         return osContinue;
         }
      if (Interface->Confirm(tr("Delete channel?"))) {
+        if (CurrentChannel && channel == CurrentChannel) {
+           int n = Channels.GetNextNormal(CurrentChannel->Index());
+           if (n < 0)
+              n = Channels.GetPrevNormal(CurrentChannel->Index());
+           CurrentChannel = Channels.Get(n);
+           CurrentChannelNr = 0; // triggers channel switch below
+           }
         Channels.Del(channel);
         cOsdMenu::Del(Index);
         Propagate();
         isyslog("channel %d deleted", DeletedChannel);
+        if (CurrentChannel && CurrentChannel->Number() != CurrentChannelNr) {
+           if (!cDevice::PrimaryDevice()->Replaying() || cDevice::PrimaryDevice()->Transferring())
+              Channels.SwitchTo(CurrentChannel->Number());
+           else
+              cDevice::SetCurrentChannel(CurrentChannel);
+           }
         }
      }
   return osContinue;
@@ -530,8 +545,12 @@ void cMenuChannels::Move(int From, int To)
      cOsdMenu::Move(From, To);
      Propagate();
      isyslog("channel %d moved to %d", FromNumber, ToNumber);
-     if (CurrentChannel && CurrentChannel->Number() != CurrentChannelNr)
-        Channels.SwitchTo(CurrentChannel->Number());
+     if (CurrentChannel && CurrentChannel->Number() != CurrentChannelNr) {
+        if (!cDevice::PrimaryDevice()->Replaying() || cDevice::PrimaryDevice()->Transferring())
+           Channels.SwitchTo(CurrentChannel->Number());
+        else
+           cDevice::SetCurrentChannel(CurrentChannel);
+        }
      }
 }
 
@@ -1029,7 +1048,7 @@ bool cMenuScheduleItem::Update(bool Force)
      char *buffer = NULL;
      char t = TimerMatchChars[timerMatch];
      char v = event->Vps() && (event->Vps() - event->StartTime()) ? 'V' : ' ';
-     char r = event->IsRunning() ? '*' : ' ';
+     char r = event->SeenWithin(30) && event->IsRunning() ? '*' : ' ';
      if (channel && withDate)
         asprintf(&buffer, "%d\t%.*s\t%.*s\t%s\t%c%c%c\t%s", channel->Number(), 6, channel->ShortName(true), 6, *event->GetDateString(), *event->GetTimeString(), t, v, r, event->Title());
      else if (channel)
@@ -1828,7 +1847,7 @@ void cMenuRecordingItem::IncrementCounter(bool New)
 // --- cMenuRecordings -------------------------------------------------------
 
 cMenuRecordings::cMenuRecordings(const char *Base, int Level, bool OpenSubMenus)
-:cOsdMenu(Base ? Base : tr("Recordings"), 8, 6)
+:cOsdMenu(Base ? Base : tr("Recordings"), 9, 7)
 {
   base = Base ? strdup(Base) : NULL;
   level = Setup.RecordingDirs ? Level : -1;
@@ -2131,7 +2150,7 @@ cMenuSetupOSD::cMenuSetupOSD(void)
 cMenuSetupOSD::~cMenuSetupOSD()
 {
   cFont::SetCode(I18nCharSets()[Setup.OSDLanguage]);
-  delete skinDescriptions;
+  delete[] skinDescriptions;
 }
 
 void cMenuSetupOSD::Set(void)
