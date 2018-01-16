@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: recording.c 2.91.1.7 2014/03/16 11:03:18 kls Exp $
+ * $Id: recording.c 2.91.1.9 2015/01/17 13:50:38 kls Exp $
  */
 
 #include "recording.h"
@@ -63,6 +63,7 @@
 #define REMOVELATENCY      10 // seconds to wait until next check after removing a file
 #define MARKSUPDATEDELTA   10 // seconds between checks for updating editing marks
 #define MININDEXAGE      3600 // seconds before an index file is considered no longer to be written
+#define MAXREMOVETIME      10 // seconds after which to return from removing deleted recordings
 
 #define MAX_LINK_LEVEL  6
 
@@ -93,11 +94,16 @@ void cRemoveDeletedRecordingsThread::Action(void)
   // Make sure only one instance of VDR does this:
   cLockFile LockFile(VideoDirectory);
   if (LockFile.Lock()) {
+     time_t StartTime = time(NULL);
      bool deleted = false;
      cThreadLock DeletedRecordingsLock(&DeletedRecordings);
      for (cRecording *r = DeletedRecordings.First(); r; ) {
          if (cIoThrottle::Engaged())
             return;
+         if (time(NULL) - StartTime > MAXREMOVETIME)
+            return; // don't stay here too long
+         if (cRemote::HasKeys())
+            return; // react immediately on user input
          if (r->Deleted() && time(NULL) - r->Deleted() > DELETEDLIFETIME) {
             cRecording *next = DeletedRecordings.Next(r);
             r->Remove();
@@ -1740,6 +1746,7 @@ void cIndexFileGenerator::Action(void)
   off_t FileSize = 0;
   off_t FrameOffset = -1;
   Skins.QueueMessage(mtInfo, tr("Regenerating index file"));
+  bool Stuffed = false;
   while (Running()) {
         // Rewind input file:
         if (Rewind) {
@@ -1803,10 +1810,25 @@ void cIndexFileGenerator::Action(void)
         else if (ReplayFile) {
            int Result = Buffer.Read(ReplayFile, BufferChunks);
            if (Result == 0) { // EOF
-              ReplayFile = FileName.NextFile();
-              FileSize = 0;
-              FrameOffset = -1;
-              Buffer.Clear();
+              if (Buffer.Available() > 0 && !Stuffed) {
+                 // So the last call to Buffer.Get() returned NULL, but there is still
+                 // data in the buffer, and we're at the end of the current TS file.
+                 // The remaining data in the buffer is less than what's needed for the
+                 // frame detector to analyze frames, so we need to put some stuffing
+                 // packets into the buffer to flush out the rest of the data (otherwise
+                 // any frames within the remaining data would not be seen here):
+                 uchar StuffingPacket[TS_SIZE] = { TS_SYNC_BYTE, 0xFF };
+                 for (int i = 0; i <= MIN_TS_PACKETS_FOR_FRAME_DETECTOR; i++)
+                     Buffer.Put(StuffingPacket, sizeof(StuffingPacket));
+                 Stuffed = true;
+                 }
+              else {
+                 ReplayFile = FileName.NextFile();
+                 FileSize = 0;
+                 FrameOffset = -1;
+                 Buffer.Clear();
+                 Stuffed = false;
+                 }
               }
            }
         // Recording has been processed:

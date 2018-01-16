@@ -232,6 +232,7 @@ Stefan Huelswitt <s.huelswitt@gmx.de>
  featured DVB cards
  for pointing out a bug in handling lowercase polarization characters in channel
  definitions if no DiSEqC is used
+ for fixing a bug in the Makefile when installing plugins with LCLBLD=1
 
 Ulrich Röder <roeder@efr-net.de>
  for pointing out that there are channels that have a symbol rate higher than 27500
@@ -3214,3 +3215,9 @@ Mariusz Bialonczyk <manio@skyboo.net>
 Christian Winkler <winkler_chr@yahoo.de>
  for reporting a problem with transfer mode on full featured DVB cards for encrypted
  channels that have no audio pid
+
+Dieter Ferdinand <dieter.ferdinand@gmx.de>
+ for reporting a problem with jumping to an absolute position via the Red key in
+ case replay was paused
+ for reporting a problem with the system getting unresponsive when removing a huge
+ number of files in the thread that removes deleted recordings
