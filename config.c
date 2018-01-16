@@ -4,12 +4,13 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: config.c 1.117 2003/10/17 14:11:27 kls Exp $
+ * $Id: config.c 1.145 2006/04/17 12:43:57 kls Exp $
  */
 
 #include "config.h"
 #include <ctype.h>
 #include <stdlib.h>
+#include "device.h"
 #include "i18n.h"
 #include "interface.h"
 #include "plugin.h"
@@ -19,7 +20,7 @@
 // format characters in order to allow any number of blanks after a numeric
 // value!
 
-// --- cCommand -------------------------------------------------------------
+// --- cCommand --------------------------------------------------------------
 
 char *cCommand::result = NULL;
 
@@ -119,24 +120,6 @@ bool cSVDRPhost::Accepts(in_addr_t Address)
   return (Address & mask) == addr.s_addr;
 }
 
-// -- cCaDefinition ----------------------------------------------------------
-
-cCaDefinition::cCaDefinition(void)
-{
-  number = 0;
-  description = NULL;
-}
-
-cCaDefinition::~cCaDefinition()
-{
-  free(description);
-}
-
-bool cCaDefinition::Parse(const char *s)
-{
-  return 2 == sscanf(s, "%d %a[^\n]", &number, &description) && description && *description;
-}
-
 // -- cCommands --------------------------------------------------------------
 
 cCommands Commands;
@@ -155,21 +138,6 @@ bool cSVDRPhosts::Acceptable(in_addr_t Address)
         h = (cSVDRPhost *)h->Next();
         }
   return false;
-}
-
-// -- cCaDefinitions ---------------------------------------------------------
-
-cCaDefinitions CaDefinitions;
-
-const cCaDefinition *cCaDefinitions::Get(int Number)
-{
-  cCaDefinition *p = First();
-  while (p) {
-        if (p->Number() == Number)
-           return p;
-        p = (cCaDefinition *)p->Next();
-        }
-  return NULL;
 }
 
 // -- cSetupLine -------------------------------------------------------------
@@ -193,19 +161,19 @@ cSetupLine::~cSetupLine()
   free(value);
 }
 
-bool cSetupLine::operator< (const cListObject &ListObject)
+int cSetupLine::Compare(const cListObject &ListObject) const
 {
   const cSetupLine *sl = (cSetupLine *)&ListObject;
   if (!plugin && !sl->plugin)
-     return strcasecmp(name, sl->name) < 0;
+     return strcasecmp(name, sl->name);
   if (!plugin)
-     return true;
+     return -1;
   if (!sl->plugin)
-     return false;
+     return 1;
   int result = strcasecmp(plugin, sl->plugin);
   if (result == 0)
      result = strcasecmp(name, sl->name);
-  return result < 0;
+  return result;
 }
 
 bool cSetupLine::Parse(char *s)
@@ -245,9 +213,14 @@ cSetup Setup;
 cSetup::cSetup(void)
 {
   OSDLanguage = 0;
+  strcpy(OSDSkin, "sttng");
+  strcpy(OSDTheme, "default");
   PrimaryDVB = 1;
   ShowInfoOnChSwitch = 1;
+  TimeoutRequChInfo = 1;
   MenuScrollPage = 1;
+  MenuScrollWrap = 0;
+  MenuButtonCloses = 0;
   MarkInstantRecord = 1;
   strcpy(NameInstantRecord, "TITLE EPISODE");
   InstantRecordTime = 180;
@@ -256,37 +229,50 @@ cSetup::cSetup(void)
   LnbFrequHi = 10600;
   DiSEqC = 0;
   SetSystemTime = 0;
+  TimeSource = 0;
   TimeTransponder = 0;
   MarginStart = 2;
   MarginStop = 10;
+  AudioLanguages[0] = -1;
+  EPGLanguages[0] = -1;
   EPGScanTimeout = 5;
-  EPGBugfixLevel = 2;
+  EPGBugfixLevel = 3;
+  EPGLinger = 0;
   SVDRPTimeout = 300;
   ZapTimeout = 3;
-  SortTimers = 1;
   PrimaryLimit = 0;
   DefaultPriority = 50;
   DefaultLifetime = 99;
   PausePriority = 10;
   PauseLifetime = 1;
   UseSubtitle = 1;
+  UseVps = 0;
+  VpsMargin = 120;
   RecordingDirs = 1;
+  VideoDisplayFormat = 1;
   VideoFormat = 0;
-  RecordDolbyDigital = 1;
+  UpdateChannels = 5;
+  UseDolbyDigital = 1;
   ChannelInfoPos = 0;
-  OSDwidth = 52;
-  OSDheight = 18;
+  ChannelInfoTime = 5;
+  OSDLeft = 54;
+  OSDTop = 45;
+  OSDWidth = 624;
+  OSDHeight = 486;
   OSDMessageTime = 1;
+  UseSmallFont = 1;
   MaxVideoFileSize = MAXVIDEOFILESIZE;
   SplitEditedFiles = 0;
   MinEventTimeout = 30;
-  MinUserInactivity = 120;
+  MinUserInactivity = 300;
   MultiSpeedMode = 0;
   ShowReplayMode = 0;
   ResumeID = 0;
-  memset(CaCaps, sizeof(CaCaps), 0);
   CurrentChannel = -1;
   CurrentVolume = MAXVOLUME;
+  CurrentDolby = 0;
+  InitialChannel = 0;
+  InitialVolume = -1;
 }
 
 cSetup& cSetup::operator= (const cSetup &s)
@@ -350,56 +336,52 @@ bool cSetup::Load(const char *FileName)
   return false;
 }
 
-void cSetup::StoreCaCaps(const char *Name)
+void cSetup::StoreLanguages(const char *Name, int *Values)
 {
-  cSetupLine *l;
-  while ((l = Get(Name)) != NULL)
-        Del(l);
-  for (int d = 0; d < MAXDEVICES; d++) {
-      char buffer[MAXPARSEBUFFER];
-      char *q = buffer;
-      *buffer = 0;
-      for (int i = 0; i < MAXCACAPS; i++) {
-          if (CaCaps[d][i]) {
-             if (!*buffer)
-                q += snprintf(buffer, sizeof(buffer), "%d", d + 1);
-             q += snprintf(q, sizeof(buffer) - (q - buffer), " %d", CaCaps[d][i]);
-             }
-          }
-      if (*buffer)
-         Store(Name, buffer, NULL, true);
+  char buffer[I18nNumLanguages * 4];
+  char *q = buffer;
+  for (int i = 0; i < I18nNumLanguages; i++) {
+      if (Values[i] < 0)
+         break;
+      const char *s = I18nLanguageCode(Values[i]);
+      if (s) {
+         if (q > buffer)
+            *q++ = ' ';
+         strncpy(q, s, 3);
+         q += 3;
+         }
       }
+  *q = 0;
+  Store(Name, buffer);
 }
 
-bool cSetup::ParseCaCaps(const char *Value)
+bool cSetup::ParseLanguages(const char *Value, int *Values)
 {
-  char *p;
-  int d = strtol(Value, &p, 10);
-  if (d > 0 && d <= MAXDEVICES) {
-     d--;
-     int i = 0;
-     while (p != Value && p && *p) {
-           if (i < MAXCACAPS) {
-              int c = strtol(p, &p, 10);
-              if (c > 0)
-                 CaCaps[d][i++] = c;
-              else
-                 return false;
-              }
-           else
-              return false;
-           }
-     return true;
-     }
-  return false;
+  int n = 0;
+  while (Value && *Value && n < I18nNumLanguages) {
+        char buffer[4];
+        strn0cpy(buffer, Value, sizeof(buffer));
+        int i = I18nLanguageIndex(buffer);
+        if (i >= 0)
+           Values[n++] = i;
+        if ((Value = strchr(Value, ' ')) != NULL)
+           Value++;
+        }
+  Values[n] = -1;
+  return true;
 }
 
 bool cSetup::Parse(const char *Name, const char *Value)
 {
   if      (!strcasecmp(Name, "OSDLanguage"))         OSDLanguage        = atoi(Value);
+  else if (!strcasecmp(Name, "OSDSkin"))             strn0cpy(OSDSkin, Value, MaxSkinName);
+  else if (!strcasecmp(Name, "OSDTheme"))            strn0cpy(OSDTheme, Value, MaxThemeName);
   else if (!strcasecmp(Name, "PrimaryDVB"))          PrimaryDVB         = atoi(Value);
   else if (!strcasecmp(Name, "ShowInfoOnChSwitch"))  ShowInfoOnChSwitch = atoi(Value);
+  else if (!strcasecmp(Name, "TimeoutRequChInfo"))   TimeoutRequChInfo  = atoi(Value);
   else if (!strcasecmp(Name, "MenuScrollPage"))      MenuScrollPage     = atoi(Value);
+  else if (!strcasecmp(Name, "MenuScrollWrap"))      MenuScrollWrap     = atoi(Value);
+  else if (!strcasecmp(Name, "MenuButtonCloses"))    MenuButtonCloses   = atoi(Value);
   else if (!strcasecmp(Name, "MarkInstantRecord"))   MarkInstantRecord  = atoi(Value);
   else if (!strcasecmp(Name, "NameInstantRecord"))   strn0cpy(NameInstantRecord, Value, MaxFileName);
   else if (!strcasecmp(Name, "InstantRecordTime"))   InstantRecordTime  = atoi(Value);
@@ -408,27 +390,38 @@ bool cSetup::Parse(const char *Name, const char *Value)
   else if (!strcasecmp(Name, "LnbFrequHi"))          LnbFrequHi         = atoi(Value);
   else if (!strcasecmp(Name, "DiSEqC"))              DiSEqC             = atoi(Value);
   else if (!strcasecmp(Name, "SetSystemTime"))       SetSystemTime      = atoi(Value);
+  else if (!strcasecmp(Name, "TimeSource"))          TimeSource         = cSource::FromString(Value);
   else if (!strcasecmp(Name, "TimeTransponder"))     TimeTransponder    = atoi(Value);
   else if (!strcasecmp(Name, "MarginStart"))         MarginStart        = atoi(Value);
   else if (!strcasecmp(Name, "MarginStop"))          MarginStop         = atoi(Value);
+  else if (!strcasecmp(Name, "AudioLanguages"))      return ParseLanguages(Value, AudioLanguages);
+  else if (!strcasecmp(Name, "EPGLanguages"))        return ParseLanguages(Value, EPGLanguages);
   else if (!strcasecmp(Name, "EPGScanTimeout"))      EPGScanTimeout     = atoi(Value);
   else if (!strcasecmp(Name, "EPGBugfixLevel"))      EPGBugfixLevel     = atoi(Value);
+  else if (!strcasecmp(Name, "EPGLinger"))           EPGLinger          = atoi(Value);
   else if (!strcasecmp(Name, "SVDRPTimeout"))        SVDRPTimeout       = atoi(Value);
   else if (!strcasecmp(Name, "ZapTimeout"))          ZapTimeout         = atoi(Value);
-  else if (!strcasecmp(Name, "SortTimers"))          SortTimers         = atoi(Value);
   else if (!strcasecmp(Name, "PrimaryLimit"))        PrimaryLimit       = atoi(Value);
   else if (!strcasecmp(Name, "DefaultPriority"))     DefaultPriority    = atoi(Value);
   else if (!strcasecmp(Name, "DefaultLifetime"))     DefaultLifetime    = atoi(Value);
   else if (!strcasecmp(Name, "PausePriority"))       PausePriority      = atoi(Value);
   else if (!strcasecmp(Name, "PauseLifetime"))       PauseLifetime      = atoi(Value);
   else if (!strcasecmp(Name, "UseSubtitle"))         UseSubtitle        = atoi(Value);
+  else if (!strcasecmp(Name, "UseVps"))              UseVps             = atoi(Value);
+  else if (!strcasecmp(Name, "VpsMargin"))           VpsMargin          = atoi(Value);
   else if (!strcasecmp(Name, "RecordingDirs"))       RecordingDirs      = atoi(Value);
+  else if (!strcasecmp(Name, "VideoDisplayFormat"))  VideoDisplayFormat = atoi(Value);
   else if (!strcasecmp(Name, "VideoFormat"))         VideoFormat        = atoi(Value);
-  else if (!strcasecmp(Name, "RecordDolbyDigital"))  RecordDolbyDigital = atoi(Value);
+  else if (!strcasecmp(Name, "UpdateChannels"))      UpdateChannels     = atoi(Value);
+  else if (!strcasecmp(Name, "UseDolbyDigital"))     UseDolbyDigital    = atoi(Value);
   else if (!strcasecmp(Name, "ChannelInfoPos"))      ChannelInfoPos     = atoi(Value);
-  else if (!strcasecmp(Name, "OSDwidth"))            OSDwidth           = atoi(Value);
-  else if (!strcasecmp(Name, "OSDheight"))           OSDheight          = atoi(Value);
+  else if (!strcasecmp(Name, "ChannelInfoTime"))     ChannelInfoTime    = atoi(Value);
+  else if (!strcasecmp(Name, "OSDLeft"))             OSDLeft            = atoi(Value);
+  else if (!strcasecmp(Name, "OSDTop"))              OSDTop             = atoi(Value);
+  else if (!strcasecmp(Name, "OSDWidth"))          { OSDWidth           = atoi(Value); if (OSDWidth  < 100) OSDWidth  *= 12; OSDWidth &= ~0x07; } // OSD width must be a multiple of 8
+  else if (!strcasecmp(Name, "OSDHeight"))         { OSDHeight          = atoi(Value); if (OSDHeight < 100) OSDHeight *= 27; }
   else if (!strcasecmp(Name, "OSDMessageTime"))      OSDMessageTime     = atoi(Value);
+  else if (!strcasecmp(Name, "UseSmallFont"))        UseSmallFont       = atoi(Value);
   else if (!strcasecmp(Name, "MaxVideoFileSize"))    MaxVideoFileSize   = atoi(Value);
   else if (!strcasecmp(Name, "SplitEditedFiles"))    SplitEditedFiles   = atoi(Value);
   else if (!strcasecmp(Name, "MinEventTimeout"))     MinEventTimeout    = atoi(Value);
@@ -436,9 +429,11 @@ bool cSetup::Parse(const char *Name, const char *Value)
   else if (!strcasecmp(Name, "MultiSpeedMode"))      MultiSpeedMode     = atoi(Value);
   else if (!strcasecmp(Name, "ShowReplayMode"))      ShowReplayMode     = atoi(Value);
   else if (!strcasecmp(Name, "ResumeID"))            ResumeID           = atoi(Value);
-  else if (!strcasecmp(Name, "CaCaps"))              return ParseCaCaps(Value);
   else if (!strcasecmp(Name, "CurrentChannel"))      CurrentChannel     = atoi(Value);
   else if (!strcasecmp(Name, "CurrentVolume"))       CurrentVolume      = atoi(Value);
+  else if (!strcasecmp(Name, "CurrentDolby"))        CurrentDolby       = atoi(Value);
+  else if (!strcasecmp(Name, "InitialChannel"))      InitialChannel     = atoi(Value);
+  else if (!strcasecmp(Name, "InitialVolume"))       InitialVolume      = atoi(Value);
   else
      return false;
   return true;
@@ -447,9 +442,14 @@ bool cSetup::Parse(const char *Name, const char *Value)
 bool cSetup::Save(void)
 {
   Store("OSDLanguage",        OSDLanguage);
+  Store("OSDSkin",            OSDSkin);
+  Store("OSDTheme",           OSDTheme);
   Store("PrimaryDVB",         PrimaryDVB);
   Store("ShowInfoOnChSwitch", ShowInfoOnChSwitch);
+  Store("TimeoutRequChInfo",  TimeoutRequChInfo);
   Store("MenuScrollPage",     MenuScrollPage);
+  Store("MenuScrollWrap",     MenuScrollWrap);
+  Store("MenuButtonCloses",   MenuButtonCloses);
   Store("MarkInstantRecord",  MarkInstantRecord);
   Store("NameInstantRecord",  NameInstantRecord);
   Store("InstantRecordTime",  InstantRecordTime);
@@ -458,27 +458,38 @@ bool cSetup::Save(void)
   Store("LnbFrequHi",         LnbFrequHi);
   Store("DiSEqC",             DiSEqC);
   Store("SetSystemTime",      SetSystemTime);
+  Store("TimeSource",         cSource::ToString(TimeSource));
   Store("TimeTransponder",    TimeTransponder);
   Store("MarginStart",        MarginStart);
   Store("MarginStop",         MarginStop);
+  StoreLanguages("AudioLanguages", AudioLanguages);
+  StoreLanguages("EPGLanguages", EPGLanguages);
   Store("EPGScanTimeout",     EPGScanTimeout);
   Store("EPGBugfixLevel",     EPGBugfixLevel);
+  Store("EPGLinger",          EPGLinger);
   Store("SVDRPTimeout",       SVDRPTimeout);
   Store("ZapTimeout",         ZapTimeout);
-  Store("SortTimers",         SortTimers);
   Store("PrimaryLimit",       PrimaryLimit);
   Store("DefaultPriority",    DefaultPriority);
   Store("DefaultLifetime",    DefaultLifetime);
   Store("PausePriority",      PausePriority);
   Store("PauseLifetime",      PauseLifetime);
   Store("UseSubtitle",        UseSubtitle);
+  Store("UseVps",             UseVps);
+  Store("VpsMargin",          VpsMargin);
   Store("RecordingDirs",      RecordingDirs);
+  Store("VideoDisplayFormat", VideoDisplayFormat);
   Store("VideoFormat",        VideoFormat);
-  Store("RecordDolbyDigital", RecordDolbyDigital);
+  Store("UpdateChannels",     UpdateChannels);
+  Store("UseDolbyDigital",    UseDolbyDigital);
   Store("ChannelInfoPos",     ChannelInfoPos);
-  Store("OSDwidth",           OSDwidth);
-  Store("OSDheight",          OSDheight);
+  Store("ChannelInfoTime",    ChannelInfoTime);
+  Store("OSDLeft",            OSDLeft);
+  Store("OSDTop",             OSDTop);
+  Store("OSDWidth",           OSDWidth);
+  Store("OSDHeight",          OSDHeight);
   Store("OSDMessageTime",     OSDMessageTime);
+  Store("UseSmallFont",       UseSmallFont);
   Store("MaxVideoFileSize",   MaxVideoFileSize);
   Store("SplitEditedFiles",   SplitEditedFiles);
   Store("MinEventTimeout",    MinEventTimeout);
@@ -486,9 +497,11 @@ bool cSetup::Save(void)
   Store("MultiSpeedMode",     MultiSpeedMode);
   Store("ShowReplayMode",     ShowReplayMode);
   Store("ResumeID",           ResumeID);
-  StoreCaCaps("CaCaps");
   Store("CurrentChannel",     CurrentChannel);
   Store("CurrentVolume",      CurrentVolume);
+  Store("CurrentDolby",       CurrentDolby);
+  Store("InitialChannel",     InitialChannel);
+  Store("InitialVolume",      InitialVolume);
 
   Sort();
 

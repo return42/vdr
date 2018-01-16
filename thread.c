@@ -4,17 +4,88 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: thread.c 1.25 2003/05/18 12:45:13 kls Exp $
+ * $Id: thread.c 1.54 2006/03/26 09:22:27 kls Exp $
  */
 
 #include "thread.h"
 #include <errno.h>
-#include <signal.h>
+#include <linux/unistd.h>
+#include <malloc.h>
+#include <stdarg.h>
 #include <sys/resource.h>
+#include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include "tools.h"
+
+static bool GetAbsTime(struct timespec *Abstime, int MillisecondsFromNow)
+{
+  struct timeval now;
+  if (gettimeofday(&now, NULL) == 0) {           // get current time
+     now.tv_usec += MillisecondsFromNow * 1000;  // add the timeout
+     while (now.tv_usec >= 1000000) {            // take care of an overflow
+           now.tv_sec++;
+           now.tv_usec -= 1000000;
+           }
+     Abstime->tv_sec = now.tv_sec;          // seconds
+     Abstime->tv_nsec = now.tv_usec * 1000; // nano seconds
+     return true;
+     }
+  return false;
+}
+
+// --- cCondWait -------------------------------------------------------------
+
+cCondWait::cCondWait(void)
+{
+  signaled = false;
+  pthread_mutex_init(&mutex, NULL);
+  pthread_cond_init(&cond, NULL);
+}
+
+cCondWait::~cCondWait()
+{
+  pthread_cond_broadcast(&cond); // wake up any sleepers
+  pthread_cond_destroy(&cond);
+  pthread_mutex_destroy(&mutex);
+}
+
+void cCondWait::SleepMs(int TimeoutMs)
+{
+  cCondWait w;
+  w.Wait(max(TimeoutMs, 3)); // making sure the time is >2ms to avoid a possible busy wait
+}
+
+bool cCondWait::Wait(int TimeoutMs)
+{
+  pthread_mutex_lock(&mutex);
+  if (!signaled) {
+     if (TimeoutMs) {
+        struct timespec abstime;
+        if (GetAbsTime(&abstime, TimeoutMs)) {
+           while (!signaled) {
+                 if (pthread_cond_timedwait(&cond, &mutex, &abstime) == ETIMEDOUT)
+                    break;
+                 }
+           }
+        }
+     else
+        pthread_cond_wait(&cond, &mutex);
+     }
+  bool r = signaled;
+  signaled = false;
+  pthread_mutex_unlock(&mutex);
+  return r;
+}
+
+void cCondWait::Signal(void)
+{
+  pthread_mutex_lock(&mutex);
+  signaled = true;
+  pthread_cond_broadcast(&cond);
+  pthread_mutex_unlock(&mutex);
+}
 
 // --- cCondVar --------------------------------------------------------------
 
@@ -25,15 +96,16 @@ cCondVar::cCondVar(void)
 
 cCondVar::~cCondVar()
 {
+  pthread_cond_broadcast(&cond); // wake up any sleepers
   pthread_cond_destroy(&cond);
 }
 
 void cCondVar::Wait(cMutex &Mutex)
 {
-  if (Mutex.locked && Mutex.lockingPid == getpid()) {
+  if (Mutex.locked) {
      int locked = Mutex.locked;
      Mutex.locked = 0; // have to clear the locked count here, as pthread_cond_wait
-                       // does an implizit unlock of the mutex
+                       // does an implicit unlock of the mutex
      pthread_cond_wait(&cond, &Mutex.mutex);
      Mutex.locked = locked;
      }
@@ -41,27 +113,17 @@ void cCondVar::Wait(cMutex &Mutex)
 
 bool cCondVar::TimedWait(cMutex &Mutex, int TimeoutMs)
 {
-  bool r = true; // true = condition signaled false = timeout
+  bool r = true; // true = condition signaled, false = timeout
 
-  if (Mutex.locked && Mutex.lockingPid == getpid()) {
-     struct timeval now;                   // unfortunately timedwait needs the absolute time, not the delta :-(
-     if (gettimeofday(&now, NULL) == 0) {  // get current time
-        now.tv_usec += TimeoutMs * 1000;   // add the timeout
-        while (now.tv_usec >= 1000000) {   // take care of an overflow
-              now.tv_sec++;
-              now.tv_usec -= 1000000;
-              }
-        struct timespec abstime;              // build timespec for timedwait
-        abstime.tv_sec = now.tv_sec;          // seconds
-        abstime.tv_nsec = now.tv_usec * 1000; // nano seconds
-
+  if (Mutex.locked) {
+     struct timespec abstime;
+     if (GetAbsTime(&abstime, TimeoutMs)) {
         int locked = Mutex.locked;
         Mutex.locked = 0; // have to clear the locked count here, as pthread_cond_timedwait
-                          // does an implizit unlock of the mutex.
+                          // does an implicit unlock of the mutex.
         if (pthread_cond_timedwait(&cond, &Mutex.mutex, &abstime) == ETIMEDOUT)
            r = false;
         Mutex.locked = locked;
-        Mutex.lockingPid = getpid();
         }
      }
   return r;
@@ -72,20 +134,50 @@ void cCondVar::Broadcast(void)
   pthread_cond_broadcast(&cond);
 }
 
-/*
-void cCondVar::Signal(void)
+// --- cRwLock ---------------------------------------------------------------
+
+cRwLock::cRwLock(bool PreferWriter)
 {
-  pthread_cond_signal(&cond);
+  pthread_rwlockattr_t attr;
+  pthread_rwlockattr_init(&attr);
+  pthread_rwlockattr_setkind_np(&attr, PreferWriter ? PTHREAD_RWLOCK_PREFER_WRITER_NP : PTHREAD_RWLOCK_PREFER_READER_NP);
+  pthread_rwlock_init(&rwlock, &attr);
 }
-*/
+
+cRwLock::~cRwLock()
+{
+  pthread_rwlock_destroy(&rwlock);
+}
+
+bool cRwLock::Lock(bool Write, int TimeoutMs)
+{
+  int Result = 0;
+  struct timespec abstime;
+  if (TimeoutMs) {
+     if (!GetAbsTime(&abstime, TimeoutMs))
+        TimeoutMs = 0;
+     }
+  if (Write)
+     Result = TimeoutMs ? pthread_rwlock_timedwrlock(&rwlock, &abstime) : pthread_rwlock_wrlock(&rwlock);
+  else
+     Result = TimeoutMs ? pthread_rwlock_timedrdlock(&rwlock, &abstime) : pthread_rwlock_rdlock(&rwlock);
+  return Result == 0;
+}
+
+void cRwLock::Unlock(void)
+{
+  pthread_rwlock_unlock(&rwlock);
+}
 
 // --- cMutex ----------------------------------------------------------------
 
 cMutex::cMutex(void)
 {
-  lockingPid = 0;
   locked = 0;
-  pthread_mutex_init(&mutex, NULL);
+  pthread_mutexattr_t attr;
+  pthread_mutexattr_init(&attr);
+  pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK_NP);
+  pthread_mutex_init(&mutex, &attr);
 }
 
 cMutex::~cMutex()
@@ -95,75 +187,103 @@ cMutex::~cMutex()
 
 void cMutex::Lock(void)
 {
-  if (getpid() != lockingPid || !locked) {
-     pthread_mutex_lock(&mutex);
-     lockingPid = getpid();
-     }
+  pthread_mutex_lock(&mutex);
   locked++;
 }
 
 void cMutex::Unlock(void)
 {
- if (!--locked) {
-    lockingPid = 0;
+ if (!--locked)
     pthread_mutex_unlock(&mutex);
-    }
 }
 
 // --- cThread ---------------------------------------------------------------
 
-// The signal handler is necessary to be able to use SIGIO to wake up any
-// pending 'select()' call.
-
-bool cThread::signalHandlerInstalled = false;
+tThreadId cThread::mainThreadId = 0;
 bool cThread::emergencyExitRequested = false;
 
-cThread::cThread(void)
+cThread::cThread(const char *Description)
 {
-  if (!signalHandlerInstalled) {
-     signal(SIGIO, SignalHandler);
-     signalHandlerInstalled = true;
-     }
-  running = false;
-  parentPid = threadPid = 0;
+  active = running = false;
+  childTid = 0;
+  childThreadId = 0;
+  description = NULL;
+  if (Description)
+     SetDescription("%s", Description);
 }
 
 cThread::~cThread()
 {
+  Cancel(); // just in case the derived class didn't call it
+  free(description);
 }
 
-void cThread::SignalHandler(int signum)
+void cThread::SetPriority(int Priority)
 {
-  signal(signum, SignalHandler);
+  if (setpriority(PRIO_PROCESS, 0, Priority) < 0)
+     LOG_ERROR;
+}
+
+void cThread::SetDescription(const char *Description, ...)
+{
+  free(description);
+  description = NULL;
+  if (Description) {
+     va_list ap;
+     va_start(ap, Description);
+     vasprintf(&description, Description, ap);
+     va_end(ap);
+     }
 }
 
 void *cThread::StartThread(cThread *Thread)
 {
-  Thread->threadPid = getpid();
+  Thread->childThreadId = ThreadId();
+  if (Thread->description)
+     dsyslog("%s thread started (pid=%d, tid=%d)", Thread->description, getpid(), Thread->childThreadId);
   Thread->Action();
+  if (Thread->description)
+     dsyslog("%s thread ended (pid=%d, tid=%d)", Thread->description, getpid(), Thread->childThreadId);
+  Thread->running = false;
+  Thread->active = false;
   return NULL;
 }
 
 bool cThread::Start(void)
 {
-  if (!running) {
-     running = true;
-     parentPid = getpid();
-     pthread_create(&thread, NULL, (void *(*) (void *))&StartThread, (void *)this);
-     pthread_setschedparam(thread, SCHED_RR, 0);
-     usleep(10000); // otherwise calling Active() immediately after Start() causes a "pure virtual method called" error
+  if (!active) {
+     active = running = true;
+     if (pthread_create(&childTid, NULL, (void *(*) (void *))&StartThread, (void *)this) == 0) {
+        pthread_detach(childTid); // auto-reap
+        pthread_setschedparam(childTid, SCHED_RR, 0);
+        }
+     else {
+        LOG_ERROR;
+        active = running = false;
+        return false;
+        }
      }
-  return true; //XXX return value of pthread_create()???
+  return true;
 }
 
 bool cThread::Active(void)
 {
-  if (threadPid) {
-     if (kill(threadPid, SIGIO) < 0) { // couldn't find another way of checking whether the thread is still running - any ideas?
-        if (errno == ESRCH)
-           threadPid = 0;
-        else
+  if (active) {
+     //
+     // Single UNIX Spec v2 says:
+     //
+     // The pthread_kill() function is used to request
+     // that a signal be delivered to the specified thread.
+     //
+     // As in kill(), if sig is zero, error checking is
+     // performed but no signal is actually sent.
+     //
+     int err;
+     if ((err = pthread_kill(childTid, 0)) != 0) {
+        if (err != ESRCH)
            LOG_ERROR;
+        childTid = 0;
+        active = running = false;
         }
      else
         return true;
@@ -174,20 +294,19 @@ bool cThread::Active(void)
 void cThread::Cancel(int WaitSeconds)
 {
   running = false;
-  if (WaitSeconds > 0) {
-     for (time_t t0 = time(NULL) + WaitSeconds; time(NULL) < t0; ) {
-         if (!Active())
-            return;
-         usleep(10000);
-         }
-     esyslog("ERROR: thread %d won't end (waited %d seconds) - cancelling it...", threadPid, WaitSeconds);
+  if (active) {
+     if (WaitSeconds > 0) {
+        for (time_t t0 = time(NULL) + WaitSeconds; time(NULL) < t0; ) {
+            if (!Active())
+               return;
+            cCondWait::SleepMs(10);
+            }
+        esyslog("ERROR: %s thread %d won't end (waited %d seconds) - canceling it...", description ? description : "", childThreadId, WaitSeconds);
+        }
+     pthread_cancel(childTid);
+     childTid = 0;
+     active = false;
      }
-  pthread_cancel(thread);
-}
-
-void cThread::WakeUp(void)
-{
-  kill(parentPid, SIGIO); // makes any waiting 'select()' call return immediately
 }
 
 bool cThread::EmergencyExit(bool Request)
@@ -196,6 +315,21 @@ bool cThread::EmergencyExit(bool Request)
      return emergencyExitRequested;
   esyslog("initiating emergency exit");
   return emergencyExitRequested = true; // yes, it's an assignment, not a comparison!
+}
+
+_syscall0(pid_t, gettid)
+
+tThreadId cThread::ThreadId(void)
+{
+  return gettid();
+}
+
+void cThread::SetMainThreadId(void)
+{
+  if (mainThreadId == 0)
+     mainThreadId = ThreadId();
+  else
+     esyslog("ERROR: attempt to set main thread id to %d while it already is %d", ThreadId(), mainThreadId);
 }
 
 // --- cMutexLock ------------------------------------------------------------
@@ -347,7 +481,7 @@ int cPipe::Close(void)
            else if (ret == pid)
               break;
            i--;
-           usleep(100000);
+           cCondWait::SleepMs(100);
            }
      if (!i) {
         kill(pid, SIGKILL);

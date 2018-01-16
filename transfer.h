@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: transfer.h 1.4 2003/05/11 08:48:36 kls Exp $
+ * $Id: transfer.h 1.11 2006/01/29 17:24:43 kls Exp $
  */
 
 #ifndef __TRANSFER_H
@@ -20,21 +20,13 @@ class cTransfer : public cReceiver, public cPlayer, public cThread {
 private:
   cRingBufferLinear *ringBuffer;
   cRemux *remux;
-  bool canToggleAudioTrack;
-  uchar audioTrack;
-  bool gotBufferReserve;
-  bool active;
-  void StripAudioPackets(uchar *b, int Length, uchar Except = 0x00);
 protected:
   virtual void Activate(bool On);
   virtual void Receive(uchar *Data, int Length);
   virtual void Action(void);
 public:
-  cTransfer(int VPid, int APid1, int APid2, int DPid1, int DPid2);
+  cTransfer(int VPid, const int *APids, const int *DPids, const int *SPids);
   virtual ~cTransfer();
-  virtual int NumAudioTracks(void) const;
-  virtual const char **GetAudioTracks(int *CurrentTrack = NULL) const;
-  virtual void SetAudioTrack(int Index);
   };
 
 class cTransferControl : public cControl {
@@ -42,7 +34,7 @@ private:
   cTransfer *transfer;
   static cDevice *receiverDevice;
 public:
-  cTransferControl(cDevice *ReceiverDevice, int VPid, int APid1, int APid2, int DPid1, int DPid2);
+  cTransferControl(cDevice *ReceiverDevice, int VPid, const int *APids, const int *DPids, const int *SPids);
   ~cTransferControl();
   virtual void Hide(void) {}
   static cDevice *ReceiverDevice(void) { return receiverDevice; }

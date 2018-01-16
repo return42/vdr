@@ -10,7 +10,7 @@
  * and interact with the Video Disk Recorder - or write a full featured
  * graphical interface that sits on top of an SVDRP connection.
  *
- * $Id: svdrp.c 1.55 2003/08/31 11:24:47 kls Exp $
+ * $Id: svdrp.c 1.95 2006/04/17 09:02:23 kls Exp $
  */
 
 #include "svdrp.h"
@@ -28,9 +28,14 @@
 #include <unistd.h>
 #include "channels.h"
 #include "config.h"
+#include "cutter.h"
 #include "device.h"
+#include "eitscan.h"
 #include "keys.h"
+#include "menu.h"
+#include "plugin.h"
 #include "remote.h"
+#include "skins.h"
 #include "timers.h"
 #include "tools.h"
 #include "videodir.h"
@@ -110,7 +115,8 @@ int cSocket::Accept(void)
         bool accepted = SVDRPhosts.Acceptable(clientname.sin_addr.s_addr);
         if (!accepted) {
            const char *s = "Access denied!\n";
-           write(newsock, s, strlen(s));
+           if (write(newsock, s, strlen(s)) < 0)
+              LOG_ERROR;
            close(newsock);
            newsock = -1;
            }
@@ -155,7 +161,7 @@ bool cPUTEhandler::Process(const char *s)
      else {
         rewind(f);
         if (cSchedules::Read(f)) {
-           cSIProcessor::TriggerDump();
+           cSchedules::Cleanup(true);
            status = 250;
            message = "EPG data processed";
            }
@@ -191,10 +197,20 @@ const char *HelpPages[] = {
   "    RECORDING - BE SURE YOU KNOW WHAT YOU ARE DOING!",
   "DELT <number>\n"
   "    Delete timer.",
-  "GRAB <filename> [ jpeg | pnm [ <quality> [ <sizex> <sizey> ] ] ]\n"
+  "EDIT <number>\n"
+  "    Edit the recording with the given number. Before a recording can be\n"
+  "    edited, an LSTR command must have been executed in order to retrieve\n"
+  "    the recording numbers.",
+  "GRAB <filename> [ <quality> [ <sizex> <sizey> ] ]\n"
   "    Grab the current frame and save it to the given file. Images can\n"
-  "    be stored as JPEG (default) or PNM, at the given quality (default\n"
-  "    is 'maximum', only applies to JPEG) and size (default is full screen).",
+  "    be stored as JPEG or PNM, depending on the given file name extension.\n"
+  "    The quality of the grabbed image can be in the range 0..100, where 100\n"
+  "    (the default) means \"best\" (only applies to JPEG). The size parameters\n"
+  "    define the size of the resulting image (default is full screen).\n"
+  "    If the file name is just an extension (.jpg, .jpeg or .pnm) the image\n"
+  "    data will be sent to the SVDRP connection encoded in base64. The same\n"
+  "    happens if '-' (a minus sign) is given as file name, in which case the\n"
+  "    image format defaults to JPEG.",
   "HELP [ <topic> ]\n"
   "    The HELP command gives help info.",
   "HITK [ <key> ]\n"
@@ -204,20 +220,23 @@ const char *HelpPages[] = {
   "    List channels. Without option, all channels are listed. Otherwise\n"
   "    only the given channel is listed. If a name is given, all channels\n"
   "    containing the given string as part of their name are listed.",
-  "LSTE\n"
-  "    List EPG data.",
+  "LSTE [ <channel> ] [ now | next | at <time> ]\n"
+  "    List EPG data. Without any parameters all data of all channels is\n"
+  "    listed. If a channel is given (either by number or by channel ID),\n"
+  "    only data for that channel is listed. 'now', 'next', or 'at <time>'\n"
+  "    restricts the returned data to present events, following events, or\n"
+  "    events at the given time (which must be in time_t form).",
   "LSTR [ <number> ]\n"
   "    List recordings. Without option, all recordings are listed. Otherwise\n"
-  "    the summary for the given recording is listed.",
-  "LSTT [ <number> ]\n"
+  "    the information for the given recording is listed.",
+  "LSTT [ <number> ] [ id ]\n"
   "    List timers. Without option, all timers are listed. Otherwise\n"
-  "    only the given timer is listed.",
-  "MESG [ <message> ]\n"
-  "    Displays the given message on the OSD. If message is omitted, the\n"
-  "    currently pending message (if any) will be returned. The message\n"
-  "    will be displayed for a few seconds as soon as the OSD has become\n"
-  "    idle. If a new MESG command is entered while the previous message\n"
-  "    has not yet been displayed, the old message will be overwritten.",
+  "    only the given timer is listed. If the keyword 'id' is given, the\n"
+  "    channels will be listed with their unique channel ids instead of\n"
+  "    their numbers.",
+  "MESG <message>\n"
+  "    Displays the given message on the OSD. The message will be queued\n"
+  "    and displayed whenever this is suitable.\n",
   "MODC <number> <settings>\n"
   "    Modify a channel. Settings must be in the same format as returned\n"
   "    by the LSTC command.",
@@ -246,11 +265,34 @@ const char *HelpPages[] = {
   "    zero, this means that the timer is currently recording and has started\n"
   "    at the given time. The first value in the resulting line is the number\n"
   "    of the timer.",
+  "PLAY <number> [ begin | <position> ]\n"
+  "    Play the recording with the given number. Before a recording can be\n"
+  "    played, an LSTR command must have been executed in order to retrieve\n"
+  "    the recording numbers.\n"
+  "    The keyword 'begin' plays the recording from its very beginning, while\n"
+  "    a <position> (given as hh:mm:ss[.ff] or framenumber) starts at that\n"
+  "    position. If neither 'begin' nor a <position> are given, replay is resumed\n"
+  "    at the position where any previous replay was stopped, or from the beginning\n"
+  "    by default. To control or stop the replay session, use the usual remote\n"
+  "    control keypresses via the HITK command.",
+  "PLUG <name> [ help | main ] [ <command> [ <options> ]]\n"
+  "    Send a command to a plugin.\n"
+  "    The PLUG command without any parameters lists all plugins.\n"
+  "    If only a name is given, all commands known to that plugin are listed.\n"
+  "    If a command is given (optionally followed by parameters), that command\n"
+  "    is sent to the plugin, and the result will be displayed.\n"
+  "    The keyword 'help' lists all the SVDRP commands known to the named plugin.\n"
+  "    If 'help' is followed by a command, the detailed help for that command is\n"
+  "    given. The keyword 'main' initiates a call to the main menu function of the\n"
+  "    given plugin.\n",
   "PUTE\n"
   "    Put data into the EPG list. The data entered has to strictly follow the\n"
   "    format defined in vdr(5) for the 'epg.data' file.  A '.' on a line\n"
   "    by itself terminates the input and starts processing of the data (all\n"
   "    entered data is buffered until the terminating '.' is seen).",
+  "SCAN\n"
+  "    Forces an EPG scan. If this is a single DVB device system, the scan\n"
+  "    will be done on the primary device unless it is currently recording.",
   "STAT disk\n"
   "    Return information about disk usage (total, free, percent).",
   "UPDT <settings>\n"
@@ -272,7 +314,8 @@ const char *HelpPages[] = {
 /* SVDRP Reply Codes:
 
  214 Help message
- 215 EPG data record
+ 215 EPG or recording data record
+ 216 Image grab data (base 64)
  220 VDR service ready
  221 VDR service closing transmission channel
  250 Requested VDR action okay, completed
@@ -284,6 +327,8 @@ const char *HelpPages[] = {
  504 Command parameter not implemented
  550 Requested action not taken
  554 Transaction failed
+ 900 Default plugin reply code
+ 901..999 Plugin specific reply codes
 
 */
 
@@ -305,24 +350,28 @@ const char *GetHelpTopic(const char *HelpPage)
   return NULL;
 }
 
-const char *GetHelpPage(const char *Cmd)
+const char *GetHelpPage(const char *Cmd, const char **p)
 {
-  const char **p = HelpPages;
-  while (*p) {
-        const char *t = GetHelpTopic(*p);
-        if (strcasecmp(Cmd, t) == 0)
-           return *p;
-        p++;
-        }
+  if (p) {
+     while (*p) {
+           const char *t = GetHelpTopic(*p);
+           if (strcasecmp(Cmd, t) == 0)
+              return *p;
+           p++;
+           }
+     }
   return NULL;
 }
+
+char *cSVDRP::grabImageDir = NULL;
 
 cSVDRP::cSVDRP(int Port)
 :socket(Port)
 {
   PUTEhandler = NULL;
   numChars = 0;
-  message = NULL;
+  length = BUFSIZ;
+  cmdLine = MALLOC(char, length);
   lastActivity = 0;
   isyslog("SVDRP listening on port %d", Port);
 }
@@ -330,7 +379,7 @@ cSVDRP::cSVDRP(int Port)
 cSVDRP::~cSVDRP()
 {
   Close();
-  free(message);
+  free(cmdLine);
 }
 
 void cSVDRP::Close(bool Timeout)
@@ -366,14 +415,14 @@ void cSVDRP::Reply(int Code, const char *fmt, ...)
         va_start(ap, fmt);
         char *buffer;
         vasprintf(&buffer, fmt, ap);
-        char *nl = strchr(buffer, '\n');
-        if (Code > 0 && nl && *(nl + 1)) // trailing newlines don't count!
-           Code = -Code;
-        char number[16];
-        sprintf(number, "%03d%c", abs(Code), Code < 0 ? '-' : ' ');
         const char *s = buffer;
         while (s && *s) {
               const char *n = strchr(s, '\n');
+              char cont = ' ';
+              if (Code < 0 || n && *(n + 1)) // trailing newlines don't count!
+                 cont = '-';
+              char number[16];
+              sprintf(number, "%03d%c", abs(Code), cont);
               if (!(Send(number) && Send(s, n ? n - s : -1) && Send("\r\n"))) {
                  Close();
                  break;
@@ -388,6 +437,32 @@ void cSVDRP::Reply(int Code, const char *fmt, ...)
         esyslog("SVDRP: zero return code!");
         }
      }
+}
+
+void cSVDRP::PrintHelpTopics(const char **hp)
+{
+  int NumPages = 0;
+  if (hp) {
+     while (*hp) {
+           NumPages++;
+           hp++;
+           }
+     hp -= NumPages;
+     }
+  const int TopicsPerLine = 5;
+  int x = 0;
+  for (int y = 0; (y * TopicsPerLine + x) < NumPages; y++) {
+      char buffer[TopicsPerLine * MAXHELPTOPIC + 5];
+      char *q = buffer;
+      q += sprintf(q, "    ");
+      for (x = 0; x < TopicsPerLine && (y * TopicsPerLine + x) < NumPages; x++) {
+          const char *topic = GetHelpTopic(hp[(y * TopicsPerLine + x)]);
+          if (topic)
+             q += sprintf(q, "%*s", -MAXHELPTOPIC, topic);
+          }
+      x = 0;
+      Reply(-214, "%s", buffer);
+      }
 }
 
 void cSVDRP::CmdCHAN(const char *Option)
@@ -458,7 +533,7 @@ void cSVDRP::CmdCHAN(const char *Option)
 
 void cSVDRP::CmdCLRE(const char *Option)
 {
-  cSIProcessor::Clear();
+  cSchedules::ClearAll();
   Reply(250, "EPG data cleared");
 }
 
@@ -466,22 +541,26 @@ void cSVDRP::CmdDELC(const char *Option)
 {
   if (*Option) {
      if (isnumber(Option)) {
-        cChannel *channel = Channels.GetByNumber(strtol(Option, NULL, 10));
-        if (channel) {
-           for (cTimer *timer = Timers.First(); timer; timer = Timers.Next(timer)) {
-               if (timer->Channel() == channel) {
-                  Reply(550, "Channel \"%s\" is in use by timer %d", Option, timer->Index() + 1);
-                  return;
+        if (!Channels.BeingEdited()) {
+           cChannel *channel = Channels.GetByNumber(strtol(Option, NULL, 10));
+           if (channel) {
+              for (cTimer *timer = Timers.First(); timer; timer = Timers.Next(timer)) {
+                  if (timer->Channel() == channel) {
+                     Reply(550, "Channel \"%s\" is in use by timer %d", Option, timer->Index() + 1);
+                     return;
+                     }
                   }
-               }
-           Channels.Del(channel);
-           Channels.ReNumber();
-           Channels.Save();
-           isyslog("channel %s deleted", Option);
-           Reply(250, "Channel \"%s\" deleted", Option);
+              Channels.Del(channel);
+              Channels.ReNumber();
+              Channels.SetModified(true);
+              isyslog("channel %s deleted", Option);
+              Reply(250, "Channel \"%s\" deleted", Option);
+              }
+           else
+              Reply(501, "Channel \"%s\" not defined", Option);
            }
         else
-           Reply(501, "Channel \"%s\" not defined", Option);
+           Reply(550, "Channels are being edited - try again later");
         }
      else
         Reply(501, "Error in channel number \"%s\"", Option);
@@ -496,10 +575,17 @@ void cSVDRP::CmdDELR(const char *Option)
      if (isnumber(Option)) {
         cRecording *recording = Recordings.Get(strtol(Option, NULL, 10) - 1);
         if (recording) {
-           if (recording->Delete())
-              Reply(250, "Recording \"%s\" deleted", Option);
+           cRecordControl *rc = cRecordControls::GetRecordControl(recording->FileName());
+           if (!rc) {
+              if (recording->Delete()) {
+                 Reply(250, "Recording \"%s\" deleted", Option);
+                 ::Recordings.DelByName(recording->FileName());
+                 }
+              else
+                 Reply(554, "Error while deleting recording!");
+              }
            else
-              Reply(554, "Error while deleting recording!");
+              Reply(550, "Recording \"%s\" is in use by timer %d", Option, rc->Timer()->Index() + 1);
            }
         else
            Reply(550, "Recording \"%s\" not found%s", Option, Recordings.Count() ? "" : " (use LSTR before deleting)");
@@ -515,25 +601,59 @@ void cSVDRP::CmdDELT(const char *Option)
 {
   if (*Option) {
      if (isnumber(Option)) {
-        cTimer *timer = Timers.Get(strtol(Option, NULL, 10) - 1);
-        if (timer) {
-           if (!timer->Recording()) {
-              Timers.Del(timer);
-              Timers.Save();
-              isyslog("timer %s deleted", Option);
-              Reply(250, "Timer \"%s\" deleted", Option);
+        if (!Timers.BeingEdited()) {
+           cTimer *timer = Timers.Get(strtol(Option, NULL, 10) - 1);
+           if (timer) {
+              if (!timer->Recording()) {
+                 isyslog("deleting timer %s", *timer->ToDescr());
+                 Timers.Del(timer);
+                 Timers.SetModified();
+                 Reply(250, "Timer \"%s\" deleted", Option);
+                 }
+              else
+                 Reply(550, "Timer \"%s\" is recording", Option);
               }
            else
-              Reply(550, "Timer \"%s\" is recording", Option);
+              Reply(501, "Timer \"%s\" not defined", Option);
            }
         else
-           Reply(501, "Timer \"%s\" not defined", Option);
+           Reply(550, "Timers are being edited - try again later");
         }
      else
         Reply(501, "Error in timer number \"%s\"", Option);
      }
   else
      Reply(501, "Missing timer number");
+}
+
+void cSVDRP::CmdEDIT(const char *Option)
+{
+  if (*Option) {
+     if (isnumber(Option)) {
+        cRecording *recording = Recordings.Get(strtol(Option, NULL, 10) - 1);
+        if (recording) {
+           cMarks Marks;
+           if (Marks.Load(recording->FileName()) && Marks.Count()) {
+              if (!cCutter::Active()) {
+                 if (cCutter::Start(recording->FileName()))
+                    Reply(250, "Editing recording \"%s\" [%s]", Option, recording->Title());
+                 else
+                    Reply(554, "Can't start editing process");
+                 }
+              else
+                 Reply(554, "Editing process already active");
+              }
+           else
+              Reply(554, "No editing marks defined");
+           }
+        else
+           Reply(550, "Recording \"%s\" not found%s", Option, Recordings.Count() ? "" : " (use LSTR before editing)");
+        }
+     else
+        Reply(501, "Error in recording number \"%s\"", Option);
+     }
+  else
+     Reply(501, "Missing recording number");
 }
 
 void cSVDRP::CmdGRAB(const char *Option)
@@ -545,37 +665,52 @@ void cSVDRP::CmdGRAB(const char *Option)
      char buf[strlen(Option) + 1];
      char *p = strcpy(buf, Option);
      const char *delim = " \t";
-     FileName = strtok(p, delim);
-     if ((p = strtok(NULL, delim)) != NULL) {
-        if (strcasecmp(p, "JPEG") == 0)
+     char *strtok_next;
+     FileName = strtok_r(p, delim, &strtok_next);
+     // image type:
+     char *Extension = strrchr(FileName, '.');
+     if (Extension) {
+        if (strcasecmp(Extension, ".jpg") == 0 || strcasecmp(Extension, ".jpeg") == 0)
            Jpeg = true;
-        else if (strcasecmp(p, "PNM") == 0)
+        else if (strcasecmp(Extension, ".pnm") == 0)
            Jpeg = false;
         else {
-           Reply(501, "Unknown image type \"%s\"", p);
+           Reply(501, "Unknown image type \"%s\"", Extension + 1);
            return;
            }
+        if (Extension == FileName)
+           FileName = NULL;
         }
-     if ((p = strtok(NULL, delim)) != NULL) {
-        if (isnumber(p))
-           Quality = atoi(p);
-        else {
-           Reply(501, "Illegal quality \"%s\"", p);
-           return;
+     else if (strcmp(FileName, "-") == 0)
+        FileName = NULL;
+     // image quality (and obsolete type):
+     if ((p = strtok_r(NULL, delim, &strtok_next)) != NULL) {
+        if (strcasecmp(p, "JPEG") == 0 || strcasecmp(p, "PNM") == 0) {
+           // tolerate for backward compatibility
+           p = strtok_r(NULL, delim, &strtok_next);
+           }
+        if (p) {
+           if (isnumber(p))
+              Quality = atoi(p);
+           else {
+              Reply(501, "Invalid quality \"%s\"", p);
+              return;
+              }
            }
         }
-     if ((p = strtok(NULL, delim)) != NULL) {
+     // image size:
+     if ((p = strtok_r(NULL, delim, &strtok_next)) != NULL) {
         if (isnumber(p))
            SizeX = atoi(p);
         else {
-           Reply(501, "Illegal sizex \"%s\"", p);
+           Reply(501, "Invalid sizex \"%s\"", p);
            return;
            }
-        if ((p = strtok(NULL, delim)) != NULL) {
+        if ((p = strtok_r(NULL, delim, &strtok_next)) != NULL) {
            if (isnumber(p))
               SizeY = atoi(p);
            else {
-              Reply(501, "Illegal sizey \"%s\"", p);
+              Reply(501, "Invalid sizey \"%s\"", p);
               return;
               }
            }
@@ -584,12 +719,74 @@ void cSVDRP::CmdGRAB(const char *Option)
            return;
            }
         }
-     if ((p = strtok(NULL, delim)) != NULL) {
+     if ((p = strtok_r(NULL, delim, &strtok_next)) != NULL) {
         Reply(501, "Unexpected parameter \"%s\"", p);
         return;
         }
-     if (cDevice::PrimaryDevice()->GrabImage(FileName, Jpeg, Quality, SizeX, SizeY))
-        Reply(250, "Grabbed image %s", Option);
+     // canonicalize the file name:
+     char RealFileName[PATH_MAX];
+     if (FileName) {
+        if (grabImageDir) {
+           char *s = 0;
+           char *slash = strrchr(FileName, '/');
+           if (!slash) {
+              asprintf(&s, "%s/%s", grabImageDir, FileName);
+              FileName = s;
+              }
+           slash = strrchr(FileName, '/'); // there definitely is one
+           *slash = 0;
+           char *r = realpath(FileName, RealFileName);
+           *slash = '/';
+           if (!r) {
+              LOG_ERROR_STR(FileName);
+              Reply(501, "Invalid file name \"%s\"", FileName);
+              free(s);
+              return;
+              }
+           strcat(RealFileName, slash);
+           FileName = RealFileName;
+           free(s);
+           if (strncmp(FileName, grabImageDir, strlen(grabImageDir)) != 0) {
+              Reply(501, "Invalid file name \"%s\"", FileName);
+              return;
+              }
+           }
+        else {
+           Reply(550, "Grabbing to file not allowed (use \"GRAB -\" instead)");
+           return;
+           }
+        }
+     // actual grabbing:
+     int ImageSize;
+     uchar *Image = cDevice::PrimaryDevice()->GrabImage(ImageSize, Jpeg, Quality, SizeX, SizeY);
+     if (Image) {
+        if (FileName) {
+           int fd = open(FileName, O_WRONLY | O_CREAT | O_NOFOLLOW | O_TRUNC, DEFFILEMODE);
+           if (fd >= 0) {
+              if (safe_write(fd, Image, ImageSize) == ImageSize) {
+                 isyslog("grabbed image to %s", FileName);
+                 Reply(250, "Grabbed image %s", Option);
+                 }
+              else {
+                 LOG_ERROR_STR(FileName);
+                 Reply(451, "Can't write to '%s'", FileName);
+                 }
+              close(fd);
+              }
+           else {
+              LOG_ERROR_STR(FileName);
+              Reply(451, "Can't open '%s'", FileName);
+              }
+           }
+        else {
+           cBase64Encoder Base64(Image, ImageSize);
+           const char *s;
+           while ((s = Base64.NextLine()) != NULL)
+                 Reply(-216, "%s", s);
+           Reply(216, "Grabbed image %s", Option);
+           }
+        free(Image);
+        }
      else
         Reply(451, "Grab image failed");
      }
@@ -600,9 +797,9 @@ void cSVDRP::CmdGRAB(const char *Option)
 void cSVDRP::CmdHELP(const char *Option)
 {
   if (*Option) {
-     const char *hp = GetHelpPage(Option);
+     const char *hp = GetHelpPage(Option, HelpPages);
      if (hp)
-        Reply(214, hp);
+        Reply(214, "%s", hp);
      else {
         Reply(504, "HELP topic \"%s\" unknown", Option);
         return;
@@ -611,24 +808,13 @@ void cSVDRP::CmdHELP(const char *Option)
   else {
      Reply(-214, "This is VDR version %s", VDRVERSION);
      Reply(-214, "Topics:");
-     const char **hp = HelpPages;
-     int NumPages = 0;
-     while (*hp) {
-           NumPages++;
-           hp++;
-           }
-     const int TopicsPerLine = 5;
-     int x = 0;
-     for (int y = 0; (y * TopicsPerLine + x) < NumPages; y++) {
-         char buffer[TopicsPerLine * (MAXHELPTOPIC + 5)];
-         char *q = buffer;
-         for (x = 0; x < TopicsPerLine && (y * TopicsPerLine + x) < NumPages; x++) {
-             const char *topic = GetHelpTopic(HelpPages[(y * TopicsPerLine + x)]);
-             if (topic)
-                q += sprintf(q, "    %s", topic);
-             }
-         x = 0;
-         Reply(-214, buffer);
+     PrintHelpTopics(HelpPages);
+     cPlugin *plugin;
+     for (int i = 0; (plugin = cPluginManager::GetPlugin(i)) != NULL; i++) {
+         const char **hp = plugin->SVDRPHelpPages();
+         if (hp)
+            Reply(-214, "Plugin %s v%s - %s", plugin->Name(), plugin->Version(), plugin->Description());
+         PrintHelpTopics(hp);
          }
      Reply(-214, "To report bugs in the implementation send email to");
      Reply(-214, "    vdr-bugs@cadsoft.de");
@@ -662,7 +848,7 @@ void cSVDRP::CmdLSTC(const char *Option)
      if (isnumber(Option)) {
         cChannel *channel = Channels.GetByNumber(strtol(Option, NULL, 10));
         if (channel)
-           Reply(250, "%d %s", channel->Number(), channel->ToText());
+           Reply(250, "%d %s", channel->Number(), *channel->ToText());
         else
            Reply(501, "Channel \"%s\" not defined", Option);
         }
@@ -674,7 +860,7 @@ void cSVDRP::CmdLSTC(const char *Option)
               if (channel) {
                  if (strcasestr(channel->Name(), Option)) {
                     if (next)
-                       Reply(-250, "%d %s", next->Number(), next->ToText());
+                       Reply(-250, "%d %s", next->Number(), *next->ToText());
                     next = channel;
                     }
                  }
@@ -685,7 +871,7 @@ void cSVDRP::CmdLSTC(const char *Option)
               i = channel->Number() + 1;
               }
         if (next)
-           Reply(250, "%d %s", next->Number(), next->ToText());
+           Reply(250, "%d %s", next->Number(), *next->ToText());
         else
            Reply(501, "Channel \"%s\" not defined", Option);
         }
@@ -695,7 +881,7 @@ void cSVDRP::CmdLSTC(const char *Option)
      while (i <= Channels.MaxNumber()) {
            cChannel *channel = Channels.GetByNumber(i, 1);
            if (channel)
-              Reply(channel->Number() < Channels.MaxNumber() ? -250 : 250, "%d %s", channel->Number(), channel->ToText());
+              Reply(channel->Number() < Channels.MaxNumber() ? -250 : 250, "%d %s", channel->Number(), *channel->ToText());
            else
               Reply(501, "Channel \"%d\" not found", i);
            i = channel->Number() + 1;
@@ -707,18 +893,82 @@ void cSVDRP::CmdLSTC(const char *Option)
 
 void cSVDRP::CmdLSTE(const char *Option)
 {
-  cMutexLock MutexLock;
-  const cSchedules *Schedules = cSIProcessor::Schedules(MutexLock);
+  cSchedulesLock SchedulesLock;
+  const cSchedules *Schedules = cSchedules::Schedules(SchedulesLock);
   if (Schedules) {
-     FILE *f = fdopen(file, "w");
-     if (f) {
-        Schedules->Dump(f, "215-");
-        fflush(f);
-        Reply(215, "End of EPG data");
-        // don't 'fclose(f)' here!
+     const cSchedule* Schedule = NULL;
+     eDumpMode DumpMode = dmAll;
+     time_t AtTime = 0;
+     if (*Option) {
+        char buf[strlen(Option) + 1];
+        strcpy(buf, Option);
+        const char *delim = " \t";
+        char *strtok_next;
+        char *p = strtok_r(buf, delim, &strtok_next);
+        while (p && DumpMode == dmAll) {
+              if (strcasecmp(p, "NOW") == 0)
+                 DumpMode = dmPresent;
+              else if (strcasecmp(p, "NEXT") == 0)
+                 DumpMode = dmFollowing;
+              else if (strcasecmp(p, "AT") == 0) {
+                 DumpMode = dmAtTime;
+                 if ((p = strtok_r(NULL, delim, &strtok_next)) != NULL) {
+                    if (isnumber(p))
+                       AtTime = strtol(p, NULL, 10);
+                    else {
+                       Reply(501, "Invalid time");
+                       return;
+                       }
+                    }
+                 else {
+                    Reply(501, "Missing time");
+                    return;
+                    }
+                 }
+              else if (!Schedule) {
+                 cChannel* Channel = NULL;
+                 if (isnumber(p))
+                    Channel = Channels.GetByNumber(strtol(Option, NULL, 10));
+                 else
+                    Channel = Channels.GetByChannelID(tChannelID::FromString(Option));
+                 if (Channel) {
+                    Schedule = Schedules->GetSchedule(Channel);
+                    if (!Schedule) {
+                       Reply(550, "No schedule found");
+                       return;
+                       }
+                    }
+                 else {
+                    Reply(550, "Channel \"%s\" not defined", p);
+                    return;
+                    }
+                 }
+              else {
+                 Reply(501, "Unknown option: \"%s\"", p);
+                 return;
+                 }
+              p = strtok_r(NULL, delim, &strtok_next);
+              }
+        }
+     int fd = dup(file);
+     if (fd) {
+        FILE *f = fdopen(fd, "w");
+        if (f) {
+           if (Schedule)
+              Schedule->Dump(f, "215-", DumpMode, AtTime);
+           else
+              Schedules->Dump(f, "215-", DumpMode, AtTime);
+           fflush(f);
+           Reply(215, "End of EPG data");
+           fclose(f);
+           }
+        else {
+           Reply(451, "Can't open file connection");
+           close(fd);
+           }
         }
      else
-        Reply(451, "Can't open file connection");
+        Reply(451, "Can't dup stream descriptor");
      }
   else
      Reply(451, "Can't get EPG data");
@@ -726,18 +976,20 @@ void cSVDRP::CmdLSTE(const char *Option)
 
 void cSVDRP::CmdLSTR(const char *Option)
 {
-  bool recordings = Recordings.Load();
+  bool recordings = Recordings.Update(true);
   if (*Option) {
      if (isnumber(Option)) {
         cRecording *recording = Recordings.Get(strtol(Option, NULL, 10) - 1);
         if (recording) {
-           if (recording->Summary()) {
-              char *summary = strdup(recording->Summary());
-              Reply(250, "%s", strreplace(summary,'\n','|'));
-              free(summary);
+           FILE *f = fdopen(file, "w");
+           if (f) {
+              recording->Info()->Write(f, "215-");
+              fflush(f);
+              Reply(215, "End of recording information");
+              // don't 'fclose(f)' here!
               }
            else
-              Reply(550, "No summary availabe");
+              Reply(451, "Can't open file connection");
            }
         else
            Reply(550, "Recording \"%s\" not found", Option);
@@ -758,22 +1010,38 @@ void cSVDRP::CmdLSTR(const char *Option)
 
 void cSVDRP::CmdLSTT(const char *Option)
 {
+  int Number = 0;
+  bool Id = false;
   if (*Option) {
-     if (isnumber(Option)) {
-        cTimer *timer = Timers.Get(strtol(Option, NULL, 10) - 1);
-        if (timer)
-           Reply(250, "%d %s", timer->Index() + 1, timer->ToText());
-        else
-           Reply(501, "Timer \"%s\" not defined", Option);
-        }
+     char buf[strlen(Option) + 1];
+     strcpy(buf, Option);
+     const char *delim = " \t";
+     char *strtok_next;
+     char *p = strtok_r(buf, delim, &strtok_next);
+     while (p) {
+           if (isnumber(p))
+              Number = strtol(p, NULL, 10);
+           else if (strcasecmp(p, "ID") == 0)
+              Id = true;
+           else {
+              Reply(501, "Unknown option: \"%s\"", p);
+              return;
+              }
+           p = strtok_r(NULL, delim, &strtok_next);
+           }
+     }
+  if (Number) {
+     cTimer *timer = Timers.Get(Number - 1);
+     if (timer)
+        Reply(250, "%d %s", timer->Index() + 1, *timer->ToText(Id));
      else
-        Reply(501, "Error in timer number \"%s\"", Option);
+        Reply(501, "Timer \"%s\" not defined", Option);
      }
   else if (Timers.Count()) {
      for (int i = 0; i < Timers.Count(); i++) {
          cTimer *timer = Timers.Get(i);
         if (timer)
-           Reply(i < Timers.Count() - 1 ? -250 : 250, "%d %s", timer->Index() + 1, timer->ToText());
+           Reply(i < Timers.Count() - 1 ? -250 : 250, "%d %s", timer->Index() + 1, *timer->ToText(Id));
         else
            Reply(501, "Timer \"%d\" not found", i + 1);
          }
@@ -785,15 +1053,12 @@ void cSVDRP::CmdLSTT(const char *Option)
 void cSVDRP::CmdMESG(const char *Option)
 {
   if (*Option) {
-     free(message);
-     message = strdup(Option);
-     isyslog("SVDRP message: '%s'", message);
-     Reply(250, "Message stored");
+     isyslog("SVDRP message: '%s'", Option);
+     Skins.QueueMessage(mtInfo, Option);
+     Reply(250, "Message queued");
      }
-  else if (message)
-     Reply(250, "%s", message);
   else
-     Reply(550, "No pending message");
+     Reply(501, "Missing message");
 }
 
 void cSVDRP::CmdMODC(const char *Option)
@@ -803,26 +1068,29 @@ void cSVDRP::CmdMODC(const char *Option)
      int n = strtol(Option, &tail, 10);
      if (tail && tail != Option) {
         tail = skipspace(tail);
-        cChannel *channel = Channels.GetByNumber(n);
-        if (channel) {
-           cChannel ch;
-           if (ch.Parse(tail, true)) {
-              if (Channels.HasUniqueChannelID(&ch, channel)) {
-                 *channel = ch;
-                 Channels.ReNumber();
-                 Channels.Save();
-                 isyslog("modifed channel %d %s", channel->Number(), channel->ToText());
-                 Timers.Save();
-                 Reply(250, "%d %s", channel->Number(), channel->ToText());
+        if (!Channels.BeingEdited()) {
+           cChannel *channel = Channels.GetByNumber(n);
+           if (channel) {
+              cChannel ch;
+              if (ch.Parse(tail)) {
+                 if (Channels.HasUniqueChannelID(&ch, channel)) {
+                    *channel = ch;
+                    Channels.ReNumber();
+                    Channels.SetModified(true);
+                    isyslog("modifed channel %d %s", channel->Number(), *channel->ToText());
+                    Reply(250, "%d %s", channel->Number(), *channel->ToText());
+                    }
+                 else
+                    Reply(501, "Channel settings are not unique");
                  }
               else
-                 Reply(501, "Channel settings are not unique");
+                 Reply(501, "Error in channel settings");
               }
            else
-              Reply(501, "Error in channel settings");
+              Reply(501, "Channel \"%d\" not defined", n);
            }
         else
-           Reply(501, "Channel \"%d\" not defined", n);
+           Reply(550, "Channels are being edited - try again later");
         }
      else
         Reply(501, "Error in channel number");
@@ -838,24 +1106,28 @@ void cSVDRP::CmdMODT(const char *Option)
      int n = strtol(Option, &tail, 10);
      if (tail && tail != Option) {
         tail = skipspace(tail);
-        cTimer *timer = Timers.Get(n - 1);
-        if (timer) {
-           cTimer t = *timer;
-           if (strcasecmp(tail, "ON") == 0)
-              t.SetActive(taActive);
-           else if (strcasecmp(tail, "OFF") == 0)
-              t.SetActive(taInactive);
-           else if (!t.Parse(tail)) {
-              Reply(501, "Error in timer settings");
-              return;
+        if (!Timers.BeingEdited()) {
+           cTimer *timer = Timers.Get(n - 1);
+           if (timer) {
+              cTimer t = *timer;
+              if (strcasecmp(tail, "ON") == 0)
+                 t.SetFlags(tfActive);
+              else if (strcasecmp(tail, "OFF") == 0)
+                 t.ClrFlags(tfActive);
+              else if (!t.Parse(tail)) {
+                 Reply(501, "Error in timer settings");
+                 return;
+                 }
+              *timer = t;
+              Timers.SetModified();
+              isyslog("timer %s modified (%s)", *timer->ToDescr(), timer->HasFlags(tfActive) ? "active" : "inactive");
+              Reply(250, "%d %s", timer->Index() + 1, *timer->ToText());
               }
-           *timer = t;
-           Timers.Save();
-           isyslog("timer %d modified (%s)", timer->Index() + 1, timer->Active() ? "active" : "inactive");
-           Reply(250, "%d %s", timer->Index() + 1, timer->ToText());
+           else
+              Reply(501, "Timer \"%d\" not defined", n);
            }
         else
-           Reply(501, "Timer \"%d\" not defined", n);
+           Reply(550, "Timers are being edited - try again later");
         }
      else
         Reply(501, "Error in timer number");
@@ -866,8 +1138,51 @@ void cSVDRP::CmdMODT(const char *Option)
 
 void cSVDRP::CmdMOVC(const char *Option)
 {
-  //TODO combine this with menu action (timers must be updated)
-  Reply(502, "MOVC not yet implemented");
+  if (*Option) {
+     if (!Channels.BeingEdited() && !Timers.BeingEdited()) {
+        char *tail;
+        int From = strtol(Option, &tail, 10);
+        if (tail && tail != Option) {
+           tail = skipspace(tail);
+           if (tail && tail != Option) {
+              int To = strtol(tail, NULL, 10);
+              int CurrentChannelNr = cDevice::CurrentChannel();
+              cChannel *CurrentChannel = Channels.GetByNumber(CurrentChannelNr);
+              cChannel *FromChannel = Channels.GetByNumber(From);
+              if (FromChannel) {
+                 cChannel *ToChannel = Channels.GetByNumber(To);
+                 if (ToChannel) {
+                    int FromNumber = FromChannel->Number();
+                    int ToNumber = ToChannel->Number();
+                    if (FromNumber != ToNumber) {
+                       Channels.Move(FromChannel, ToChannel);
+                       Channels.ReNumber();
+                       Channels.SetModified(true);
+                       if (CurrentChannel && CurrentChannel->Number() != CurrentChannelNr)
+                          Channels.SwitchTo(CurrentChannel->Number());
+                       isyslog("channel %d moved to %d", FromNumber, ToNumber);
+                       Reply(250,"Channel \"%d\" moved to \"%d\"", From, To);
+                       }
+                    else
+                       Reply(501, "Can't move channel to same postion");
+                    }
+                 else
+                    Reply(501, "Channel \"%d\" not defined", To);
+                 }
+              else
+                 Reply(501, "Channel \"%d\" not defined", From);
+              }
+           else
+              Reply(501, "Error in channel number");
+           }
+        else
+           Reply(501, "Error in channel number");
+        }
+     else
+        Reply(550, "Channels or timers are being edited - try again later");
+     }
+  else
+     Reply(501, "Missing channel number");
 }
 
 void cSVDRP::CmdMOVT(const char *Option)
@@ -880,15 +1195,15 @@ void cSVDRP::CmdNEWC(const char *Option)
 {
   if (*Option) {
      cChannel ch;
-     if (ch.Parse(Option, true)) {
+     if (ch.Parse(Option)) {
         if (Channels.HasUniqueChannelID(&ch)) {
            cChannel *channel = new cChannel;
            *channel = ch;
            Channels.Add(channel);
            Channels.ReNumber();
-           Channels.Save();
-           isyslog("new channel %d %s", channel->Number(), channel->ToText());
-           Reply(250, "%d %s", channel->Number(), channel->ToText());
+           Channels.SetModified(true);
+           isyslog("new channel %d %s", channel->Number(), *channel->ToText());
+           Reply(250, "%d %s", channel->Number(), *channel->ToText());
            }
         else
            Reply(501, "Channel settings are not unique");
@@ -908,13 +1223,13 @@ void cSVDRP::CmdNEWT(const char *Option)
         cTimer *t = Timers.GetTimer(timer);
         if (!t) {
            Timers.Add(timer);
-           Timers.Save();
-           isyslog("timer %d added", timer->Index() + 1);
-           Reply(250, "%d %s", timer->Index() + 1, timer->ToText());
+           Timers.SetModified();
+           isyslog("timer %s added", *timer->ToDescr());
+           Reply(250, "%d %s", timer->Index() + 1, *timer->ToText());
            return;
            }
         else
-           Reply(550, "Timer already defined: %d %s", t->Index() + 1, t->ToText());
+           Reply(550, "Timer already defined: %d %s", t->Index() + 1, *t->ToText());
         }
      else
         Reply(501, "Error in timer settings");
@@ -930,11 +1245,8 @@ void cSVDRP::CmdNEXT(const char *Option)
   if (t) {
      time_t Start = t->StartTime();
      int Number = t->Index() + 1;
-     if (!*Option) {
-        char *s = ctime(&Start);
-        s[strlen(s) - 1] = 0; // strip trailing newline
-        Reply(250, "%d %s", Number, s);
-        }
+     if (!*Option)
+        Reply(250, "%d %s", Number, *TimeToString(Start));
      else if (strcasecmp(Option, "ABS") == 0)
         Reply(250, "%d %ld", Number, Start);
      else if (strcasecmp(Option, "REL") == 0)
@@ -946,23 +1258,148 @@ void cSVDRP::CmdNEXT(const char *Option)
      Reply(550, "No active timers");
 }
 
+void cSVDRP::CmdPLAY(const char *Option)
+{
+  if (*Option) {
+     char *opt = strdup(Option);
+     char *num = skipspace(opt);
+     char *option = num;
+     while (*option && !isspace(*option))
+           option++;
+     char c = *option;
+     *option = 0;
+     if (isnumber(num)) {
+        cRecording *recording = Recordings.Get(strtol(num, NULL, 10) - 1);
+        if (recording) {
+           if (c)
+              option = skipspace(++option);
+           cReplayControl::SetRecording(NULL, NULL);
+           cControl::Shutdown();
+           if (*option) {
+              int pos = 0;
+              if (strcasecmp(option, "BEGIN") != 0) {
+                 int h, m = 0, s = 0, f = 1;
+                 int x = sscanf(option, "%d:%d:%d.%d", &h, &m, &s, &f);
+                 if (x == 1)
+                    pos = h;
+                 else if (x >= 3)
+                    pos = (h * 3600 + m * 60 + s) * FRAMESPERSEC + f - 1;
+                 }
+              cResumeFile resume(recording->FileName());
+              if (pos <= 0)
+                 resume.Delete();
+              else
+                 resume.Save(pos);
+              }
+           cReplayControl::SetRecording(recording->FileName(), recording->Title());
+           cControl::Launch(new cReplayControl);
+           cControl::Attach();
+           Reply(250, "Playing recording \"%s\" [%s]", num, recording->Title());
+           }
+        else
+           Reply(550, "Recording \"%s\" not found%s", num, Recordings.Count() ? "" : " (use LSTR before playing)");
+        }
+     else
+        Reply(501, "Error in recording number \"%s\"", num);
+     free(opt);
+     }
+  else
+     Reply(501, "Missing recording number");
+}
+
+void cSVDRP::CmdPLUG(const char *Option)
+{
+  if (*Option) {
+     char *opt = strdup(Option);
+     char *name = skipspace(opt);
+     char *option = name;
+     while (*option && !isspace(*option))
+        option++;
+     char c = *option;
+     *option = 0;
+     cPlugin *plugin = cPluginManager::GetPlugin(name);
+     if (plugin) {
+        if (c)
+           option = skipspace(++option);
+        char *cmd = option;
+        while (*option && !isspace(*option))
+              option++;
+        if (*option) {
+           *option++ = 0;
+           option = skipspace(option);
+           }
+        if (!*cmd || strcasecmp(cmd, "HELP") == 0) {
+           if (*cmd && *option) {
+              const char *hp = GetHelpPage(option, plugin->SVDRPHelpPages());
+              if (hp) {
+                 Reply(-214, "%s", hp);
+                 Reply(214, "End of HELP info");
+                 }
+              else
+                 Reply(504, "HELP topic \"%s\" for plugin \"%s\" unknown", option, plugin->Name());
+              }
+           else {
+              Reply(-214, "Plugin %s v%s - %s", plugin->Name(), plugin->Version(), plugin->Description());
+              const char **hp = plugin->SVDRPHelpPages();
+              if (hp) {
+                 Reply(-214, "SVDRP commands:");
+                 PrintHelpTopics(hp);
+                 Reply(214, "End of HELP info");
+                 }
+              else
+                 Reply(214, "This plugin has no SVDRP commands");
+              }
+           }
+        else if (strcasecmp(cmd, "MAIN") == 0) {
+           if (cRemote::CallPlugin(plugin->Name()))
+              Reply(250, "Initiated call to main menu function of plugin \"%s\"", plugin->Name());
+           else
+              Reply(550, "A plugin call is already pending - please try again later");
+           }
+        else {
+           int ReplyCode = 900;
+           cString s = plugin->SVDRPCommand(cmd, option, ReplyCode);
+           if (s)
+              Reply(abs(ReplyCode), "%s", *s);
+           else
+              Reply(500, "Command unrecognized: \"%s\"", cmd);
+           }
+        }
+     else
+        Reply(550, "Plugin \"%s\" not found (use PLUG for a list of plugins)", name);
+     free(opt);
+     }
+  else {
+     Reply(-214, "Available plugins:");
+     cPlugin *plugin;
+     for (int i = 0; (plugin = cPluginManager::GetPlugin(i)) != NULL; i++)
+         Reply(-214, "%s v%s - %s", plugin->Name(), plugin->Version(), plugin->Description());
+     Reply(214, "End of plugin list");
+     }
+}
+
 void cSVDRP::CmdPUTE(const char *Option)
 {
   delete PUTEhandler;
   PUTEhandler = new cPUTEhandler;
-  Reply(PUTEhandler->Status(), PUTEhandler->Message());
+  Reply(PUTEhandler->Status(), "%s", PUTEhandler->Message());
   if (PUTEhandler->Status() != 354)
      DELETENULL(PUTEhandler);
+}
+
+void cSVDRP::CmdSCAN(const char *Option)
+{
+  EITScanner.ForceScan();
+  Reply(250, "EPG scan triggered");
 }
 
 void cSVDRP::CmdSTAT(const char *Option)
 {
   if (*Option) {
      if (strcasecmp(Option, "DISK") == 0) {
-        int FreeMB;
-        int Percent = VideoDiskSpace(&FreeMB);
-        int Total = (FreeMB / (100 - Percent)) * 100;
-        Reply(250, "%dMB %dMB %d%%", Total, FreeMB, Percent);
+        int FreeMB, UsedMB;
+        int Percent = VideoDiskSpace(&FreeMB, &UsedMB);
+        Reply(250, "%dMB %dMB %d%%", FreeMB + UsedMB, FreeMB, Percent);
         }
      else
         Reply(501, "Invalid Option \"%s\"", Option);
@@ -976,20 +1413,24 @@ void cSVDRP::CmdUPDT(const char *Option)
   if (*Option) {
      cTimer *timer = new cTimer;
      if (timer->Parse(Option)) {
-        cTimer *t = Timers.GetTimer(timer);
-        if (t) {
-           t->Parse(Option);
-           delete timer;
-           timer = t;
-           isyslog("timer %d updated", timer->Index() + 1);
+        if (!Timers.BeingEdited()) {
+           cTimer *t = Timers.GetTimer(timer);
+           if (t) {
+              t->Parse(Option);
+              delete timer;
+              timer = t;
+              isyslog("timer %s updated", *timer->ToDescr());
+              }
+           else {
+              Timers.Add(timer);
+              isyslog("timer %s added", *timer->ToDescr());
+              }
+           Timers.SetModified();
+           Reply(250, "%d %s", timer->Index() + 1, *timer->ToText());
+           return;
            }
-        else {
-           Timers.Add(timer);
-           isyslog("timer %d added", timer->Index() + 1);
-           }
-        Timers.Save();
-        Reply(250, "%d %s", timer->Index() + 1, timer->ToText());
-        return;
+        else
+           Reply(550, "Timers are being edited - try again later");
         }
      else
         Reply(501, "Error in timer settings");
@@ -1028,7 +1469,7 @@ void cSVDRP::Execute(char *Cmd)
   // handle PUTE data:
   if (PUTEhandler) {
      if (!PUTEhandler->Process(Cmd)) {
-        Reply(PUTEhandler->Status(), PUTEhandler->Message());
+        Reply(PUTEhandler->Status(), "%s", PUTEhandler->Message());
         DELETENULL(PUTEhandler);
         }
      return;
@@ -1047,6 +1488,7 @@ void cSVDRP::Execute(char *Cmd)
   else if (CMD("DELC"))  CmdDELC(s);
   else if (CMD("DELR"))  CmdDELR(s);
   else if (CMD("DELT"))  CmdDELT(s);
+  else if (CMD("EDIT"))  CmdEDIT(s);
   else if (CMD("GRAB"))  CmdGRAB(s);
   else if (CMD("HELP"))  CmdHELP(s);
   else if (CMD("HITK"))  CmdHITK(s);
@@ -1062,7 +1504,10 @@ void cSVDRP::Execute(char *Cmd)
   else if (CMD("NEWC"))  CmdNEWC(s);
   else if (CMD("NEWT"))  CmdNEWT(s);
   else if (CMD("NEXT"))  CmdNEXT(s);
+  else if (CMD("PLAY"))  CmdPLAY(s);
+  else if (CMD("PLUG"))  CmdPLUG(s);
   else if (CMD("PUTE"))  CmdPUTE(s);
+  else if (CMD("SCAN"))  CmdSCAN(s);
   else if (CMD("STAT"))  CmdSTAT(s);
   else if (CMD("UPDT"))  CmdUPDT(s);
   else if (CMD("VOLU"))  CmdVOLU(s);
@@ -1081,7 +1526,7 @@ bool cSVDRP::Process(void)
         char buffer[BUFSIZ];
         gethostname(buffer, sizeof(buffer));
         time_t now = time(NULL);
-        Reply(220, "%s SVDRP VideoDiskRecorder %s; %s", buffer, VDRVERSION, ctime(&now));
+        Reply(220, "%s SVDRP VideoDiskRecorder %s; %s", buffer, VDRVERSION, *TimeToString(now));
         }
      if (NewConnection)
         lastActivity = time(NULL);
@@ -1098,6 +1543,11 @@ bool cSVDRP::Process(void)
                  // showtime!
                  Execute(cmdLine);
                  numChars = 0;
+                 if (length > BUFSIZ) {
+                    free(cmdLine); // let's not tie up too much memory
+                    length = BUFSIZ;
+                    cmdLine = MALLOC(char, length);
+                    }
                  }
               else if (c == 0x04 && numChars == 0) {
                  // end of file (only at beginning of line)
@@ -1111,14 +1561,13 @@ bool cSVDRP::Process(void)
               else if (c <= 0x03 || c == 0x0D) {
                  // ignore control characters
                  }
-              else if (numChars < sizeof(cmdLine) - 1) {
+              else {
+                 if (numChars >= length - 1) {
+                    length += BUFSIZ;
+                    cmdLine = (char *)realloc(cmdLine, length);
+                    }
                  cmdLine[numChars++] = c;
                  cmdLine[numChars] = 0;
-                 }
-              else {
-                 Reply(501, "Command line too long");
-                 esyslog("SVDRP: command line too long: '%s'", cmdLine);
-                 numChars = 0;
                  }
               lastActivity = time(NULL);
               }
@@ -1138,11 +1587,10 @@ bool cSVDRP::Process(void)
   return false;
 }
 
-char *cSVDRP::GetMessage(void)
+void cSVDRP::SetGrabImageDir(const char *GrabImageDir)
 {
-  char *s = message;
-  message = NULL;
-  return s;
+  free(grabImageDir);
+  grabImageDir = GrabImageDir ? strdup(GrabImageDir) : NULL;
 }
 
 //TODO more than one connection???

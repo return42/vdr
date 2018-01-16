@@ -4,15 +4,17 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: tools.h 1.54 2002/12/15 14:59:53 kls Exp $
+ * $Id: tools.h 1.93 2006/04/16 10:40:45 kls Exp $
  */
 
 #ifndef __TOOLS_H
 #define __TOOLS_H
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <syslog.h>
@@ -24,9 +26,9 @@ typedef unsigned long long int uint64;
 
 extern int SysLogLevel;
 
-#define esyslog(a...) void( (SysLogLevel > 0) ? syslog(LOG_ERR,   a) : void() )
-#define isyslog(a...) void( (SysLogLevel > 1) ? syslog(LOG_INFO,  a) : void() )
-#define dsyslog(a...) void( (SysLogLevel > 2) ? syslog(LOG_DEBUG, a) : void() )
+#define esyslog(a...) void( (SysLogLevel > 0) ? syslog_with_tid(LOG_ERR,   a) : void() )
+#define isyslog(a...) void( (SysLogLevel > 1) ? syslog_with_tid(LOG_INFO,  a) : void() )
+#define dsyslog(a...) void( (SysLogLevel > 2) ? syslog_with_tid(LOG_DEBUG, a) : void() )
 
 #define LOG_ERROR         esyslog("ERROR (%s,%d): %m", __FILE__, __LINE__)
 #define LOG_ERROR_STR(s)  esyslog("ERROR: %s: %m", s)
@@ -36,14 +38,12 @@ extern int SysLogLevel;
 #define KILOBYTE(n) ((n) * 1024)
 #define MEGABYTE(n) ((n) * 1024 * 1024)
 
-#define MAXPARSEBUFFER KILOBYTE(10)
-
 #define MALLOC(type, size)  (type *)malloc(sizeof(type) * (size))
 
 #define DELETENULL(p) (delete (p), p = NULL)
 
 #define CHECK(s) { if ((s) < 0) LOG_ERROR; } // used for 'ioctl()' calls
-#define FATALERRNO (errno != EAGAIN && errno != EINTR)
+#define FATALERRNO (errno && errno != EAGAIN && errno != EINTR)
 
 #ifndef __STL_CONFIG_H // in case some plugin needs to use the STL
 template<class T> inline T min(T a, T b) { return a <= b ? a : b; }
@@ -52,10 +52,46 @@ template<class T> inline int sgn(T a) { return a < 0 ? -1 : a > 0 ? 1 : 0; }
 template<class T> inline void swap(T &a, T &b) { T t = a; a = b; b = t; }
 #endif
 
+void syslog_with_tid(int priority, const char *format, ...) __attribute__ ((format (printf, 2, 3)));
+
+#define BCDCHARTOINT(x) (10 * ((x & 0xF0) >> 4) + (x & 0xF))
+int BCD2INT(int x);
+
+// Unfortunately there are no platform independent macros for unaligned
+// access. so we do it this way:
+
+template<class T> inline T get_unaligned(T *p)
+{
+  struct s { T v; } __attribute__((packed));
+  return ((s *)p)->v;
+}
+
+template<class T> inline void put_unaligned(unsigned int v, T* p)
+{
+  struct s { T v; } __attribute__((packed));
+  ((s *)p)->v = v;
+}
+
+class cString {
+private:
+  char *s;
+public:
+  cString(const char *S = NULL, bool TakePointer = false);
+  cString(const cString &String);
+  virtual ~cString();
+  operator const char * () const { return s; } // for use in (const char *) context
+  const char * operator*() const { return s; } // for use in (const void *) context (printf() etc.)
+  cString &operator=(const cString &String);
+  static cString sprintf(const char *fmt, ...) __attribute__ ((format (printf, 1, 2)));
+  };
+
 ssize_t safe_read(int filedes, void *buffer, size_t size);
 ssize_t safe_write(int filedes, const void *buffer, size_t size);
 void writechar(int filedes, char c);
-char *readline(FILE *f);
+int WriteAllOrNothing(int fd, const uchar *Data, int Length, int TimeoutMs = 0, int RetryMs = 0);
+    ///< Writes either all Data to the given file descriptor, or nothing at all.
+    ///< If TimeoutMs is greater than 0, it will only retry for that long, otherwise
+    ///< it will retry forever. RetryMs defines the time between two retries.
 char *strcpyrealloc(char *dest, const char *src);
 char *strn0cpy(char *dest, const char *src, size_t n);
 char *strreplace(char *s, char c1, char c2);
@@ -63,25 +99,84 @@ char *strreplace(char *s, const char *s1, const char *s2); ///< re-allocates 's'
 char *skipspace(const char *s);
 char *stripspace(char *s);
 char *compactspace(char *s);
-const char *strescape(const char *s, const char *chars); ///< \warning returns a statically allocated string!
+cString strescape(const char *s, const char *chars);
 bool startswith(const char *s, const char *p);
 bool endswith(const char *s, const char *p);
 bool isempty(const char *s);
 int numdigits(int n);
-int time_ms(void);
-void delay_ms(int ms);
 bool isnumber(const char *s);
-const char *itoa(int n); ///< \warning returns a statically allocated string!
-const char *AddDirectory(const char *DirName, const char *FileName); ///< \warning returns a statically allocated string!
+cString itoa(int n);
+cString AddDirectory(const char *DirName, const char *FileName);
 int FreeDiskSpaceMB(const char *Directory, int *UsedMB = NULL);
 bool DirectoryOk(const char *DirName, bool LogErrors = false);
 bool MakeDirs(const char *FileName, bool IsDirectory = false);
 bool RemoveFileOrDir(const char *FileName, bool FollowSymlinks = false);
 bool RemoveEmptyDirectories(const char *DirName, bool RemoveThis = false);
-char *ReadLink(const char *FileName);
+int DirSizeMB(const char *DirName); ///< returns the total size of the files in the given directory, or -1 in case of an error
+char *ReadLink(const char *FileName); ///< returns a new string allocated on the heap, which the caller must delete (or NULL in case of an error)
 bool SpinUpDisk(const char *FileName);
-const char *WeekDayName(int WeekDay); ///< \warning returns a statically allocated string!
-const char *DayDateTime(time_t t = 0); ///< \warning returns a statically allocated string!
+void TouchFile(const char *FileName);
+time_t LastModifiedTime(const char *FileName);
+cString WeekDayName(int WeekDay);
+cString WeekDayName(time_t t);
+cString DayDateTime(time_t t = 0);
+cString TimeToString(time_t t);
+cString DateString(time_t t);
+cString TimeString(time_t t);
+uchar *RgbToJpeg(uchar *Mem, int Width, int Height, int &Size, int Quality = 100);
+    ///< Converts the given Memory to a JPEG image and returns a pointer
+    ///< to the resulting image. Mem must point to a data block of exactly
+    ///< (Width * Height) triplets of RGB image data bytes. Upon return, Size
+    ///< will hold the number of bytes of the resulting JPEG data.
+    ///< Quality can be in the range 0..100 and controls the quality of the
+    ///< resulting image, where 100 is "best". The caller takes ownership of
+    ///< the result and has to delete it once it is no longer needed.
+    ///< The result may be NULL in case of an error.
+
+class cBase64Encoder {
+private:
+  const uchar *data;
+  int length;
+  int maxResult;
+  int i;
+  char *result;
+  static const char *b64;
+public:
+  cBase64Encoder(const uchar *Data, int Length, int MaxResult = 64);
+      ///< Sets up a new base 64 encoder for the given Data, with the given Length.
+      ///< Data will not be copied and must be valid as long as NextLine() will be
+      ///< called. MaxResult defines the maximum number of characters in any
+      ///< result line. The resulting lines may be shorter than MaxResult in case
+      ///< its value is not a multiple of 4.
+  ~cBase64Encoder();
+  const char *NextLine(void);
+      ///< Returns the next line of encoded data (terminated by '\0'), or NULL if
+      ///< there is no more encoded data. The caller must call NextLine() and process
+      ///< each returned line until NULL is returned, in order to get the entire
+      ///< data encoded. The returned data is only valid until the next time NextLine()
+      ///< is called, or until the object is destroyed.
+  };
+
+class cTimeMs {
+private:
+  uint64 begin;
+public:
+  cTimeMs(void);
+  static uint64 Now(void);
+  void Set(int Ms = 0);
+  bool TimedOut(void);
+  uint64 Elapsed(void);
+  };
+
+class cReadLine {
+private:
+  size_t size;
+  char *buffer;
+public:
+  cReadLine(void);
+  ~cReadLine();
+  char *Read(FILE *f);
+  };
 
 class cPoller {
 private:
@@ -93,7 +188,22 @@ public:
   bool Add(int FileHandle, bool Out);
   bool Poll(int TimeoutMs = 0);
   };
-  
+
+class cReadDir {
+private:
+  DIR *directory;
+  struct dirent *result;
+  union { // according to "The GNU C Library Reference Manual"
+    struct dirent d;
+    char b[offsetof(struct dirent, d_name) + NAME_MAX + 1];
+    } u;
+public:
+  cReadDir(const char *Directory);
+  ~cReadDir();
+  bool Ok(void) { return directory != NULL; }
+  struct dirent *Next(void);
+  };
+
 class cFile {
 private:
   static bool files[];
@@ -103,7 +213,7 @@ public:
   cFile(void);
   ~cFile();
   operator int () { return f; }
-  bool Open(const char *FileName, int Flags, mode_t Mode = S_IRUSR | S_IWUSR | S_IRGRP);
+  bool Open(const char *FileName, int Flags, mode_t Mode = DEFFILEMODE);
   bool Open(int FileDes);
   void Close(void);
   bool IsOpen(void) { return f >= 0; }
@@ -126,6 +236,34 @@ public:
   bool Close(void);
   };
 
+/// cUnbufferedFile is used for large files that are mainly written or read
+/// in a streaming manner, and thus should not be cached.
+
+class cUnbufferedFile {
+private:
+  int fd;
+  off_t curpos;
+  off_t cachedstart;
+  off_t cachedend;
+  off_t begin;
+  off_t lastpos;
+  off_t ahead;
+  size_t readahead;
+  size_t written;
+  size_t totwritten;
+  int FadviseDrop(off_t Offset, off_t Len);
+public:
+  cUnbufferedFile(void);
+  ~cUnbufferedFile();
+  int Open(const char *FileName, int Flags, mode_t Mode = DEFFILEMODE);
+  int Close(void);
+  void SetReadAhead(size_t ra);
+  off_t Seek(off_t Offset, int Whence);
+  ssize_t Read(void *Data, size_t Size);
+  ssize_t Write(const void *Data, size_t Size);
+  static cUnbufferedFile *Create(const char *FileName, int Flags, mode_t Mode = DEFFILEMODE);
+  };
+
 class cLockFile {
 private:
   char *fileName;
@@ -143,11 +281,13 @@ private:
 public:
   cListObject(void);
   virtual ~cListObject();
-  virtual bool operator< (const cListObject &ListObject) { return false; }
+  virtual int Compare(const cListObject &ListObject) const { return 0; }
+      ///< Must return 0 if this object is equal to ListObject, a positive value
+      ///< if it is "greater", and a negative value if it is "smaller".
   void Append(cListObject *Object);
   void Insert(cListObject *Object);
   void Unlink(void);
-  int Index(void);
+  int Index(void) const;
   cListObject *Prev(void) const { return prev; }
   cListObject *Next(void) const { return next; }
   };
@@ -156,6 +296,7 @@ class cListBase {
 protected:
   cListObject *objects, *lastObject;
   cListBase(void);
+  int count;
 public:
   virtual ~cListBase();
   void Add(cListObject *Object, cListObject *After = NULL);
@@ -165,7 +306,7 @@ public:
   void Move(cListObject *From, cListObject *To);
   virtual void Clear(void);
   cListObject *Get(int Index) const;
-  int Count(void) const;
+  int Count(void) const { return count; }
   void Sort(void);
   };
 
@@ -177,5 +318,39 @@ public:
   T *Prev(const T *object) const { return (T *)object->cListObject::Prev(); } // need to call cListObject's members to
   T *Next(const T *object) const { return (T *)object->cListObject::Next(); } // avoid ambiguities in case of a "list of lists"
   };
+
+class cHashObject : public cListObject {
+  friend class cHashBase;
+private:
+  unsigned int id;
+  cListObject *object;
+public:
+  cHashObject(cListObject *Object, unsigned int Id) { object = Object; id = Id; }
+  cListObject *Object(void) { return object; }
+  };
+
+class cHashBase {
+private:
+  cList<cHashObject> **hashTable;
+  int size;
+  unsigned int hashfn(unsigned int Id) const { return Id % size; }
+protected:
+  cHashBase(int Size);
+public:
+  virtual ~cHashBase();
+  void Add(cListObject *Object, unsigned int Id);
+  void Del(cListObject *Object, unsigned int Id);
+  void Clear(void);
+  cListObject *Get(unsigned int Id) const;
+  cList<cHashObject> *GetList(unsigned int Id) const;
+  };
+
+#define HASHSIZE 512
+
+template<class T> class cHash : public cHashBase {
+public:
+  cHash(int Size = HASHSIZE) : cHashBase(Size) {}
+  T *Get(unsigned int Id) const { return (T *)cHashBase::Get(Id); }
+};
 
 #endif //__TOOLS_H

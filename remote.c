@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: remote.c 1.38 2003/05/02 10:49:50 kls Exp $
+ * $Id: remote.c 1.50 2006/04/17 08:58:28 kls Exp $
  */
 
 #include "remote.h"
@@ -18,9 +18,13 @@
 
 // --- cRemote ---------------------------------------------------------------
 
+#define INITTIMEOUT   10000 // ms
+#define REPEATTIMEOUT  1000 // ms
+
 eKeys cRemote::keys[MaxKeys];
 int cRemote::in = 0;
 int cRemote::out = 0;
+cTimeMs cRemote::repeatTimeout;
 cRemote *cRemote::learning = NULL;
 char *cRemote::unknownCode = NULL;
 cMutex cRemote::mutex;
@@ -46,6 +50,17 @@ const char *cRemote::GetSetup(void)
 void cRemote::PutSetup(const char *Setup)
 {
   Keys.PutSetup(Name(), Setup);
+}
+
+bool cRemote::Initialize(void)
+{
+  if (Ready()) {
+     char *NewCode = NULL;
+     eKeys Key = Get(INITTIMEOUT, &NewCode);
+     if (Key != kNone || NewCode)
+        return true;
+     }
+  return false;
 }
 
 void cRemote::Clear(void)
@@ -130,8 +145,28 @@ bool cRemote::Put(const char *Code, bool Repeat, bool Release)
   return false;
 }
 
+bool cRemote::CallPlugin(const char *Plugin)
+{
+  cMutexLock MutexLock(&mutex);
+  if (!plugin) {
+     plugin = Plugin;
+     Put(k_Plugin);
+     return true;
+     }
+  return false;
+}
+
+const char *cRemote::GetPlugin(void)
+{
+  cMutexLock MutexLock(&mutex);
+  const char *p = plugin;
+  plugin = NULL;
+  return p;
+}
+
 bool cRemote::HasKeys(void)
 {
+  cMutexLock MutexLock(&mutex);
   return in != out && !(keys[out] & k_Repeat);
 }
 
@@ -143,9 +178,11 @@ eKeys cRemote::Get(int WaitMs, char **UnknownCode)
          eKeys k = keys[out];
          if (++out >= MaxKeys)
             out = 0;
+         if ((k & k_Repeat) != 0)
+            repeatTimeout.Set(REPEATTIMEOUT);
          return k;
          }
-      else if (!WaitMs || !keyPressed.TimedWait(mutex, WaitMs)) {
+      else if (!WaitMs || !keyPressed.TimedWait(mutex, WaitMs) && repeatTimeout.TimedOut()) {
          if (learning && UnknownCode) {
             *UnknownCode = unknownCode;
             unknownCode = NULL;
@@ -197,8 +234,8 @@ bool cKbdRemote::rawMode = false;
 
 cKbdRemote::cKbdRemote(void)
 :cRemote("KBD")
+,cThread("KBD remote control")
 {
-  active = false;
   tcgetattr(STDIN_FILENO, &savedTm);
   struct termios tm;
   if (tcgetattr(STDIN_FILENO, &tm) == 0) {
@@ -215,7 +252,6 @@ cKbdRemote::cKbdRemote(void)
 cKbdRemote::~cKbdRemote()
 {
   kbdAvailable = false;
-  active = false;
   Cancel(3);
   tcsetattr(STDIN_FILENO, TCSANOW, &savedTm);
 }
@@ -243,47 +279,73 @@ int cKbdRemote::MapCodeToFunc(uint64 Code)
   return (Code <= 0xFF) ? Code : kfNone;
 }
 
+int cKbdRemote::ReadKey(void)
+{
+  cPoller Poller(STDIN_FILENO);
+  if (Poller.Poll(50)) {
+     uchar ch = 0;
+     int r = safe_read(STDIN_FILENO, &ch, 1);
+     if (r == 1)
+        return ch;
+     if (r < 0)
+        LOG_ERROR_STR("cKbdRemote");
+     }
+  return -1;
+}
+
+uint64 cKbdRemote::ReadKeySequence(void)
+{
+  uint64 k = 0;
+  int key1;
+
+  if ((key1 = ReadKey()) >= 0) {
+     k = key1;
+     if (key1 == 0x1B) {
+         // Start of escape sequence
+         if ((key1 = ReadKey()) >= 0) {
+            k <<= 8;
+            k |= key1 & 0xFF;
+            switch (key1) {
+              case 0x4F: // 3-byte sequence
+                   if ((key1 = ReadKey()) >= 0) {
+                      k <<= 8;
+                      k |= key1 & 0xFF;
+                      }
+                   break;
+              case 0x5B: // 3- or more-byte sequence
+                   if ((key1 = ReadKey()) >= 0) {
+                      k <<= 8;
+                      k |= key1 & 0xFF;
+                      switch (key1) {
+                        case 0x31 ... 0x3F: // more-byte sequence
+                        case 0x5B: // strange, may apparently occur
+                             do {
+                                if ((key1 = ReadKey()) < 0)
+                                   break; // Sequence ends here
+                                k <<= 8;
+                                k |= key1 & 0xFF;
+                                } while (key1 != 0x7E);
+                             break;
+                        }
+                      }
+                   break;
+              }
+            }
+        }
+     }
+  return k;
+}
+
 void cKbdRemote::Action(void)
 {
-  dsyslog("KBD remote control thread started (pid=%d)", getpid());
-  cPoller Poller(STDIN_FILENO);
-  active = true;
-  while (active) {
-        if (Poller.Poll(100)) {
-           uint64 Command = 0;
-           uint i = 0;
-           int t0 = time_ms();
-           while (active && i < sizeof(Command)) {
-                 uchar ch;
-                 int r = read(STDIN_FILENO, &ch, 1);
-                 if (r == 1) {
-                    Command <<= 8;
-                    Command |= ch;
-                    i++;
-                    }
-                 else if (r == 0) {
-                    // don't know why, but sometimes special keys that start with
-                    // 0x1B ('ESC') cause a short gap between the 0x1B and the rest
-                    // of their codes, so we'll need to wait some 100ms to see if
-                    // there is more coming up - or whether this really is the 'ESC'
-                    // key (if somebody knows how to clean this up, please let me know):
-                    if (Command == 0x1B && time_ms() - t0 < 100)
-                       continue;
-                    if (Command) {
-                       if (rawMode || !Put(Command)) {
-                          int func = MapCodeToFunc(Command);
-                          if (func)
-                             Put(KBDKEY(func));
-                          }
-                       }
-                    break;
-                    }
-                 else {
-                    LOG_ERROR;
-                    break;
-                    }
-                 }
+  while (Running()) {
+        uint64 Command = ReadKeySequence();
+        if (Command) {
+           if (rawMode || !Put(Command)) {
+              int func = MapCodeToFunc(Command);
+              if (func)
+                 Put(KBDKEY(func));
+              }
            }
         }
-  dsyslog("KBD remote control thread ended (pid=%d)", getpid());
 }

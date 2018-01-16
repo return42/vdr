@@ -1,35 +1,45 @@
 Installation of the Video Disk Recorder
 ---------------------------------------
 
-Version 1.2
+Version 1.4
 -----------
 
-IMPORTANT NOTE:
----------------
+IMPORTANT NOTES:
+----------------
 
-VDR currently doesn't work with NPTL ("Native Posix Thread Library").
-Either don't use NPTL, or set the environment variable
-
-  LD_ASSUME_KERNEL=2.4.1
-  
-before running VDR.
+Please make sure your environment is NOT set to use UTF-8 or
+any other multibyte character representation. Check the value of your
+$LANG or $LC_CTYPE environment variable, and if it contains something
+like "de_DE.UTF-8", make sure you set it to something like "de_DE.iso8859-1"
+or whatever single byte character mode you want. If you run VDR with
+UTF-8 enabled, it may crash in case it encounters EPG or channel data
+that contains non-7-bit ASCII characters. Another problem may occur if
+you have mounted your video partition with "iocharset=utf8". In that case
+recordings that contain umlauts or other non-seven-bit ASCII characters
+may be displayed wrong, or not at all. Please make sure you mount your
+video partition with "iocharset=iso8859-1" or whatever single byte character
+mode you want.
 
 Compiling and running the program:
 ----------------------------------
 
-Make sure the files from this package are located in a
-directory that is "parallel" to the DVB directory of the
-driver source for the Siemens DVB-S PCI card (refer to
-http://linuxtv.org/dvb/siemens_dvb.html for more information
-about that driver). For example, if the DVB driver was 
-extracted into the directory /home/kls/vdr/DVB, then this
-package should be extracted into /home/kls/vdr/VDR.
-If you have the DVB driver source in a different location
-you will have to change the definition of DVBDIR in the
-Makefile (see the file Make.config.template).
+VDR requires the Linux-DVB driver header files to compile.
+As of kernel 2.6 these are part of the official Linux kernel
+distribution, and so they should be automatically found in
+/usr/include/linux/dvb. If your DVB driver header files are
+in a different location, you can rename the file Make.config.template
+to Make.config and adjust the definition of DVBDIR in that file.
 
-VDR requires the Linux-DVB card driver version dated 2003-08-23 or higher
+Refer to http://linuxtv.org for more information about the Linux-DVB driver.
+
+VDR requires the Linux-DVB driver version dated 2003-08-23 or higher
 to work properly.
+
+You will also need to install the "libjpeg" and "libcap" libraries,
+as well as their "devel" packages to get the necessary header files
+for compiling VDR. If the "capability" module is not compiled into
+your kernel, you may need to do "modprobe capability" before running
+VDR.
 
 After extracting the package, change into the VDR directory
 and type 'make'. This should produce an executable file
@@ -39,29 +49,31 @@ installed.
 IMPORTANT: See "Configuration files" below for information on how
 =========  to set up the configuration files at the proper location!
 
-By default the 'vdr' program can be controlled via the PC keyboard. If you have
-an infrared remote control unit you can define the REMOTE macro to one of the
-following values in the 'make' call to activate the respective control mode:
+By default the 'vdr' program can be controlled via the PC keyboard.
+If you want to disable control via the keyboard, you can add NO_KBD=1
+to the 'make' call, or use the '--no-kbd' option at runtime.
+
+If you have an infrared remote control unit you can define the REMOTE macro
+to one of the following values in the 'make' call to make the respective control
+the default:
 
   REMOTE=RCU    control via the "Remote Control Unit" receiver
                 (see http://www.cadsoft.de/vdr/remote.htm)
   REMOTE=LIRC   control via the "Linux Infrared Remote Control"
                 (see http://www.lirc.org)
 
-If you want to disable control via the PC keyboard, you can add NO_KBD=1
-to the 'make' call.
-Adding "DEBUG_OSD=1" will use the PC screen (or current window)
-to display texts instead of the DVB card's on-screen display
-interface. These modes are useful when testing new menus if you
-only have a remote connection to the VDR (which, in my case, is
-located in the living room and has neither a monitor nor a keyboard).
+Alternatively you can use the '--rcu' or '--lirc' options at runtime.
+These options accept an optional path to the remote control device,
+the defaults of which can be set via the RCU_DEVICE and LIRC_DEVICE macros,
+respectively.
 
 If your video directory will be on a VFAT partition, add the compile
 time switch
 
   VFAT=1
 
-to the 'make' command.
+to the 'make' command. Alternatively, you can call VDR with the command
+line option '--vfat'.
 
 When running, the 'vdr' program writes status information into the
 system log file (/var/log/messages). You may want to watch these
@@ -118,8 +130,22 @@ If you run VDR using the 'runvdr' shell script it will use the built-in
 watchdog timer to restart the program in case something happens that
 causes a program hangup. If you change the command line options for the
 call to the VDR program, be sure to NOT use the '-d' option! Otherwise
-VDR will go into 'deamon' mode and the initial program call will return
-immediately!
+VDR will go into 'daemon' mode and the initial program call will return
+immediately! 'runvdr' needs to be started as user 'root'. Use the '-u'
+option to run the actual 'vdr' program under a different user id.
+
+Setting the system time:
+------------------------
+
+If you want VDR to set the system time according to the data received
+from the transponder, you need to start VDR as user 'root'. For security
+reasons you should then use the '-u' option to define a lesser privileged
+user id under which VDR should actually run. It will then only keep the
+capability to set the system time, and set its user id to the given one.
+You also need to enable the "EPG/Set system time" option in VDR's
+Setup menu, and select a transponder from which you want to receive
+the time in "Use time from transponder". Make sure you select a transponder
+that has a reliable clock - some transponders are quite off.
 
 Automatic shutdown:
 -------------------
@@ -242,7 +268,9 @@ Use "vdr --help" for a list of available command line options.
 Replaying Dolby Digital audio:
 ------------------------------
 
-To replay Dolby Digital audio you need a program that reads the DD data
+If you have a "full featured" DVB card with SPDIF output you can replay
+Dolby Digital audio directly through the DVB card.
+You can also use an external program that reads the DD data
 from stdin and processes it in a way suitable for your audio hardware.
 This program must be given to VDR with the '-a' option, as in
 
@@ -260,7 +288,7 @@ name you use with '-v' is a clean and absolute path name (no '..' or
 multiple slashes).
 
 Note that the file system need not be 64-bit proof, since the 'vdr'
-program splits video files into chunks of about 1GB. You should use
+program splits video files into chunks of about 2GB. You should use
 a disk with several gigabytes of free space. One GB can store roughly
 half an hour of video data.
 
@@ -292,9 +320,16 @@ with the name of the basic directory when running 'vdr':
    vdr -v /video0
 
 Note that you should not copy any non-VDR files into the /videoX directories,
-since this might cause the watchdog timer to expire when VDR cleans up those
+since this might cause a lot of unnecessary disk access when VDR cleans up those
 directories and there is a large number of files and/or subdirectories in
 there.
+
+If your video directory is mounted via a Samba share, and you are experiencing
+problems with replaying in fast forward mode, you can comment out the line
+
+#define USE_FADVISE
+
+in the file tools.c, which may lead to better results.
 
 Configuration files:
 --------------------

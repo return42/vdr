@@ -4,22 +4,28 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: recording.h 1.28 2003/10/17 14:27:36 kls Exp $
+ * $Id: recording.h 1.54 2006/04/09 13:47:11 kls Exp $
  */
 
 #ifndef __RECORDING_H
 #define __RECORDING_H
 
 #include <time.h>
+#include "channels.h"
 #include "config.h"
+#include "epg.h"
 #include "thread.h"
 #include "timers.h"
 #include "tools.h"
 
+extern bool VfatFileSystem;
+
 void RemoveDeletedRecordings(void);
-void AssertFreeDiskSpace(int Priority = 0);
+void AssertFreeDiskSpace(int Priority = 0, bool Force = false);
      ///< The special Priority value -1 means that we shall get rid of any
      ///< deleted recordings faster than normal (because we're cutting).
+     ///< If Force is true, the check will be done even if the timeout
+     ///< hasn't expired yet.
 
 class cResumeFile {
 private:
@@ -32,34 +38,60 @@ public:
   void Delete(void);
   };
 
-class cRecording : public cListObject {
+class cRecordingInfo {
+  friend class cRecording;
 private:
-  int resume;
-  char *titleBuffer;
-  char *sortBuffer;
-  char *fileName;
-  char *name;
-  char *summary;
-  char *StripEpisodeName(char *s);
-  char *SortName(void);
-  int GetResume(void);
+  tChannelID channelID;
+  const cEvent *event;
+  cEvent *ownEvent;
+  char *aux;
+  cRecordingInfo(const cChannel *Channel = NULL, const cEvent *Event = NULL);
+  void SetData(const char *Title, const char *ShortText, const char *Description);
+  void SetAux(const char *Aux);
+public:
+  ~cRecordingInfo();
+  tChannelID ChannelID(void) { return channelID; }
+  const char *Title(void) const { return event->Title(); }
+  const char *ShortText(void) const { return event->ShortText(); }
+  const char *Description(void) const { return event->Description(); }
+  const cComponents *Components(void) const { return event->Components(); }
+  const char *Aux(void) const { return aux; }
+  bool Read(FILE *f);
+  bool Write(FILE *f, const char *Prefix = "") const;
+  };
+
+class cRecording : public cListObject {
+  friend class cRecordings;
+private:
+  mutable int resume;
+  mutable char *titleBuffer;
+  mutable char *sortBuffer;
+  mutable char *fileName;
+  mutable char *name;
+  mutable int fileSizeMB;
+  cRecordingInfo *info;
+  static char *StripEpisodeName(char *s);
+  char *SortName(void) const;
+  int GetResume(void) const;
 public:
   time_t start;
   int priority;
   int lifetime;
-  cRecording(cTimer *Timer, const char *Title, const char *Subtitle, const char *Summary);
+  time_t deleted;
+  cRecording(cTimer *Timer, const cEvent *Event);
   cRecording(const char *FileName);
-  ~cRecording();
-  virtual bool operator< (const cListObject &ListObject);
-  const char *Name(void) { return name; }
-  const char *FileName(void);
-  const char *Title(char Delimiter = ' ', bool NewIndicator = false, int Level = -1);
-  const char *Summary(void) { return summary; }
+  virtual ~cRecording();
+  virtual int Compare(const cListObject &ListObject) const;
+  const char *Name(void) const { return name; }
+  const char *FileName(void) const;
+  const char *Title(char Delimiter = ' ', bool NewIndicator = false, int Level = -1) const;
+  const cRecordingInfo *Info(void) const { return info; }
   const char *PrefixFileName(char Prefix);
-  int HierarchyLevels(void);
-  bool IsNew(void) { return GetResume() <= 0; }
-  bool IsEdited(void);
-  bool WriteSummary(void);
+  int HierarchyLevels(void) const;
+  void ResetResume(void) const;
+  bool IsNew(void) const { return GetResume() <= 0; }
+  bool IsEdited(void) const;
+  bool WriteInfo(void);
   bool Delete(void);
        // Changes the file name so that it will no longer be visible in the "Recordings" menu
        // Returns false in case of error
@@ -68,21 +100,54 @@ public:
        // Returns false in case of error
   };
 
-class cRecordings : public cList<cRecording> {
+class cRecordings : public cList<cRecording>, public cThread {
+private:
+  static char *updateFileName;
+  bool deleted;
+  time_t lastUpdate;
+  int state;
+  const char *UpdateFileName(void);
+  void Refresh(bool Foreground = false);
+  void ScanVideoDir(const char *DirName, bool Foreground = false, int LinkLevel = 0);
+protected:
+  void Action(void);
 public:
-  bool Load(bool Deleted = false);
+  cRecordings(bool Deleted = false);
+  virtual ~cRecordings();
+  bool Load(void) { return Update(true); }
+       ///< Loads the current list of recordings and returns true if there
+       ///< is anything in it (for compatibility with older plugins - use
+       ///< Update(true) instead).
+  bool Update(bool Wait = false);
+       ///< Triggers an update of the list of recordings, which will run
+       ///< as a separate thread if Wait is false. If Wait is true, the
+       ///< function returns only after the update has completed.
+       ///< Returns true if Wait is true and there is anyting in the list
+       ///< of recordings, false otherwise.
+  void TouchUpdate(void);
+       ///< Touches the '.update' file in the video directory, so that other
+       ///< instances of VDR that access the same video directory can be triggered
+       ///< to update their recordings list.
+  bool NeedsUpdate(void);
+  void ChangeState(void) { state++; }
+  bool StateChanged(int &State);
+  void ResetResume(const char *ResumeFileName = NULL);
   cRecording *GetByName(const char *FileName);
+  void AddByName(const char *FileName);
+  void DelByName(const char *FileName);
+  int TotalFileSizeMB(void); ///< Only for deleted recordings!
   };
 
+extern cRecordings Recordings;
+extern cRecordings DeletedRecordings;
+
 class cMark : public cListObject {
-private:
-  static char *buffer;
 public:
   int position;
   char *comment;
   cMark(int Position = 0, const char *Comment = NULL);
-  ~cMark();
-  const char *ToText(void);
+  virtual ~cMark();
+  cString ToText(void);
   bool Parse(const char *s);
   bool Save(FILE *f);
   };
@@ -112,8 +177,8 @@ public:
 //XXX+
 #define FRAMESPERSEC 25
 
-// The maximum size of a single frame:
-#define MAXFRAMESIZE  KILOBYTE(192)
+// The maximum size of a single frame (up to HDTV 1920x1080):
+#define MAXFRAMESIZE  KILOBYTE(512)
 
 // The maximum file size is limited by the range that can be covered
 // with 'int'. 4GB might be possible (if the range is considered
@@ -145,11 +210,12 @@ public:
   int Last(void) { CatchUp(); return last; }
   int GetResume(void) { return resumeFile.Read(); }
   bool StoreResume(int Index) { return resumeFile.Save(Index); }
+  bool IsStillRecording(void);
   };
 
 class cFileName {
 private:
-  int file;
+  cUnbufferedFile *file;
   int fileNumber;
   char *fileName, *pFileNumber;
   bool record;
@@ -159,19 +225,25 @@ public:
   ~cFileName();
   const char *Name(void) { return fileName; }
   int Number(void) { return fileNumber; }
-  int Open(void);
+  cUnbufferedFile *Open(void);
   void Close(void);
-  int SetOffset(int Number, int Offset = 0);
-  int NextFile(void);
+  cUnbufferedFile *SetOffset(int Number, int Offset = 0);
+  cUnbufferedFile *NextFile(void);
   };
 
-const char *IndexToHMSF(int Index, bool WithFrame = false);
+cString IndexToHMSF(int Index, bool WithFrame = false);
       // Converts the given index to a string, optionally containing the frame number.
 int HMSFToIndex(const char *HMSF);
       // Converts the given string (format: "hh:mm:ss.ff") to an index.
 int SecondsToFrames(int Seconds); //XXX+ ->player???
       // Returns the number of frames corresponding to the given number of seconds.
 
-int ReadFrame(int f, uchar *b, int Length, int Max);
+int ReadFrame(cUnbufferedFile *f, uchar *b, int Length, int Max);
+
+char *ExchangeChars(char *s, bool ToFileSystem);
+      // Exchanges the characters in the given string to or from a file system
+      // specific representation (depending on ToFileSystem). The given string will
+      // be modified and may be reallocated if more space is needed. The return
+      // value points to the resulting string, which may be different from s.
 
 #endif //__RECORDING_H

@@ -3,7 +3,7 @@
  *
  * See the README file for copyright information and how to reach the author.
  *
- * $Id: i18n.c 1.3 2002/06/23 13:05:59 kls Exp $
+ * $Id: i18n.c 1.6 2006/04/22 09:30:57 kls Exp $
  */
 
 #include "i18n.h"
@@ -17,6 +17,7 @@ const tI18nPhrase Phrases[] = {
     "",// TODO
     "",// TODO
     "",// TODO
+    "Hei",
     "",// TODO
     "",// TODO
     "",// TODO
@@ -24,6 +25,11 @@ const tI18nPhrase Phrases[] = {
     "",// TODO
     "",// TODO
     "",// TODO
+    "ø‡ÿ“’‚!",
+    "",// TODO
+    "",// TODO
+    "",// TODO
+    "Ahoj",
   },
   { "Hello world!",
     "Hallo Welt!",
@@ -33,6 +39,7 @@ const tI18nPhrase Phrases[] = {
     "",// TODO
     "",// TODO
     "",// TODO
+    "Hei maailma!",
     "",// TODO
     "",// TODO
     "",// TODO
@@ -40,6 +47,11 @@ const tI18nPhrase Phrases[] = {
     "",// TODO
     "",// TODO
     "",// TODO
+    "∑‘‡–“·‚“„Ÿ ‹ÿ‡!",
+    "",// TODO
+    "",// TODO
+    "",// TODO
+    "Ahoj svÏte!",
   },
   { "Howdy folks!",
     "Tach zusammen!",
@@ -49,6 +61,7 @@ const tI18nPhrase Phrases[] = {
     "",// TODO
     "",// TODO
     "",// TODO
+    "Mit‰ kuuluu?",
     "",// TODO
     "",// TODO
     "",// TODO
@@ -56,6 +69,11 @@ const tI18nPhrase Phrases[] = {
     "",// TODO
     "",// TODO
     "",// TODO
+    "∫–⁄ ﬂﬁ÷ÿ“–’‚’?",
+    "",// TODO
+    "",// TODO
+    "",// TODO
+    "Nazdar vespolek!",
   },
   { "A friendly greeting",
     "Ein freundlicher Gruﬂ",
@@ -65,6 +83,7 @@ const tI18nPhrase Phrases[] = {
     "",// TODO
     "",// TODO
     "",// TODO
+    "Yst‰v‰llisin terveisin",
     "",// TODO
     "",// TODO
     "",// TODO
@@ -72,6 +91,11 @@ const tI18nPhrase Phrases[] = {
     "",// TODO
     "",// TODO
     "",// TODO
+    "¥‡„÷’·⁄ﬁ’ ﬂ‡ÿ“’‚·‚“ÿ’",
+    "",// TODO
+    "",// TODO
+    "",// TODO
+    "P¯·telsk˝ pozdrav",
   },
   { "Greeting time (s)",
     "Dauer des Gruﬂes (s)",
@@ -81,6 +105,7 @@ const tI18nPhrase Phrases[] = {
     "",// TODO
     "",// TODO
     "",// TODO
+    "Tervehdysaika (s)",
     "",// TODO
     "",// TODO
     "",// TODO
@@ -88,6 +113,11 @@ const tI18nPhrase Phrases[] = {
     "",// TODO
     "",// TODO
     "",// TODO
+    "ø‡ﬁ‘ﬁ€÷ÿ‚’€Ï›ﬁ·‚Ï ﬂ‡ÿ“’‚·‚“ÿÔ",
+    "",// TODO
+    "",// TODO
+    "",// TODO
+    "»as pozdravu (s)",
   },
   { "Use alternate greeting",
     "Alternativen Gruﬂ verwenden",
@@ -97,6 +127,7 @@ const tI18nPhrase Phrases[] = {
     "",// TODO
     "",// TODO
     "",// TODO
+    "K‰yt‰ vaihtoehtoista tervehdyst‰",
     "",// TODO
     "",// TODO
     "",// TODO
@@ -104,6 +135,11 @@ const tI18nPhrase Phrases[] = {
     "",// TODO
     "",// TODO
     "",// TODO
+    "∞€Ï‚’‡›–‚ÿ“›ﬁ’ ﬂ‡ÿ“’‚·‚“ÿ’",
+    "",// TODO
+    "",// TODO
+    "",// TODO
+    "PouæÌt alternativnÌ pozdrav",
   },
   { NULL }
   };

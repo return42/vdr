@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: config.h 1.176.1.6 2003/11/14 13:29:13 kls Exp $
+ * $Id: config.h 1.255 2006/04/29 09:24:07 kls Exp $
  */
 
 #ifndef __CONFIG_H
@@ -16,21 +16,36 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
-#include "device.h"
+#include "i18n.h"
 #include "tools.h"
 
-#define VDRVERSION  "1.2.6"
-#define VDRVERSNUM   10206  // Version * 10000 + Major * 100 + Minor
+// VDR's own version number:
+
+#define VDRVERSION  "1.4.0"
+#define VDRVERSNUM   10400  // Version * 10000 + Major * 100 + Minor
+
+// The plugin API's version number:
+
+#define APIVERSION  "1.4.0"
+#define APIVERSNUM   10400  // Version * 10000 + Major * 100 + Minor
+
+// When loading plugins, VDR searches them by their APIVERSION, which
+// may be smaller than VDRVERSION in case there have been no changes to
+// VDR header files since the last APIVERSION. This allows compiled
+// plugins to work with newer versions of the core VDR as long as no
+// VDR header files have changed.
 
 #define MAXPRIORITY 99
 #define MAXLIFETIME 99
 
-#define MINOSDWIDTH  40
-#define MAXOSDWIDTH  56
-#define MINOSDHEIGHT 12
-#define MAXOSDHEIGHT 21
+#define MINOSDWIDTH  480
+#define MAXOSDWIDTH  672
+#define MINOSDHEIGHT 324
+#define MAXOSDHEIGHT 567
 
 #define MaxFileName 256
+#define MaxSkinName 16
+#define MaxThemeName 16
 
 class cCommand : public cListObject {
 private:
@@ -59,20 +74,6 @@ public:
   bool Accepts(in_addr_t Address);
   };
 
-#define CACONFBASE 100
-
-class cCaDefinition : public cListObject {
-private:
-  int number;
-  char *description;
-public:
-  cCaDefinition(void);
-  ~cCaDefinition();
-  bool Parse(const char *s);
-  int Number(void) const { return number; }
-  const char *Description(void) const { return description; }
-  };
-
 template<class T> class cConfig : public cList<T> {
 private:
   char *fileName;
@@ -89,7 +90,7 @@ public:
   const char *FileName(void) { return fileName; }
   bool Load(const char *FileName = NULL, bool AllowComments = false, bool MustExist = false)
   {
-    Clear();
+    cConfig<T>::Clear();
     if (FileName) {
        free(fileName);
        fileName = strdup(FileName);
@@ -100,23 +101,24 @@ public:
        isyslog("loading %s", fileName);
        FILE *f = fopen(fileName, "r");
        if (f) {
+          char *s;
           int line = 0;
-          char buffer[MAXPARSEBUFFER];
+          cReadLine ReadLine;
           result = true;
-          while (fgets(buffer, sizeof(buffer), f) > 0) {
+          while ((s = ReadLine.Read(f)) != NULL) {
                 line++;
                 if (allowComments) {
-                   char *p = strchr(buffer, '#');
+                   char *p = strchr(s, '#');
                    if (p)
                       *p = 0;
                    }
-                stripspace(buffer);
-                if (!isempty(buffer)) {
+                stripspace(s);
+                if (!isempty(s)) {
                    T *l = new T;
-                   if (l->Parse(buffer))
+                   if (l->Parse(s))
                       Add(l);
                    else {
-                      esyslog("ERROR: error in %s, line %d\n", fileName, line);
+                      esyslog("ERROR: error in %s, line %d", fileName, line);
                       delete l;
                       result = false;
                       break;
@@ -137,7 +139,7 @@ public:
   bool Save(void)
   {
     bool result = true;
-    T *l = (T *)First();
+    T *l = (T *)this->First();
     cSafeFile f(fileName);
     if (f.Open()) {
        while (l) {
@@ -163,15 +165,9 @@ public:
   bool Acceptable(in_addr_t Address);
   };
 
-class cCaDefinitions : public cConfig<cCaDefinition> {
-public:
-  const cCaDefinition *Get(int Number);
-  };
-
 extern cCommands Commands;
 extern cCommands RecordingCommands;
 extern cSVDRPhosts SVDRPhosts;
-extern cCaDefinitions CaDefinitions;
 
 class cSetupLine : public cListObject {
 private:
@@ -182,7 +178,7 @@ public:
   cSetupLine(void);
   cSetupLine(const char *Name, const char *Value, const char *Plugin = NULL);
   virtual ~cSetupLine();
-  virtual bool operator< (const cListObject &ListObject);
+  virtual int Compare(const cListObject &ListObject) const;
   const char *Plugin(void) { return plugin; }
   const char *Name(void) { return name; }
   const char *Value(void) { return value; }
@@ -193,8 +189,8 @@ public:
 class cSetup : public cConfig<cSetupLine> {
   friend class cPlugin; // needs to be able to call Store()
 private:
-  void StoreCaCaps(const char *Name);
-  bool ParseCaCaps(const char *Value);
+  void StoreLanguages(const char *Name, int *Values);
+  bool ParseLanguages(const char *Value, int *Values);
   bool Parse(const char *Name, const char *Value);
   cSetupLine *Get(const char *Name, const char *Plugin = NULL);
   void Store(const char *Name, const char *Value, const char *Plugin = NULL, bool AllowMultiple = false);
@@ -203,9 +199,14 @@ public:
   // Also adjust cMenuSetup (menu.c) when adding parameters here!
   int __BeginData__;
   int OSDLanguage;
+  char OSDSkin[MaxSkinName];
+  char OSDTheme[MaxThemeName];
   int PrimaryDVB;
   int ShowInfoOnChSwitch;
+  int TimeoutRequChInfo;
   int MenuScrollPage;
+  int MenuScrollWrap;
+  int MenuButtonCloses;
   int MarkInstantRecord;
   char NameInstantRecord[MaxFileName];
   int InstantRecordTime;
@@ -214,32 +215,43 @@ public:
   int LnbFrequHi;
   int DiSEqC;
   int SetSystemTime;
+  int TimeSource;
   int TimeTransponder;
   int MarginStart, MarginStop;
+  int AudioLanguages[I18nNumLanguages + 1];
+  int EPGLanguages[I18nNumLanguages + 1];
   int EPGScanTimeout;
   int EPGBugfixLevel;
+  int EPGLinger;
   int SVDRPTimeout;
   int ZapTimeout;
-  int SortTimers;
   int PrimaryLimit;
   int DefaultPriority, DefaultLifetime;
   int PausePriority, PauseLifetime;
   int UseSubtitle;
+  int UseVps;
+  int VpsMargin;
   int RecordingDirs;
+  int VideoDisplayFormat;
   int VideoFormat;
-  int RecordDolbyDigital;
+  int UpdateChannels;
+  int UseDolbyDigital;
   int ChannelInfoPos;
-  int OSDwidth, OSDheight;
+  int ChannelInfoTime;
+  int OSDLeft, OSDTop, OSDWidth, OSDHeight;
   int OSDMessageTime;
+  int UseSmallFont;
   int MaxVideoFileSize;
   int SplitEditedFiles;
   int MinEventTimeout, MinUserInactivity;
   int MultiSpeedMode;
   int ShowReplayMode;
   int ResumeID;
-  int CaCaps[MAXDEVICES][MAXCACAPS];
   int CurrentChannel;
   int CurrentVolume;
+  int CurrentDolby;
+  int InitialChannel;
+  int InitialVolume;
   int __EndData__;
   cSetup(void);
   cSetup& operator= (const cSetup &s);

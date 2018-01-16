@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: dvbplayer.c 1.22 2003/05/24 09:04:26 kls Exp $
+ * $Id: dvbplayer.c 1.45 2006/04/17 12:45:48 kls Exp $
  */
 
 #include "dvbplayer.h"
@@ -15,7 +15,7 @@
 #include "thread.h"
 #include "tools.h"
 
-// --- cBackTrace ----------------------------------------------------------
+// --- cBackTrace ------------------------------------------------------------
 
 #define AVG_FRAME_SIZE 15000         // an assumption about the average frame size
 #define DVB_BUF_SIZE   (256 * 1024)  // an assumption about the dvb firmware buffer size
@@ -74,54 +74,55 @@ int cBackTrace::Get(bool Forward)
 
 class cNonBlockingFileReader : public cThread {
 private:
-  int f;
+  cUnbufferedFile *f;
   uchar *buffer;
   int wanted;
   int length;
   bool hasData;
-  bool active;
-  cMutex mutex; 
-  cCondVar newSet;
+  cCondWait newSet;
+  cCondVar newDataCond;
+  cMutex newDataMutex;
 protected:
   void Action(void);
 public:
   cNonBlockingFileReader(void);
   ~cNonBlockingFileReader();
   void Clear(void);
-  int Read(int FileHandle, uchar *Buffer, int Length);
+  int Read(cUnbufferedFile *File, uchar *Buffer, int Length);
   bool Reading(void) { return buffer; }
+  bool WaitForDataMs(int msToWait);
   };
 
 cNonBlockingFileReader::cNonBlockingFileReader(void)
+:cThread("non blocking file reader")
 {
-  f = -1;
+  f = NULL;
   buffer = NULL;
   wanted = length = 0;
   hasData = false;
-  active = false;
   Start();
 }
 
 cNonBlockingFileReader::~cNonBlockingFileReader()
 {
-  active = false;
-  newSet.Broadcast();
+  newSet.Signal();
   Cancel(3);
   free(buffer);
 }
 
 void cNonBlockingFileReader::Clear(void)
 {
-  cMutexLock MutexLock(&mutex);
-  f = -1;
+  Lock();
+  f = NULL;
   free(buffer);
   buffer = NULL;
   wanted = length = 0;
   hasData = false;
-  newSet.Broadcast();
+  Unlock();
+  newSet.Signal();
 }
 
-int cNonBlockingFileReader::Read(int FileHandle, uchar *Buffer, int Length)
+int cNonBlockingFileReader::Read(cUnbufferedFile *File, uchar *Buffer, int Length)
 {
   if (hasData && buffer) {
      if (buffer != Buffer) {
@@ -133,12 +134,12 @@ int cNonBlockingFileReader::Read(int FileHandle, uchar *Buffer, int Length)
      return length;
      }
   if (!buffer) {
-     f = FileHandle;
+     f = File;
      buffer = Buffer;
      wanted = Length;
      length = 0;
      hasData = false;
-     newSet.Broadcast();
+     newSet.Signal();
      }
   errno = EAGAIN;
   return -1;
@@ -146,16 +147,17 @@ int cNonBlockingFileReader::Read(int FileHandle, uchar *Buffer, int Length)
 
 void cNonBlockingFileReader::Action(void)
 {
-  dsyslog("non blocking file reader thread started (pid=%d)", getpid());
-  active = true;
-  while (active) {
-        cMutexLock MutexLock(&mutex);
-        if (!hasData && f >= 0 && buffer) {
-           int r = safe_read(f, buffer + length, wanted - length);
+  while (Running()) {
+        Lock();
+        if (!hasData && f && buffer) {
+           int r = f->Read(buffer + length, wanted - length);
            if (r >= 0) {
               length += r;
-              if (!r || length == wanted) // r == 0 means EOF
+              if (!r || length == wanted) { // r == 0 means EOF
+                 cMutexLock NewDataLock(&newDataMutex);
                  hasData = true;
+                 newDataCond.Broadcast();
+                 }
               }
            else if (r < 0 && FATALERRNO) {
               LOG_ERROR;
@@ -163,17 +165,22 @@ void cNonBlockingFileReader::Action(void)
               hasData = true;
               }
            }
-        newSet.TimedWait(mutex, 1000);
+        Unlock();
+        newSet.Wait(1000);
         }
-  dsyslog("non blocking file reader thread ended (pid=%d)", getpid());
+}
+
+bool cNonBlockingFileReader::WaitForDataMs(int msToWait)
+{
+  cMutexLock NewDataLock(&newDataMutex);
+  if (hasData)
+     return true;
+  return newDataCond.TimedWait(newDataMutex, msToWait);
 }
 
 // --- cDvbPlayer ------------------------------------------------------------
 
-//XXX+ also used in recorder.c - find a better place???
-// The size of the array used to buffer video data:
-// (must be larger than MINVIDEODATA - see remux.h)
-#define VIDEOBUFSIZE  MEGABYTE(1)
+#define PLAYERBUFSIZE  MEGABYTE(1)
 
 // The number of frames to back up when resuming an interrupted replay session:
 #define RESUMEBACKUP (10 * FRAMESPERSEC)
@@ -188,22 +195,17 @@ private:
   cBackTrace *backTrace;
   cFileName *fileName;
   cIndexFile *index;
-  int replayFile;
+  cUnbufferedFile *replayFile;
   bool eof;
-  bool active;
-  bool running;
   bool firstPacket;
   ePlayModes playMode;
   ePlayDirs playDir;
   int trickSpeed;
   int readIndex, writeIndex;
-  bool canToggleAudioTrack;
-  uchar audioTrack;
   cFrame *readFrame;
   cFrame *playFrame;
   void TrickSpeed(int Increment);
   void Empty(void);
-  void StripAudioPackets(uchar *b, int Length, uchar Except = 0x00);
   bool NextFile(uchar FileNumber = 0, int FileOffset = -1);
   int Resume(void);
   bool Save(void);
@@ -213,7 +215,7 @@ protected:
 public:
   cDvbPlayer(const char *FileName);
   virtual ~cDvbPlayer();
-  bool Active(void) { return active; }
+  bool Active(void) { return cThread::Running(); }
   void Pause(void);
   void Play(void);
   void Forward(void);
@@ -223,9 +225,6 @@ public:
   void Goto(int Position, bool Still = false);
   virtual bool GetIndex(int &Current, int &Total, bool SnapToIFrame = false);
   virtual bool GetReplayMode(bool &Play, bool &Forward, int &Speed);
-  virtual int NumAudioTracks(void) const;
-  virtual const char **GetAudioTracks(int *CurrentTrack = NULL) const;
-  virtual void SetAudioTrack(int Index);
   };
 
 #define MAX_VIDEO_SLOWMOTION 63 // max. arg to pass to VIDEO_SLOWMOTION // TODO is this value correct?
@@ -235,29 +234,26 @@ public:
 int cDvbPlayer::Speeds[] = { 0, -2, -4, -8, 1, 2, 4, 12, 0 };
 
 cDvbPlayer::cDvbPlayer(const char *FileName)
+:cThread("dvbplayer")
 {
   nonBlockingFileReader = NULL;
   ringBuffer = NULL;
   backTrace = NULL;
   index = NULL;
   eof = false;
-  active = true;
-  running = false;
   firstPacket = true;
   playMode = pmPlay;
   playDir = pdForward;
   trickSpeed = NORMAL_SPEED;
-  canToggleAudioTrack = false;
-  audioTrack = 0xC0;
   readIndex = writeIndex = -1;
   readFrame = NULL;
   playFrame = NULL;
   isyslog("replay %s", FileName);
   fileName = new cFileName(FileName, false);
   replayFile = fileName->Open();
-  if (replayFile < 0)
+  if (!replayFile)
      return;
-  ringBuffer = new cRingBufferFrame(VIDEOBUFSIZE);
+  ringBuffer = new cRingBufferFrame(PLAYERBUFSIZE);
   // Create the index file:
   index = new cIndexFile(FileName, false);
   if (!index)
@@ -273,6 +269,7 @@ cDvbPlayer::~cDvbPlayer()
 {
   Detach();
   Save();
+  delete readFrame; // might not have been stored in the buffer in Action()
   delete index;
   delete fileName;
   delete backTrace;
@@ -306,6 +303,7 @@ void cDvbPlayer::Empty(void)
      nonBlockingFileReader->Clear();
   if ((readIndex = backTrace->Get(playDir == pdForward)) < 0)
      readIndex = writeIndex;
+  delete readFrame; // might not have been stored in the buffer in Action()
   readFrame = NULL;
   playFrame = NULL;
   ringBuffer->Clear();
@@ -314,49 +312,14 @@ void cDvbPlayer::Empty(void)
   firstPacket = true;
 }
 
-void cDvbPlayer::StripAudioPackets(uchar *b, int Length, uchar Except)
-{
-  if (index) {
-     for (int i = 0; i < Length - 6; i++) {
-         if (b[i] == 0x00 && b[i + 1] == 0x00 && b[i + 2] == 0x01) {
-            uchar c = b[i + 3];
-            int l = b[i + 4] * 256 + b[i + 5] + 6;
-            switch (c) {
-              case 0xBD: // dolby
-                   if (Except)
-                      PlayAudio(&b[i], l);
-                   // continue with deleting the data - otherwise it disturbs DVB replay
-              case 0xC0 ... 0xC1: // audio
-                   if (c == 0xC1)
-                      canToggleAudioTrack = true;
-                   if (!Except || c != Except)
-                      memset(&b[i], 0x00, min(l, Length-i));
-                   break;
-              case 0xE0 ... 0xEF: // video
-                   break;
-              default:
-                   //esyslog("ERROR: unexpected packet id %02X", c);
-                   l = 0;
-              }
-            if (l)
-               i += l - 1; // the loop increments, too!
-            }
-         /*XXX
-         else
-            esyslog("ERROR: broken packet header");
-            XXX*/
-         }
-     }
-}
-
 bool cDvbPlayer::NextFile(uchar FileNumber, int FileOffset)
 {
   if (FileNumber > 0)
      replayFile = fileName->SetOffset(FileNumber, FileOffset);
-  else if (replayFile >= 0 && eof)
+  else if (replayFile && eof)
      replayFile = fileName->NextFile();
   eof = false;
-  return replayFile >= 0;
+  return replayFile != NULL;
 }
 
 int cDvbPlayer::Resume(void)
@@ -393,34 +356,36 @@ bool cDvbPlayer::Save(void)
 void cDvbPlayer::Activate(bool On)
 {
   if (On) {
-     if (replayFile >= 0)
+     if (replayFile)
         Start();
      }
-  else if (active) {
-     running = false;
-     Cancel(3);
-     active = false;
-     }
+  else
+     Cancel(9);
 }
 
 void cDvbPlayer::Action(void)
 {
-  dsyslog("dvbplayer thread started (pid=%d)", getpid());
-
   uchar *b = NULL;
   uchar *p = NULL;
   int pc = 0;
 
   readIndex = Resume();
   if (readIndex >= 0)
-     isyslog("resuming replay at index %d (%s)", readIndex, IndexToHMSF(readIndex, true));
+     isyslog("resuming replay at index %d (%s)", readIndex, *IndexToHMSF(readIndex, true));
 
   nonBlockingFileReader = new cNonBlockingFileReader;
   int Length = 0;
-  int AudioTrack = 0; // -1 = any, 0 = none, >0 = audioTrack
+  bool Sleep = false;
+  bool WaitingForData = false;
 
-  running = true;
-  while (running && (NextFile() || readIndex >= 0 || ringBuffer->Available())) {
+  while (Running() && (NextFile() || readIndex >= 0 || ringBuffer->Available() || !DeviceFlush(100))) {
+        if (Sleep) {
+           if (WaitingForData)
+              nonBlockingFileReader->WaitForDataMs(3); // this keeps the CPU load low, but reacts immediately on new data
+           else
+              cCondWait::SleepMs(3); // this keeps the CPU load low
+           Sleep = false;
+           }
         cPoller Poller;
         if (DevicePoll(Poller, 100)) {
 
@@ -428,18 +393,29 @@ void cDvbPlayer::Action(void)
 
            // Read the next frame from the file:
 
-           if (!readFrame && (replayFile >= 0 || readIndex >= 0)) {
-              if (playMode != pmStill) {
+           if (playMode != pmStill && playMode != pmPause) {
+              if (!readFrame && (replayFile || readIndex >= 0)) {
                  if (!nonBlockingFileReader->Reading()) {
                     if (playMode == pmFast || (playMode == pmSlow && playDir == pdBackward)) {
                        uchar FileNumber;
                        int FileOffset;
-                       int Index = index->GetNextIFrame(readIndex, playDir == pdForward, &FileNumber, &FileOffset, &Length, true);
+                       bool TimeShiftMode = index->IsStillRecording();
+                       int Index = index->GetNextIFrame(readIndex, playDir == pdForward, &FileNumber, &FileOffset, &Length, TimeShiftMode);
                        if (Index >= 0) {
                           if (!NextFile(FileNumber, FileOffset))
                              continue;
                           }
                        else {
+                          if (!TimeShiftMode && playDir == pdForward) {
+                             // hit end of recording: signal end of file but don't change playMode
+                             readIndex = -1;
+                             eof = true;
+                             continue;
+                             }
+                          // hit begin of recording: wait for device buffers to drain
+                          // before changing play mode:
+                          if (!DeviceFlush(100))
+                             continue;
                           // can't call Play() here, because those functions may only be
                           // called from the foreground thread - and we also don't need
                           // to empty the buffer here
@@ -449,9 +425,6 @@ void cDvbPlayer::Action(void)
                           continue;
                           }
                        readIndex = Index;
-                       AudioTrack = 0;
-                       // must clear all audio packets because the buffer is not emptied
-                       // when falling back from "fast forward" to "play" (see above)
                        }
                     else if (index) {
                        uchar FileNumber;
@@ -462,12 +435,9 @@ void cDvbPlayer::Action(void)
                           eof = true;
                           continue;
                           }
-                       AudioTrack = audioTrack;
                        }
-                    else { // allows replay even if the index file is missing
+                    else // allows replay even if the index file is missing
                        Length = MAXFRAMESIZE;
-                       AudioTrack = -1;
-                       }
                     if (Length == -1)
                        Length = MAXFRAMESIZE; // this means we read up to EOF (see cIndex)
                     else if (Length > MAXFRAMESIZE) {
@@ -478,28 +448,29 @@ void cDvbPlayer::Action(void)
                     }
                  int r = nonBlockingFileReader->Read(replayFile, b, Length);
                  if (r > 0) {
-                    if (AudioTrack == 0)
-                       StripAudioPackets(b, r);
+                    WaitingForData = false;
                     readFrame = new cFrame(b, -r, ftUnknown, readIndex); // hands over b to the ringBuffer
                     b = NULL;
                     }
                  else if (r == 0)
                     eof = true;
+                 else if (r < 0 && errno == EAGAIN)
+                    WaitingForData = true;
                  else if (r < 0 && FATALERRNO) {
                     LOG_ERROR;
                     break;
                     }
                  }
-              else//XXX
-                 usleep(1); // this keeps the CPU load low
-              }
 
-           // Store the frame in the buffer:
+              // Store the frame in the buffer:
 
-           if (readFrame) {
-              if (ringBuffer->Put(readFrame))
-                 readFrame = NULL;
+              if (readFrame) {
+                 if (ringBuffer->Put(readFrame))
+                    readFrame = NULL;
+                 }
               }
+           else
+              Sleep = true;
 
            // Get the next frame from the buffer:
 
@@ -517,15 +488,14 @@ void cDvbPlayer::Action(void)
                  pc = playFrame->Count();
                  if (p) {
                     if (firstPacket) {
+                       PlayPes(NULL, 0);
                        cRemux::SetBrokenLink(p, pc);
                        firstPacket = false;
                        }
-                    if (AudioTrack > 0)
-                       StripAudioPackets(p, pc, AudioTrack);
                     }
                  }
               if (p) {
-                 int w = PlayVideo(p, pc);
+                 int w = PlayPes(p, pc, playMode != pmPlay);
                  if (w > 0) {
                     p += w;
                     pc -= w;
@@ -543,15 +513,14 @@ void cDvbPlayer::Action(void)
                  p = NULL;
                  }
               }
+           else
+              Sleep = true;
            }
         }
-  active = running = false;
 
   cNonBlockingFileReader *nbfr = nonBlockingFileReader;
   nonBlockingFileReader = NULL;
   delete nbfr;
-
-  dsyslog("dvbplayer thread ended (pid=%d)", getpid());
 }
 
 void cDvbPlayer::Pause(void)
@@ -680,7 +649,10 @@ int cDvbPlayer::SkipFrames(int Frames)
      int Current, Total;
      GetIndex(Current, Total, true);
      int OldCurrent = Current;
-     Current = index->GetNextIFrame(Current + Frames, Frames > 0);
+     // As GetNextIFrame() increments/decrements at least once, the
+     // destination frame (= Current + Frames) must be adjusted by
+     // -1/+1 respectively.
+     Current = index->GetNextIFrame(Current + Frames + (Frames > 0 ? -1 : 1), Frames > 0);
      return Current >= 0 ? Current : OldCurrent;
      }
   return -1;
@@ -714,12 +686,34 @@ void cDvbPlayer::Goto(int Index, bool Still)
      int FileOffset, Length;
      Index = index->GetNextIFrame(Index, false, &FileNumber, &FileOffset, &Length);
      if (Index >= 0 && NextFile(FileNumber, FileOffset) && Still) {
-        uchar b[MAXFRAMESIZE];
+        uchar b[MAXFRAMESIZE + 4 + 5 + 4];
         int r = ReadFrame(replayFile, b, Length, sizeof(b));
         if (r > 0) {
            if (playMode == pmPause)
               DevicePlay();
-           StripAudioPackets(b, r);
+           // append sequence end code to get the image shown immediately with softdevices
+           if (r > 6 && (b[3] & 0xF0) == 0xE0) { // make sure to append it only to a video packet
+              b[r++] = 0x00;
+              b[r++] = 0x00;
+              b[r++] = 0x01;
+              b[r++] = b[3];
+              if (b[6] & 0x80) { // MPEG 2
+                 b[r++] = 0x00;
+                 b[r++] = 0x07;
+                 b[r++] = 0x80;
+                 b[r++] = 0x00;
+                 b[r++] = 0x00;
+                 }
+              else { // MPEG 1
+                 b[r++] = 0x00;
+                 b[r++] = 0x05;
+                 b[r++] = 0x0F;
+                 }
+              b[r++] = 0x00;
+              b[r++] = 0x00;
+              b[r++] = 0x01;
+              b[r++] = 0xB7;
+              }
            DeviceStillPicture(b, r);
            }
         playMode = pmStill;
@@ -757,31 +751,6 @@ bool cDvbPlayer::GetReplayMode(bool &Play, bool &Forward, int &Speed)
   else
      Speed = -1;
   return true;
-}
-
-int cDvbPlayer::NumAudioTracks(void) const
-{
-  return canToggleAudioTrack ? 2 : 1;
-}
-
-const char **cDvbPlayer::GetAudioTracks(int *CurrentTrack) const
-{
-  if (NumAudioTracks()) {
-     if (CurrentTrack)
-        *CurrentTrack = (audioTrack == 0xC0) ? 0 : 1;
-     static const char *audioTracks1[] = { "Audio 1", NULL };
-     static const char *audioTracks2[] = { "Audio 1", "Audio 2", NULL };
-     return NumAudioTracks() > 1 ? audioTracks2 : audioTracks1;
-     }
-  return NULL;
-}
-
-void cDvbPlayer::SetAudioTrack(int Index)
-{
-  if ((audioTrack == 0xC0) != (Index == 0)) {
-     audioTrack = (Index == 1) ? 0xC1 : 0xC0;
-     Empty();
-     }
 }
 
 // --- cDvbPlayerControl -----------------------------------------------------

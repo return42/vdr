@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: sources.c 1.1 2002/10/06 09:27:10 kls Exp $
+ * $Id: sources.c 1.3 2004/12/26 11:58:52 kls Exp $
  */
 
 #include "sources.h"
@@ -32,9 +32,9 @@ bool cSource::Parse(const char *s)
   return code != stNone && description && *description;
 }
 
-const char *cSource::ToString(int Code)
+cString cSource::ToString(int Code)
 {
-  static char buffer[16];
+  char buffer[16];
   char *q = buffer;
   switch (Code & st_Mask) {
     case stCable: *q++ = 'C'; break;
@@ -86,6 +86,17 @@ int cSource::FromString(const char *s)
      if (neg)
         pos |= st_Neg;
      code |= pos;
+     }
+  return code;
+}
+
+int cSource::FromData(eSourceType SourceType, int Position, bool East)
+{
+  int code = SourceType;
+  if (SourceType == stSat) {
+     if (East)
+        code |= st_Neg;
+     code |= (Position & st_Pos);;
      }
   return code;
 }

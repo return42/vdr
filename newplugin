@@ -12,7 +12,7 @@
 # See the main source file 'vdr.c' for copyright information and
 # how to reach the author.
 #
-# $Id: newplugin 1.15 2003/05/09 14:59:28 kls Exp $
+# $Id: newplugin 1.28 2006/04/24 17:18:41 kls Exp $
 
 $PLUGIN_NAME = $ARGV[0] || die "Usage: newplugin <name>\n";
 
@@ -71,11 +71,10 @@ VERSION = \$(shell grep 'static const char \\*VERSION *=' \$(PLUGIN).c | awk '{ 
 ### The C++ compiler and options:
 
 CXX      ?= g++
-CXXFLAGS ?= -O2 -Wall -Woverloaded-virtual
+CXXFLAGS ?= -fPIC -g -O2 -Wall -Woverloaded-virtual
 
 ### The directory environment:
 
-DVBDIR = ../../../../DVB
 VDRDIR = ../../..
 LIBDIR = ../../lib
 TMPDIR = /tmp
@@ -84,9 +83,9 @@ TMPDIR = /tmp
 
 -include \$(VDRDIR)/Make.config
 
-### The version number of VDR (taken from VDR's "config.h"):
+### The version number of VDR's plugin API (taken from VDR's "config.h"):
 
-VDRVERSION = \$(shell grep 'define VDRVERSION ' \$(VDRDIR)/config.h | awk '{ print \$\$3 }' | sed -e 's/"//g')
+APIVERSION = \$(shell sed -ne '/define APIVERSION/s/^.*"\\(.*\\)".*\$\$/\\1/p' \$(VDRDIR)/config.h)
 
 ### The name of the distribution archive:
 
@@ -95,9 +94,9 @@ PACKAGE = vdr-\$(ARCHIVE)
 
 ### Includes and Defines (add further entries here):
 
-INCLUDES += -I\$(VDRDIR)/include -I\$(DVBDIR)/include
+INCLUDES += -I\$(VDRDIR)/include
 
-DEFINES += -DPLUGIN_NAME_I18N='"\$(PLUGIN)"'
+DEFINES += -D_GNU_SOURCE -DPLUGIN_NAME_I18N='"\$(PLUGIN)"'
 
 ### The object files (add further files here):
 
@@ -110,7 +109,7 @@ OBJS = \$(PLUGIN).o
 
 # Dependencies:
 
-MAKEDEP = g++ -MM -MG
+MAKEDEP = \$(CXX) -MM -MG
 DEPFILE = .dependencies
 \$(DEPFILE): Makefile
 	\@\$(MAKEDEP) \$(DEFINES) \$(INCLUDES) \$(OBJS:%.o=%.c) > \$\@
@@ -123,7 +122,7 @@ all: libvdr-\$(PLUGIN).so
 
 libvdr-\$(PLUGIN).so: \$(OBJS)
 	\$(CXX) \$(CXXFLAGS) -shared \$(OBJS) -o \$\@
-	\@cp \$\@ \$(LIBDIR)/\$\@.\$(VDRVERSION)
+	\@cp \$\@ \$(LIBDIR)/\$\@.\$(APIVERSION)
 
 dist: clean
 	\@-rm -rf \$(TMPDIR)/\$(ARCHIVE)
@@ -164,11 +163,17 @@ public:
   virtual bool ProcessArgs(int argc, char *argv[]);
   virtual bool Initialize(void);
   virtual bool Start(void);
+  virtual void Stop(void);
   virtual void Housekeeping(void);
+  virtual void MainThreadHook(void);
+  virtual cString Active(void);
   virtual const char *MainMenuEntry(void) { return MAINMENUENTRY; }
   virtual cOsdObject *MainMenuAction(void);
   virtual cMenuSetupPage *SetupMenu(void);
   virtual bool SetupParse(const char *Name, const char *Value);
+  virtual bool Service(const char *Id, void *Data = NULL);
+  virtual const char **SVDRPHelpPages(void);
+  virtual cString SVDRPCommand(const char *Command, const char *Option, int &ReplyCode);
   };
 
 cPlugin${PLUGIN_CLASS}::cPlugin$PLUGIN_CLASS(void)
@@ -207,9 +212,26 @@ bool cPlugin${PLUGIN_CLASS}::Start(void)
   return true;
 }
 
+void cPlugin${PLUGIN_CLASS}::Stop(void)
+{
+  // Stop any background activities the plugin shall perform.
+}
+
 void cPlugin${PLUGIN_CLASS}::Housekeeping(void)
 {
   // Perform any cleanup or other regular tasks.
+}
+
+void cPlugin${PLUGIN_CLASS}::MainThreadHook(void)
+{
+  // Perform actions in the context of the main program thread.
+  // WARNING: Use with great care - see PLUGINS.html!
+}
+
+cString cPlugin${PLUGIN_CLASS}::Active(void)
+{
+  // Return a message string if shutdown should be postponed
+  return NULL;
 }
 
 cOsdObject *cPlugin${PLUGIN_CLASS}::MainMenuAction(void)
@@ -228,6 +250,24 @@ bool cPlugin${PLUGIN_CLASS}::SetupParse(const char *Name, const char *Value)
 {
   // Parse your own setup parameters and store their values.
   return false;
+}
+
+bool cPlugin${PLUGIN_CLASS}::Service(const char *Id, void *Data)
+{
+  // Handle custom service requests from other plugins
+  return false;
+}
+
+const char **cPlugin${PLUGIN_CLASS}::SVDRPHelpPages(void)
+{
+  // Return help text for SVDRP commands this plugin implements
+  return NULL;
+}
+
+cString cPlugin${PLUGIN_CLASS}::SVDRPCommand(const char *Command, const char *Option, int &ReplyCode)
+{
+  // Process SVDRP commands this plugin implements
+  return NULL;
 }
 
 VDRPLUGINCREATOR(cPlugin$PLUGIN_CLASS); // Don't touch this!

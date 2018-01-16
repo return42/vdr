@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: sources.h 1.1 2002/10/04 14:25:03 kls Exp $
+ * $Id: sources.h 1.4 2005/05/14 09:30:41 kls Exp $
  */
 
 #ifndef __SOURCES_H
@@ -21,6 +21,7 @@ public:
     stTerr  = 0xC000,
     st_Mask = 0xC000,
     st_Neg  = 0x0800,
+    st_Pos  = 0x07FF,
     };
 private:
   int code;
@@ -31,8 +32,12 @@ public:
   int Code(void) const { return code; }
   const char *Description(void) const { return description; }
   bool Parse(const char *s);
-  static const char *ToString(int Code);
+  static cString ToString(int Code);
   static int FromString(const char *s);
+  static int FromData(eSourceType SourceType, int Position = 0, bool East = false);
+  static bool IsCable(int Code) { return (Code & st_Mask) == stCable; }
+  static bool IsSat(int Code) { return (Code & st_Mask) == stSat; }
+  static bool IsTerr(int Code) { return (Code & st_Mask) == stTerr; }
   };
 
 class cSources : public cConfig<cSource> {

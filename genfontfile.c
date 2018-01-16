@@ -154,9 +154,9 @@ SuckGlyphsFromServer(Display * dpy, Font font)
     character.byte2 = (i + fontinfo->min_char_or_byte2) & 255;
     character.byte1 = (i + fontinfo->min_char_or_byte2) >> 8;
 
-    /* XXX we could use XDrawImageString16 which would also paint the backing 
+    /* XXX we could use XDrawImageString16 which would also paint the backing
 
-       rectangle but X server bugs in some scalable font rasterizers makes it 
+       rectangle but X server bugs in some scalable font rasterizers makes it
 
        more effective to do XFillRectangles to clear the pixmap and
        XDrawImage16 for the text.  */
@@ -179,7 +179,7 @@ SuckGlyphsFromServer(Display * dpy, Font font)
           charHeight = charinfo->ascent + charinfo->descent;
           spanLength = (charWidth + 7) / 8;
         }
-        bitmapData = calloc(height * spanLength, sizeof(char));
+        bitmapData = (unsigned char *)calloc(height * spanLength, sizeof(char));
         if (!bitmapData)
           goto FreeFontAndReturn;
         DEBUG_GLYPH4("index %d, glyph %d (%d by %d)\n",
@@ -240,7 +240,7 @@ printGlyph(FontInfoPtr font, int c)
 {
   PerGlyphInfoPtr glyph;
   unsigned char *bitmapData;
-  int width, height, spanLength;
+  int width, height, spanLength, charWidth;
   int x, y, l;
   char buf[1000], *b;
 
@@ -253,12 +253,15 @@ printGlyph(FontInfoPtr font, int c)
     width = glyph->width;
     spanLength = (width + 7) / 8;
     height = glyph->height;
+    charWidth = glyph->xoffset + width;
+    if (charWidth < glyph->advance)
+       charWidth = glyph->advance;
 
     printf("  {             // %d\n", c);
-    printf("     %d, %d,\n", glyph->advance, font->max_ascent + font->max_descent);
+    printf("     %d, %d,\n", charWidth, font->max_ascent + font->max_descent);
     for (y = 0; y < font->max_ascent - glyph->yoffset - height; y++) {
         printf("     0x%08X,  // ", 0);
-        for (x = 0; x < glyph->xoffset + width || x < glyph->advance; x++)
+        for (x = 0; x < charWidth; x++)
             putchar('.');
         putchar('\n');
         }
@@ -269,13 +272,13 @@ printGlyph(FontInfoPtr font, int c)
             *b++ = '.';
         if (bitmapData) {
            for (x = 0; x < width; x++) {
+               l <<= 1;
                if (bitmapData[y * spanLength + x / 8] & (1 << (x & 7))) {
                   *b++ = '*';
                   l |= 1;
                   }
                else
                   *b++ = '.';
-               l <<= 1;
                }
            for (x = 0; x < glyph->advance - width - glyph->xoffset; x++) {
                *b++ = '.';
@@ -368,7 +371,7 @@ main(int argc, char *argv[])
     exit(1);
   }
 
-  printf("%s[][%d] = {\n", varname, fontinfo->max_ascent + fontinfo->max_descent + 2);
+  printf("static const %s[][%d] = {\n", varname, fontinfo->max_ascent + fontinfo->max_descent + 2);
   for (c = 32; c < 256; c++) {
       getMetric(fontinfo, c, &tgi);
       printGlyph(fontinfo, c);

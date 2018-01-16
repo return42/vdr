@@ -8,16 +8,16 @@
  *
  * parts of this file are derived from the OMS program.
  *
- * $Id: dvbspu.h 1.2 2002/09/29 13:49:01 kls Exp $
+ * $Id: dvbspu.h 1.12 2006/04/17 12:47:29 kls Exp $
  */
 
 #ifndef __DVBSPU_H
 #define __DVBSPU_H
 
 #include <inttypes.h>
-
-#include "osdbase.h"
+#include "osd.h"
 #include "spu.h"
+#include "thread.h"
 
 typedef struct sDvbSpuPalDescr {
     uint8_t index;
@@ -46,7 +46,7 @@ typedef struct sDvbSpuRect {
 
 sDvbSpuRect;
 
-// --- cDvbSpuPalette----------------------------------
+// --- cDvbSpuPalette---------------------------------------------------------
 
 class cDvbSpuPalette {
   private:
@@ -60,7 +60,7 @@ class cDvbSpuPalette {
     uint32_t getColor(uint8_t idx, uint8_t trans) const;
 };
 
-// --- cDvbSpuBitmap----------------------------------
+// --- cDvbSpuBitmap----------------------------------------------------------
 
 class cDvbSpuBitmap {
 
@@ -87,11 +87,12 @@ class cDvbSpuBitmap {
                        sDvbSpuRect & size) const;
 };
 
-// --- cDvbSpuDecoder------------------------------------
+// --- cDvbSpuDecoder---------------------------------------------------------
 
 class cDvbSpuDecoder:public cSpuDecoder {
   private:
-    cOsdBase * osd;
+    cOsd *osd;
+    cMutex mutex;
 
     // processing state
     uint8_t *spu;
@@ -120,6 +121,7 @@ class cDvbSpuDecoder:public cSpuDecoder {
     uint16_t prev_DCSQ_offset;
 
     cDvbSpuBitmap *spubmp;
+    bool allowedShow;
   private:
     int cmdOffs(void) {
         return ((spu[2] << 8) | spu[3]);
@@ -128,12 +130,7 @@ class cDvbSpuDecoder:public cSpuDecoder {
         return ((spu[0] << 8) | spu[1]);
     };
 
-    int ScaleYcoord(int value);
-    int ScaleYres(int value);
-    void DrawBmp(sDvbSpuRect & size, cBitmap * bmp);
-
-    void Draw();
-    void Hide();
+    sDvbSpuRect CalcAreaSize(sDvbSpuRect fgsize, cBitmap *fgbmp, sDvbSpuRect bgsize, cBitmap *bgbmp);
 
   public:
     cDvbSpuDecoder();
@@ -141,23 +138,26 @@ class cDvbSpuDecoder:public cSpuDecoder {
 
     int setTime(uint32_t pts);
 
+    cSpuDecoder::eScaleMode getScaleMode(void) { return scaleMode; }
     void setScaleMode(cSpuDecoder::eScaleMode ScaleMode);
     void setPalette(uint32_t * pal);
     void setHighlight(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey,
                       uint32_t palette);
     void clearHighlight(void);
     void Empty(void);
-    void processSPU(uint32_t pts, uint8_t * buf);
+    void Hide(void);
+    void Draw(void);
+    bool IsVisible(void) { return osd != NULL; }
+    void processSPU(uint32_t pts, uint8_t * buf, bool AllowedShow);
 };
 
-// --- cDvbSpuPalette -------------------------------------------
+// --- cDvbSpuPalette --------------------------------------------------------
 
 inline uint32_t cDvbSpuPalette::yuv2rgb(uint32_t yuv_color)
 {
     int Y, Cb, Cr;
     int Ey, Epb, Epr;
     int Eg, Eb, Er;
-    uint32_t result;
 
     Y = (yuv_color >> 16) & 0xff;
     Cb = (yuv_color) & 0xff;
@@ -191,9 +191,7 @@ inline uint32_t cDvbSpuPalette::yuv2rgb(uint32_t yuv_color)
     if (Er < 0)
         Er = 0;
 
-    result = (Eb << 16) | (Eg << 8) | Er;
-
-    return result;
+    return Eb | (Eg << 8) | (Er << 16);
 }
 
 inline uint32_t cDvbSpuPalette::getColor(uint8_t idx, uint8_t trans) const

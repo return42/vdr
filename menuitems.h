@@ -4,20 +4,19 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: menuitems.h 1.5 2003/01/12 15:06:23 kls Exp $
+ * $Id: menuitems.h 1.20 2006/04/14 10:01:47 kls Exp $
  */
 
 #ifndef __MENUITEMS_H
 #define __MENUITEMS_H
 
-#include "osd.h"
+#include "osdbase.h"
 
 extern const char *FileNameChars;
 
 class cMenuEditItem : public cOsdItem {
 private:
   char *name;
-  char *value;
 public:
   cMenuEditItem(const char *Name);
   ~cMenuEditItem();
@@ -28,9 +27,10 @@ class cMenuEditIntItem : public cMenuEditItem {
 protected:
   int *value;
   int min, max;
+  const char *minString, *maxString;
   virtual void Set(void);
 public:
-  cMenuEditIntItem(const char *Name, int *Value, int Min = 0, int Max = INT_MAX);
+  cMenuEditIntItem(const char *Name, int *Value, int Min = 0, int Max = INT_MAX, const char *MinString = NULL, const char *MaxString = NULL);
   virtual eOSState ProcessKey(eKeys Key);
   };
 
@@ -40,6 +40,16 @@ protected:
   virtual void Set(void);
 public:
   cMenuEditBoolItem(const char *Name, int *Value, const char *FalseString = NULL, const char *TrueString = NULL);
+  };
+
+class cMenuEditBitItem : public cMenuEditBoolItem {
+protected:
+  uint *value;
+  uint mask;
+  int bit;
+  virtual void Set(void);
+public:
+  cMenuEditBitItem(const char *Name, uint *Value, uint Mask, const char *FalseString = NULL, const char *TrueString = NULL);
   };
 
 class cMenuEditNumItem : public cMenuEditItem {
@@ -67,14 +77,22 @@ public:
 
 class cMenuEditStrItem : public cMenuEditItem {
 private:
+  char *orgValue;
   char *value;
   int length;
   char *allowed;
   int pos;
   bool insert, newchar, uppercase;
+  const char *charMap;
+  const char *currentChar;
+  eKeys lastKey;
+  cTimeMs autoAdvanceTimeout;
   void SetHelpKeys(void);
+  void AdvancePos(void);
   virtual void Set(void);
   char Inc(char c, bool Up);
+protected:
+  bool InEditMode(void) { return pos >= 0; }
 public:
   cMenuEditStrItem(const char *Name, char *Value, int Length, const char *Allowed);
   ~cMenuEditStrItem();
@@ -90,22 +108,47 @@ public:
   cMenuEditStraItem(const char *Name, int *Value, int NumStrings, const char * const *Strings);
   };
 
-class cMenuTextItem : public cOsdItem {
-private:
-  char *text;
-  int x, y, w, h, lines, offset;
-  eDvbColor fgColor, bgColor;
-  eDvbFont font;
+class cMenuEditChanItem : public cMenuEditIntItem {
+protected:
+  const char *noneString;
+  virtual void Set(void);
 public:
-  cMenuTextItem(const char *Text, int X, int Y, int W, int H = -1, eDvbColor FgColor = clrWhite, eDvbColor BgColor = clrBackground, eDvbFont Font = fontOsd);
-  ~cMenuTextItem();
-  int Height(void) { return h; }
-  void Clear(void);
-  virtual void Display(int Offset = -1, eDvbColor FgColor = clrWhite, eDvbColor BgColor = clrBackground);
-  bool CanScrollUp(void) { return offset > 0; }
-  bool CanScrollDown(void) { return h + offset < lines; }
-  void ScrollUp(bool Page);
-  void ScrollDown(bool Page);
+  cMenuEditChanItem(const char *Name, int *Value, const char *NoneString = NULL);
+  virtual eOSState ProcessKey(eKeys Key);
+  };
+
+class cMenuEditTranItem : public cMenuEditChanItem {
+private:
+  int number;
+  int *source;
+  int *transponder;
+public:
+  cMenuEditTranItem(const char *Name, int *Value, int *Source);
+  virtual eOSState ProcessKey(eKeys Key);
+  };
+
+class cMenuEditDateItem : public cMenuEditItem {
+private:
+  static int days[];
+  time_t *value;
+  int *weekdays;
+  time_t oldvalue;
+  int dayindex;
+  int FindDayIndex(int WeekDays);
+  virtual void Set(void);
+public:
+  cMenuEditDateItem(const char *Name, time_t *Value, int *WeekDays = NULL);
+  virtual eOSState ProcessKey(eKeys Key);
+  };
+
+class cMenuEditTimeItem : public cMenuEditItem {
+protected:
+  int *value;
+  int hh, mm;
+  int pos;
+  virtual void Set(void);
+public:
+  cMenuEditTimeItem(const char *Name, int *Value);
   virtual eOSState ProcessKey(eKeys Key);
   };
 

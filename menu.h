@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: menu.h 1.57 2003/08/03 09:37:18 kls Exp $
+ * $Id: menu.h 1.85 2006/03/25 12:15:19 kls Exp $
  */
 
 #ifndef __MENU_H
@@ -12,44 +12,95 @@
 
 #include "ci.h"
 #include "device.h"
-#include "osd.h"
+#include "epg.h"
+#include "osdbase.h"
 #include "dvbplayer.h"
+#include "menuitems.h"
 #include "recorder.h"
-#include "recording.h"
+#include "skins.h"
+
+class cMenuText : public cOsdMenu {
+private:
+  char *text;
+  eDvbFont font;
+public:
+  cMenuText(const char *Title, const char *Text, eDvbFont Font = fontOsd);
+  virtual ~cMenuText();
+  void SetText(const char *Text);
+  virtual void Display(void);
+  virtual eOSState ProcessKey(eKeys Key);
+  };
+
+class cMenuEditTimer : public cOsdMenu {
+private:
+  cTimer *timer;
+  cTimer data;
+  int channel;
+  bool addIfConfirmed;
+  cMenuEditDateItem *firstday;
+  void SetFirstDayItem(void);
+public:
+  cMenuEditTimer(cTimer *Timer, bool New = false);
+  virtual ~cMenuEditTimer();
+  virtual eOSState ProcessKey(eKeys Key);
+  };
+
+class cMenuEvent : public cOsdMenu {
+private:
+  const cEvent *event;
+public:
+  cMenuEvent(const cEvent *Event, bool CanSwitch = false, bool Buttons = false);
+  virtual void Display(void);
+  virtual eOSState ProcessKey(eKeys Key);
+  };
 
 class cMenuMain : public cOsdMenu {
 private:
-  time_t lastActivity;
+  time_t lastDiskSpaceCheck;
+  int lastFreeMB;
   bool replaying;
+  cOsdItem *stopReplayItem;
+  cOsdItem *cancelEditingItem;
+  cOsdItem *stopRecordingItem;
+  int recordControlsState;
   static cOsdObject *pluginOsdObject;
-  void Set(const char *Plugin = NULL);
+  void Set(void);
+  bool Update(bool Force = false);
 public:
-  cMenuMain(bool Replaying, eOSState State = osUnknown, const char *Plugin = NULL);
+  cMenuMain(eOSState State = osUnknown);
   virtual eOSState ProcessKey(eKeys Key);
   static cOsdObject *PluginOsdObject(void);
   };
 
 class cDisplayChannel : public cOsdObject {
 private:
+  cSkinDisplayChannel *displayChannel;
   int group;
   bool withInfo;
-  int lines;
-  int lastTime;
+  cTimeMs lastTime;
   int number;
-  void DisplayChannel(const cChannel *Channel);
+  bool timeout;
+  cChannel *channel;
+  const cEvent *lastPresent;
+  const cEvent *lastFollowing;
+  static cDisplayChannel *currentDisplayChannel;
+  void DisplayChannel(void);
   void DisplayInfo(void);
   void Refresh(void);
+  cChannel *NextAvailableChannel(cChannel *Channel, int Direction);
 public:
   cDisplayChannel(int Number, bool Switched);
   cDisplayChannel(eKeys FirstKey);
   virtual ~cDisplayChannel();
   virtual eOSState ProcessKey(eKeys Key);
+  static bool IsOpen(void) { return currentDisplayChannel != NULL; }
   };
 
 class cDisplayVolume : public cOsdObject {
 private:
-  int timeout;
-  static cDisplayVolume *displayVolume;
+  cSkinDisplayVolume *displayVolume;
+  cTimeMs timeout;
+  static cDisplayVolume *currentDisplayVolume;
   virtual void Show(void);
   cDisplayVolume(void);
 public:
@@ -59,11 +110,30 @@ public:
   eOSState ProcessKey(eKeys Key);
   };
 
+class cDisplayTracks : public cOsdObject {
+private:
+  cSkinDisplayTracks *displayTracks;
+  cTimeMs timeout;
+  eTrackType types[ttMaxTrackTypes];
+  char *descriptions[ttMaxTrackTypes];
+  int numTracks, track, audioChannel;
+  static cDisplayTracks *currentDisplayTracks;
+  virtual void Show(void);
+  cDisplayTracks(void);
+public:
+  virtual ~cDisplayTracks();
+  static bool IsOpen(void) { return currentDisplayTracks != NULL; }
+  static cDisplayTracks *Create(void);
+  static void Process(eKeys Key);
+  eOSState ProcessKey(eKeys Key);
+  };
+
 class cMenuCam : public cOsdMenu {
 private:
   cCiMenu *ciMenu;
-  time_t lastActivity;
   bool selected;
+  int offset;
+  void AddMultiLineItem(const char *s);
   eOSState Select(void);
 public:
   cMenuCam(cCiMenu *CiMenu);
@@ -74,7 +144,6 @@ public:
 class cMenuCamEnquiry : public cOsdMenu {
 private:
   cCiEnquiry *ciEnquiry;
-  time_t lastActivity;
   char *input;
   bool replied;
   eOSState Reply(void);
@@ -90,18 +159,20 @@ class cMenuRecordingItem;
 
 class cMenuRecordings : public cOsdMenu {
 private:
-  static cRecordings Recordings;
   char *base;
   int level;
-  static int helpKeys;
+  int recordingsState;
+  int helpKeys;
   void SetHelpKeys(void);
-  cRecording *GetRecording(cMenuRecordingItem *Item);
+  void Set(bool Refresh = false);
   bool Open(bool OpenSubMenus = false);
   eOSState Play(void);
   eOSState Rewind(void);
   eOSState Delete(void);
-  eOSState Summary(void);
+  eOSState Info(void);
   eOSState Commands(eKeys Key = kNone);
+protected:
+  cRecording *GetRecording(cMenuRecordingItem *Item);
 public:
   cMenuRecordings(const char *Base = NULL, int Level = 0, bool OpenSubMenus = false);
   ~cMenuRecordings();
@@ -113,17 +184,16 @@ private:
   cDevice *device;
   cTimer *timer;
   cRecorder *recorder;
-  const cEventInfo *eventInfo;
+  const cEvent *event;
   char *instantId;
   char *fileName;
-  bool GetEventInfo(void);
+  bool GetEvent(void);
 public:
   cRecordControl(cDevice *Device, cTimer *Timer = NULL, bool Pause = false);
   virtual ~cRecordControl();
   bool Process(time_t t);
-  bool Uses(cDevice *Device) { return Device == device; }
-  void Stop(bool KeepInstant = false);
-  bool IsInstant(void) { return instantId; }
+  cDevice *Device(void) { return device; }
+  void Stop(void);
   const char *InstantId(void) { return instantId; }
   const char *FileName(void) { return fileName; }
   cTimer *Timer(void) { return timer; }
@@ -132,26 +202,32 @@ public:
 class cRecordControls {
 private:
   static cRecordControl *RecordControls[];
+  static int state;
 public:
   static bool Start(cTimer *Timer = NULL, bool Pause = false);
   static void Stop(const char *InstantId);
   static void Stop(cDevice *Device);
-  static bool StopPrimary(bool DoIt = false);
   static bool PauseLiveVideo(void);
   static const char *GetInstantId(const char *LastInstantId);
   static cRecordControl *GetRecordControl(const char *FileName);
   static void Process(time_t t);
+  static void ChannelDataModified(cChannel *Channel);
   static bool Active(void);
   static void Shutdown(void);
+  static void ChangeState(void) { state++; }
+  static bool StateChanged(int &State);
   };
 
 class cReplayControl : public cDvbPlayerControl {
 private:
+  cSkinDisplayReplay *displayReplay;
   cMarks marks;
   bool visible, modeOnly, shown, displayFrames;
   int lastCurrent, lastTotal;
+  bool lastPlay, lastForward;
+  int lastSpeed;
   time_t timeoutShow;
-  bool timeSearchActive, timeSearchHide;  
+  bool timeSearchActive, timeSearchHide;
   int timeSearchTime, timeSearchPos;
   void TimeSearchDisplay(void);
   void TimeSearchProcess(eKeys Key);
@@ -159,7 +235,6 @@ private:
   void ShowTimed(int Seconds = 0);
   static char *fileName;
   static char *title;
-  void DisplayAtBottom(const char *s = NULL);
   void ShowMode(void);
   bool ShowProgress(bool Initial);
   void MarkToggle(void);
@@ -170,6 +245,7 @@ private:
 public:
   cReplayControl(void);
   virtual ~cReplayControl();
+  virtual cOsdObject *GetInfo(void);
   virtual eOSState ProcessKey(eKeys Key);
   virtual void Show(void);
   virtual void Hide(void);

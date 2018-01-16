@@ -12,7 +12,7 @@
 # See the main source file 'vdr.c' for copyright information and
 # how to reach the author.
 #
-# $Id: epg2html.pl 1.4 2002/05/30 09:46:46 kls Exp $
+# $Id: epg2html.pl 1.7 2006/04/17 12:19:08 kls Exp $
 
 @Index = ();
 
@@ -47,13 +47,14 @@ while (<>) {
          while (<>) {
                if (/^E (.*?) (.*?) ([^ ]*)/) {
                   (my $Time, $Duration) = ($2, $3);
-                  my $Title = "", $Subtitle = "", $Description = "";
+                  my $Title = "", $Subtitle = "", $Description = "", $Vps = 0;
                   while (<>) {
                         if    (/^T (.*)/) { $Title       = Tags($1); }
                         elsif (/^S (.*)/) { $Subtitle    = Tags($1); }
-                        elsif (/^D (.*)/) { $Description = Tags($1); }
+                        elsif (/^D (.*)/) { $Description = Tags($1); $Description =~ s/\|/<br>/g; }
+                        elsif (/^V (.*)/) { $Vps         = $1; }
                         elsif (/^e/) {
-                           $Events{$Time} = [($Duration, $Title, $Subtitle, $Description)];
+                           $Events{$Time} = [($Duration, $Title, $Subtitle, $Description, $Vps)];
                            last;
                            }
                         }
@@ -62,7 +63,7 @@ while (<>) {
                   my @Schedule = ();
                   my $Day = "";
                   for $t (sort keys %Events) {
-                      (my $Duration, $Title, $Subtitle, $Description) = @{$Events{$t}};
+                      (my $Duration, $Title, $Subtitle, $Description, $Vps) = @{$Events{$t}};
                       my $d = GetDay($t);
                       if ($d ne $Day) {
                          push(@Schedule, "</table>\n") if ($Day && @Schedule);
@@ -73,6 +74,7 @@ while (<>) {
                       my $Entry = $Title;
                       $Entry .= "<br><i>$Subtitle</i>" if $Subtitle;
                       $Entry .= "<br>$Description" if $Description;
+                      $Entry .= "<br>(VPS = " . scalar localtime($Vps) . ")" if $Vps && $Vps != $t;
                       push(@Schedule, "<tr><td valign=top>" . GetTime($t) . "</td><td>$Entry</td></tr>\n");
                       }
                   push(@Schedule, "</table>\n") if (@Schedule);
@@ -93,4 +95,3 @@ print INDEX "<html>\n<head><title>EPG Index</title><head>\n<body>\n";
 print INDEX sort { lc($a) cmp lc($b) } @Index;
 print INDEX "</body>\n</html>\n";
 close(INDEX);
-   

@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: svdrp.h 1.19 2003/04/27 14:09:59 kls Exp $
+ * $Id: svdrp.h 1.27 2005/12/30 14:46:38 kls Exp $
  */
 
 #ifndef __SVDRP_H
@@ -45,18 +45,21 @@ private:
   cFile file;
   cRecordings Recordings;
   cPUTEhandler *PUTEhandler;
-  uint numChars;
-  char cmdLine[MAXPARSEBUFFER];
-  char *message;
+  int numChars;
+  int length;
+  char *cmdLine;
   time_t lastActivity;
+  static char *grabImageDir;
   void Close(bool Timeout = false);
   bool Send(const char *s, int length = -1);
-  void Reply(int Code, const char *fmt, ...);
+  void Reply(int Code, const char *fmt, ...) __attribute__ ((format (printf, 3, 4)));
+  void PrintHelpTopics(const char **hp);
   void CmdCHAN(const char *Option);
   void CmdCLRE(const char *Option);
   void CmdDELC(const char *Option);
   void CmdDELR(const char *Option);
   void CmdDELT(const char *Option);
+  void CmdEDIT(const char *Option);
   void CmdGRAB(const char *Option);
   void CmdHELP(const char *Option);
   void CmdHITK(const char *Option);
@@ -72,7 +75,10 @@ private:
   void CmdNEWC(const char *Option);
   void CmdNEWT(const char *Option);
   void CmdNEXT(const char *Option);
+  void CmdPLAY(const char *Option);
+  void CmdPLUG(const char *Option);
   void CmdPUTE(const char *Option);
+  void CmdSCAN(const char *Option);
   void CmdSTAT(const char *Option);
   void CmdUPDT(const char *Option);
   void CmdVOLU(const char *Option);
@@ -82,7 +88,7 @@ public:
   ~cSVDRP();
   bool HasConnection(void) { return file.IsOpen(); }
   bool Process(void);
-  char *GetMessage(void);
+  static void SetGrabImageDir(const char *GrabImageDir);
   };
 
 #endif //__SVDRP_H

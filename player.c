@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: player.c 1.6 2002/11/02 14:55:37 kls Exp $
+ * $Id: player.c 1.11 2006/01/06 11:30:07 kls Exp $
  */
 
 #include "player.h"
@@ -23,21 +23,12 @@ cPlayer::~cPlayer()
   Detach();
 }
 
-int cPlayer::PlayVideo(const uchar *Data, int Length)
+int cPlayer::PlayPes(const uchar *Data, int Length, bool VideoOnly)
 {
   if (device)
-     return device->PlayVideo(Data, Length);
-  esyslog("ERROR: attempt to use cPlayer::PlayVideo() without attaching to a cDevice!");
+     return device->PlayPes(Data, Length, VideoOnly);
+  esyslog("ERROR: attempt to use cPlayer::PlayPes() without attaching to a cDevice!");
   return -1;
-}
-
-void cPlayer::PlayAudio(const uchar *Data, int Length)
-{
-  if (device) {
-     device->PlayAudio(Data, Length);
-     return;
-     }
-  esyslog("ERROR: attempt to use cPlayer::PlayAudio() without attaching to a cDevice!");
 }
 
 void cPlayer::Detach(void)
@@ -49,6 +40,7 @@ void cPlayer::Detach(void)
 // --- cControl --------------------------------------------------------------
 
 cControl *cControl::control = NULL;
+cMutex cControl::mutex;
 
 cControl::cControl(cPlayer *Player, bool Hidden)
 {
@@ -63,24 +55,32 @@ cControl::~cControl()
      control = NULL;
 }
 
+cOsdObject *cControl::GetInfo(void)
+{
+  return NULL;
+}
+
 cControl *cControl::Control(void)
 {
+  cMutexLock MutexLock(&mutex);
   return (control && !control->hidden) ? control : NULL;
 }
 
 void cControl::Launch(cControl *Control)
 {
+  cMutexLock MutexLock(&mutex);
   delete control;
   control = Control;
 }
 
 void cControl::Attach(void)
 {
+  cMutexLock MutexLock(&mutex);
   if (control && !control->attached && control->player && !control->player->IsAttached()) {
      if (cDevice::PrimaryDevice()->AttachPlayer(control->player))
         control->attached = true;
      else {
-        Interface->Error(tr("Channel locked (recording)!"));
+        Skins.Message(mtError, tr("Channel locked (recording)!"));
         Shutdown();
         }
      }
@@ -88,6 +88,8 @@ void cControl::Attach(void)
 
 void cControl::Shutdown(void)
 {
-  delete control;
+  cMutexLock MutexLock(&mutex);
+  cControl *c = control; // avoids recursions
   control = NULL;
+  delete c;
 }

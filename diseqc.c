@@ -4,12 +4,13 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: diseqc.c 1.2 2002/12/07 13:44:56 kls Exp $
+ * $Id: diseqc.c 1.5 2005/12/30 15:41:48 kls Exp $
  */
 
 #include "diseqc.h"
 #include <ctype.h>
 #include "sources.h"
+#include "thread.h"
 
 // -- cDiseqc ----------------------------------------------------------------
 
@@ -36,7 +37,7 @@ bool cDiseqc::Parse(const char *s)
      source = cSource::FromString(sourcebuf);
      if (Sources.Get(source)) {
         polarization = toupper(polarization);
-        if (polarization == 'V' || polarization == 'H') {
+        if (polarization == 'V' || polarization == 'H' || polarization == 'L' || polarization == 'R') {
            parsing = true;
            char *CurrentAction = NULL;
            while (Execute(&CurrentAction) != daNone)
@@ -61,10 +62,10 @@ char *cDiseqc::Wait(char *s)
   int n = strtol(s, &p, 10);
   if (!errno && p != s && n >= 0) {
      if (!parsing)
-        usleep(n * 1000);
+        cCondWait::SleepMs(n);
      return p;
      }
-  esyslog("ERROR: illegal value for wait time in '%s'", s - 1);
+  esyslog("ERROR: invalid value for wait time in '%s'", s - 1);
   return NULL;
 }
 
@@ -84,7 +85,7 @@ char *cDiseqc::Codes(char *s)
                  t = skipspace(p);
                  }
               else {
-                 esyslog("ERROR: illegal code at '%s'", t);
+                 esyslog("ERROR: invalid code at '%s'", t);
                  return NULL;
                  }
               }

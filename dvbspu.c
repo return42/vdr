@@ -8,18 +8,15 @@
  *
  * parts of this file are derived from the OMS program.
  *
- * $Id: dvbspu.c 1.5 2003/10/12 09:43:18 kls Exp $
+ * $Id: dvbspu.c 1.21 2006/04/17 12:45:05 kls Exp $
  */
 
+#include "dvbspu.h"
 #include <assert.h>
 #include <string.h>
 #include <inttypes.h>
 #include <math.h>
-
-#include "osd.h"
-#include "osdbase.h"
 #include "device.h"
-#include "dvbspu.h"
 
 /*
  * cDvbSpubitmap:
@@ -30,7 +27,7 @@
  * Inputs:
  *  - a SPU rle encoded image on creation, which will be decoded into
  *    the full screen indexed bitmap
- *  
+ *
  * Output:
  *  - a minimal sized cDvbSpuBitmap a given palette, the indexed bitmap
  *    will be scanned to get the smallest possible resulting bitmap considering
@@ -45,7 +42,7 @@
 #define DEBUG(format, args...)
 #endif
 
-// --- cDvbSpuPalette----------------------------------
+// --- cDvbSpuPalette---------------------------------------------------------
 
 void cDvbSpuPalette::setPalette(const uint32_t * pal)
 {
@@ -53,7 +50,7 @@ void cDvbSpuPalette::setPalette(const uint32_t * pal)
         palette[i] = yuv2rgb(pal[i]);
 }
 
-// --- cDvbSpuBitmap --------------------------------------------
+// --- cDvbSpuBitmap ---------------------------------------------------------
 
 #define setMin(a, b) if (a > b) a = b
 #define setMax(a, b) if (a < b) a = b
@@ -105,13 +102,13 @@ cBitmap *cDvbSpuBitmap::getBitmap(const aDvbSpuPalDescr paldescr,
     if (w & 0x03)
         w += 4 - (w & 0x03);
 
-    cBitmap *ret = new cBitmap(w, h, 2, true);
+    cBitmap *ret = new cBitmap(w, h, 2);
 
     // set the palette
     for (int i = 0; i < 4; i++) {
         uint32_t color =
             pal.getColor(paldescr[i].index, paldescr[i].trans);
-        ret->SetColor(i, (eDvbColor) color);
+        ret->SetColor(i, (tColor) color);
     }
 
     // set the content
@@ -145,6 +142,8 @@ bool cDvbSpuBitmap::getMinSize(const aDvbSpuPalDescr paldescr,
     if (ret)
         DEBUG("MinSize: (%d, %d) x (%d, %d)\n",
               size.x1, size.y1, size.x2, size.y2);
+    if (size.x1 > size.x2 || size.y1 > size.y2)
+       return false;
 
     return ret;
 }
@@ -155,7 +154,7 @@ void cDvbSpuBitmap::putPixel(int xp, int yp, int len, uint8_t colorid)
     setMin(minsize[colorid].x1, xp);
     setMin(minsize[colorid].y1, yp);
     setMax(minsize[colorid].x2, xp + len - 1);
-    setMax(minsize[colorid].y2, yp + len - 1);
+    setMax(minsize[colorid].y2, yp);
 }
 
 static uint8_t getBits(uint8_t * &data, uint8_t & bitf)
@@ -209,7 +208,7 @@ void cDvbSpuBitmap::putFieldData(int field, uint8_t * data, uint8_t * endp)
     }
 }
 
-// --- cDvbSpuDecoder-----------------------------
+// --- cDvbSpuDecoder---------------------------------------------------------
 
 #define CMD_SPU_MENU            0x00
 #define CMD_SPU_SHOW            0x01
@@ -218,6 +217,7 @@ void cDvbSpuBitmap::putFieldData(int field, uint8_t * data, uint8_t * endp)
 #define CMD_SPU_SET_ALPHA       0x04
 #define CMD_SPU_SET_SIZE        0x05
 #define CMD_SPU_SET_PXD_OFFSET  0x06
+#define CMD_SPU_CHG_COLCON      0x07
 #define CMD_SPU_EOF             0xff
 
 #define spuU32(i)  ((spu[i] << 8) + spu[i+1])
@@ -229,6 +229,7 @@ cDvbSpuDecoder::cDvbSpuDecoder()
     spu = NULL;
     osd = NULL;
     spubmp = NULL;
+    allowedShow = false;
 }
 
 cDvbSpuDecoder::~cDvbSpuDecoder()
@@ -238,7 +239,7 @@ cDvbSpuDecoder::~cDvbSpuDecoder()
     delete osd;
 }
 
-void cDvbSpuDecoder::processSPU(uint32_t pts, uint8_t * buf)
+void cDvbSpuDecoder::processSPU(uint32_t pts, uint8_t * buf, bool AllowedShow)
 {
     setTime(pts);
 
@@ -254,6 +255,7 @@ void cDvbSpuDecoder::processSPU(uint32_t pts, uint8_t * buf)
     prev_DCSQ_offset = 0;
 
     clean = true;
+    allowedShow = AllowedShow;
 }
 
 void cDvbSpuDecoder::setScaleMode(cSpuDecoder::eScaleMode ScaleMode)
@@ -303,37 +305,43 @@ void cDvbSpuDecoder::clearHighlight(void)
     hlpsize.y2 = -1;
 }
 
-int cDvbSpuDecoder::ScaleYcoord(int value)
+sDvbSpuRect cDvbSpuDecoder::CalcAreaSize(sDvbSpuRect fgsize, cBitmap *fgbmp, sDvbSpuRect bgsize, cBitmap *bgbmp)
 {
-    if (scaleMode == eSpuLetterBox) {
-        int offset = cDevice::PrimaryDevice()->GetVideoSystem() == vsPAL ? 72 : 60;
-        return lround((value * 3.0) / 4.0) + offset;
-        }
-    else
-        return value;
-}
-
-int cDvbSpuDecoder::ScaleYres(int value)
-{
-    if (scaleMode == eSpuLetterBox)
-        return lround((value * 3.0) / 4.0);
-    else
-        return value;
-}
-
-void cDvbSpuDecoder::DrawBmp(sDvbSpuRect & size, cBitmap * bmp)
-{
-    osd->Create(size.x1, size.y1, size.width(), size.height(), 2, false);
-    osd->SetBitmap(size.x1, size.y1, *bmp);
-    delete bmp;
+    sDvbSpuRect size;
+    if (fgbmp && bgbmp) {
+       size.x1 = min(fgsize.x1, bgsize.x1);
+       size.y1 = min(fgsize.y1, bgsize.y1);
+       size.x2 = max(fgsize.x2, bgsize.x2);
+       size.y2 = max(fgsize.y2, bgsize.y2);
+       }
+    else if (fgbmp) {
+       size.x1 = fgsize.x1;
+       size.y1 = fgsize.y1;
+       size.x2 = fgsize.x2;
+       size.y2 = fgsize.y2;
+       }
+    else if (bgbmp) {
+       size.x1 = bgsize.x1;
+       size.y1 = bgsize.y1;
+       size.x2 = bgsize.x2;
+       size.y2 = bgsize.y2;
+       }
+    else {
+       size.x1 = 0;
+       size.y1 = 0;
+       size.x2 = 0;
+       size.y2 = 0;
+       }
+    return size;
 }
 
 void cDvbSpuDecoder::Draw(void)
 {
-    Hide();
-
-    if (!spubmp)
+    cMutexLock MutexLock(&mutex);
+    if (!spubmp) {
+        Hide();
         return;
+    }
 
     cBitmap *fg = NULL;
     cBitmap *bg = NULL;
@@ -341,35 +349,38 @@ void cDvbSpuDecoder::Draw(void)
     sDvbSpuRect hlsize;
 
     hlsize.x1 = hlpsize.x1;
-    hlsize.y1 = ScaleYcoord(hlpsize.y1);
+    hlsize.y1 = hlpsize.y1;
     hlsize.x2 = hlpsize.x2;
-    hlsize.y2 = ScaleYcoord(hlpsize.y2);
+    hlsize.y2 = hlpsize.y2;
 
     if (highlight)
         fg = spubmp->getBitmap(hlpDescr, palette, hlsize);
 
-    if (spubmp->getMinSize(palDescr, bgsize)) {
+    if (spubmp->getMinSize(palDescr, bgsize))
         bg = spubmp->getBitmap(palDescr, palette, bgsize);
-        if (scaleMode == eSpuLetterBox) {
-            // the coordinates have to be modified for letterbox
-            int y1 = ScaleYres(bgsize.y1) + bgsize.height();
-            bgsize.y2 = y1 + bgsize.height();
-            bgsize.y1 = y1;
-        }
-    }
+
+    sDvbSpuRect areaSize = CalcAreaSize(hlsize, fg, bgsize, bg);
+
+    if (!fg || !bg || !osd) {
+       Hide();
+       }
 
     if (bg || fg) {
-        if (osd == NULL)
-            if ((osd = cOsd::OpenRaw(0, 0)) == NULL) {
-                dsyslog("OpenRaw failed\n");
-                return;
-            }
-
-        if (fg)
-            DrawBmp(hlsize, fg);
+        if (osd == NULL) {
+           osd = cOsdProvider::NewOsd(0, 0);
+           if ((areaSize.width() & 3) != 0)
+              areaSize.x2 += 4 - (areaSize.width() & 3);
+           tArea Area = { areaSize.x1, areaSize.y1, areaSize.x2, areaSize.y2, (fg && bg) ? 4 : 2 };
+           if (osd->SetAreas(&Area, 1) != oeOk)
+              dsyslog("dvbspu: AreaSize (%d, %d) (%d, %d) Bpp %d", areaSize.x1, areaSize.y1, areaSize.x2, areaSize.y2, (fg && bg) ? 4 : 2 );
+           }
 
         if (bg)
-            DrawBmp(bgsize, bg);
+           osd->DrawBitmap(bgsize.x1, bgsize.y1, *bg);
+        if (fg)
+           osd->DrawBitmap(hlsize.x1, hlsize.y1, *fg);
+        delete fg;
+        delete bg;
 
         osd->Flush();
     }
@@ -379,6 +390,7 @@ void cDvbSpuDecoder::Draw(void)
 
 void cDvbSpuDecoder::Hide(void)
 {
+    cMutexLock MutexLock(&mutex);
     delete osd;
     osd = NULL;
 }
@@ -423,7 +435,7 @@ int cDvbSpuDecoder::setTime(uint32_t pts)
 
             prev_DCSQ_offset = DCSQ_offset;
             DCSQ_offset = spuU32(i);
-            DEBUG("offs = %d, DCSQ = %d, prev_DCSQ = %d\n", 
+            DEBUG("offs = %d, DCSQ = %d, prev_DCSQ = %d\n",
                            i, DCSQ_offset, prev_DCSQ_offset);
             i += 2;
 
@@ -476,6 +488,12 @@ int cDvbSpuDecoder::setTime(uint32_t pts)
                     i += 5;
                     break;
 
+                case CMD_SPU_CHG_COLCON: {
+                    int size = spuU32(i + 1);
+                    i += 1 + size;
+                    }
+                    break;
+
                 case CMD_SPU_MENU:
                     DEBUG("\tspu menu\n");
                     state = spMENU;
@@ -484,7 +502,7 @@ int cDvbSpuDecoder::setTime(uint32_t pts)
                     break;
 
                 default:
-                    esyslog("invalid sequence in control header (%.2x)\n",
+                    esyslog("invalid sequence in control header (%.2x)",
                             spu[i]);
                     assert(0);
                     i++;
@@ -499,7 +517,7 @@ int cDvbSpuDecoder::setTime(uint32_t pts)
         } else if (!clean)
             state = spSHOW;
 
-        if (state == spSHOW || state == spMENU)
+        if ((state == spSHOW && allowedShow) || state == spMENU)
             Draw();
 
         if (state == spHIDE)

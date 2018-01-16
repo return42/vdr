@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: videodir.c 1.10 2003/08/02 13:43:28 kls Exp $
+ * $Id: videodir.c 1.14 2005/12/18 10:33:20 kls Exp $
  */
 
 #include "videodir.h"
@@ -16,6 +16,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "recording.h"
 #include "tools.h"
 
 const char *VideoDirectory = VIDEODIR;
@@ -102,7 +103,7 @@ const char *cVideoDirectory::Adjust(const char *FileName)
   return NULL;
 }
 
-int OpenVideoFile(const char *FileName, int Flags)
+cUnbufferedFile *OpenVideoFile(const char *FileName, int Flags)
 {
   const char *ActualFileName = FileName;
 
@@ -110,7 +111,7 @@ int OpenVideoFile(const char *FileName, int Flags)
   if (strstr(FileName, VideoDirectory) != FileName) {
      esyslog("ERROR: %s not in %s", FileName, VideoDirectory);
      errno = ENOENT; // must set 'errno' - any ideas for a better value?
-     return -1;
+     return NULL;
      }
   // Are we going to create a new file?
   if ((Flags & O_CREAT) != 0) {
@@ -128,25 +129,26 @@ int OpenVideoFile(const char *FileName, int Flags)
         if (Dir.Stored()) {
            ActualFileName = Dir.Adjust(FileName);
            if (!MakeDirs(ActualFileName, false))
-              return -1; // errno has been set by MakeDirs()
+              return NULL; // errno has been set by MakeDirs()
            if (symlink(ActualFileName, FileName) < 0) {
               LOG_ERROR_STR(FileName);
-              return -1;
+              return NULL;
               }
            ActualFileName = strdup(ActualFileName); // must survive Dir!
            }
         }
      }
-  int Result = open(ActualFileName, Flags, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+  cUnbufferedFile *File = cUnbufferedFile::Create(ActualFileName, Flags, DEFFILEMODE);
   if (ActualFileName != FileName)
      free((char *)ActualFileName);
-  return Result;
+  return File;
 }
 
-int CloseVideoFile(int FileHandle)
+int CloseVideoFile(cUnbufferedFile *File)
 {
-  // just in case we ever decide to do something special when closing the file!
-  return close(FileHandle);
+  int Result = File->Close();
+  delete File;
+  return Result;
 }
 
 bool RenameVideoFile(const char *OldName, const char *NewName)
@@ -184,12 +186,17 @@ bool VideoFileSpaceAvailable(int SizeMB)
 int VideoDiskSpace(int *FreeMB, int *UsedMB)
 {
   int free = 0, used = 0;
+  int deleted = DeletedRecordings.TotalFileSizeMB();
   cVideoDirectory Dir;
   do {
      int u;
      free += Dir.FreeMB(&u);
      used += u;
      } while (Dir.Next());
+  if (deleted > used)
+     deleted = used; // let's not get beyond 100%
+  free += deleted;
+  used -= deleted;
   if (FreeMB)
      *FreeMB = free;
   if (UsedMB)
@@ -197,27 +204,23 @@ int VideoDiskSpace(int *FreeMB, int *UsedMB)
   return (free + used) ? used * 100 / (free + used) : 0;
 }
 
-const char *PrefixVideoFileName(const char *FileName, char Prefix)
+cString PrefixVideoFileName(const char *FileName, char Prefix)
 {
-  static char *PrefixedName = NULL;
+  char PrefixedName[strlen(FileName) + 2];
 
-  if (!PrefixedName || strlen(PrefixedName) <= strlen(FileName))
-     PrefixedName = (char *)realloc(PrefixedName, strlen(FileName) + 2);
-  if (PrefixedName) {
-     const char *p = FileName + strlen(FileName); // p points at the terminating 0
-     int n = 2;
-     while (p-- > FileName && n > 0) {
-           if (*p == '/') {
-              if (--n == 0) {
-                 int l = p - FileName + 1;
-                 strncpy(PrefixedName, FileName, l);
-                 PrefixedName[l] = Prefix;
-                 strcpy(PrefixedName + l + 1, p + 1);
-                 return PrefixedName;
-                 }
+  const char *p = FileName + strlen(FileName); // p points at the terminating 0
+  int n = 2;
+  while (p-- > FileName && n > 0) {
+        if (*p == '/') {
+           if (--n == 0) {
+              int l = p - FileName + 1;
+              strncpy(PrefixedName, FileName, l);
+              PrefixedName[l] = Prefix;
+              strcpy(PrefixedName + l + 1, p + 1);
+              return PrefixedName;
               }
            }
-     }
+        }
   return NULL;
 }
 

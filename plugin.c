@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: plugin.c 1.10 2003/08/30 14:52:58 kls Exp $
+ * $Id: plugin.c 1.22 2006/04/17 09:20:05 kls Exp $
  */
 
 #include "plugin.h"
@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include "config.h"
+#include "interface.h"
 
 #define LIBVDR_PREFIX  "libvdr-"
 #define SO_INDICATOR   ".so."
@@ -25,9 +26,10 @@
 
 char *cPlugin::configDirectory = NULL;
 
-cPlugin::cPlugin(void) 
+cPlugin::cPlugin(void)
 {
   name = NULL;
+  started = false;
 }
 
 cPlugin::~cPlugin()
@@ -60,8 +62,21 @@ bool cPlugin::Start(void)
   return true;
 }
 
+void cPlugin::Stop(void)
+{
+}
+
 void cPlugin::Housekeeping(void)
 {
+}
+
+void cPlugin::MainThreadHook(void)
+{
+}
+
+cString cPlugin::Active(void)
+{
+  return NULL;
 }
 
 const char *cPlugin::MainMenuEntry(void)
@@ -92,6 +107,21 @@ void cPlugin::SetupStore(const char *Name, const char *Value)
 void cPlugin::SetupStore(const char *Name, int Value)
 {
   Setup.Store(Name, Value, this->Name());
+}
+
+bool cPlugin::Service(const char *Id, void *Data)
+{
+  return false;
+}
+
+const char **cPlugin::SVDRPHelpPages(void)
+{
+  return NULL;
+}
+
+cString cPlugin::SVDRPCommand(const char *Command, const char *Option, int &ReplyCode)
+{
+  return NULL;
 }
 
 void cPlugin::RegisterI18n(const tI18nPhrase * const Phrases)
@@ -162,7 +192,7 @@ bool cDll::Load(bool Log)
   const char *error = dlerror();
   if (!error) {
      void *(*creator)(void);
-     (void *)creator = dlsym(handle, "VDRPluginCreator");
+     creator = (void *(*)(void))dlsym(handle, "VDRPluginCreator");
      if (!(error = dlerror()))
         plugin = (cPlugin *)creator();
      }
@@ -212,7 +242,7 @@ bool cDll::Load(bool Log)
         if (argc)
            plugin->SetName(argv[0]);
         optind = 0; // to reset the getopt() data
-        return !argc || plugin->ProcessArgs(argc, argv);
+        return !Log || !argc || plugin->ProcessArgs(argc, argv);
         }
      }
   else {
@@ -256,26 +286,23 @@ void cPluginManager::SetDirectory(const char *Directory)
 void cPluginManager::AddPlugin(const char *Args)
 {
   if (strcmp(Args, "*") == 0) {
-     DIR *d = opendir(directory);
-     if (d) {
-        struct dirent *e;
-        while ((e = readdir(d)) != NULL) {
-              if (strstr(e->d_name, LIBVDR_PREFIX) == e->d_name) {
-                 char *p = strstr(e->d_name, SO_INDICATOR);
-                 if (p) {
-                    *p = 0;
-                    p += strlen(SO_INDICATOR);
-                    if (strcmp(p, VDRVERSION) == 0) {
-                       char *name = e->d_name + strlen(LIBVDR_PREFIX);
-                       if (strcmp(name, "*") != 0) { // let's not get into a loop!
-                          AddPlugin(e->d_name + strlen(LIBVDR_PREFIX));
-                          }
+     cReadDir d(directory);
+     struct dirent *e;
+     while ((e = d.Next()) != NULL) {
+           if (strstr(e->d_name, LIBVDR_PREFIX) == e->d_name) {
+              char *p = strstr(e->d_name, SO_INDICATOR);
+              if (p) {
+                 *p = 0;
+                 p += strlen(SO_INDICATOR);
+                 if (strcmp(p, APIVERSION) == 0) {
+                    char *name = e->d_name + strlen(LIBVDR_PREFIX);
+                    if (strcmp(name, "*") != 0) { // let's not get into a loop!
+                       AddPlugin(e->d_name + strlen(LIBVDR_PREFIX));
                        }
                     }
                  }
               }
-        closedir(d);
-        }
+           }
      return;
      }
   char *s = strdup(skipspace(Args));
@@ -283,7 +310,7 @@ void cPluginManager::AddPlugin(const char *Args)
   if (p)
      *p = 0;
   char *buffer = NULL;
-  asprintf(&buffer, "%s/%s%s%s%s", directory, LIBVDR_PREFIX, s, SO_INDICATOR, VDRVERSION);
+  asprintf(&buffer, "%s/%s%s%s%s", directory, LIBVDR_PREFIX, s, SO_INDICATOR, APIVERSION);
   dlls.Add(new cDll(buffer, Args));
   free(buffer);
   free(s);
@@ -325,6 +352,7 @@ bool cPluginManager::StartPlugins(void)
          Setup.OSDLanguage = Language;
          if (!p->Start())
             return false;
+         p->started = true;
          }
       }
   return true;
@@ -344,6 +372,32 @@ void cPluginManager::Housekeeping(void)
         }
      lastHousekeeping = time(NULL);
      }
+}
+
+void cPluginManager::MainThreadHook(void)
+{
+  for (cDll *dll = pluginManager->dlls.First(); dll; dll = pluginManager->dlls.Next(dll)) {
+      cPlugin *p = dll->Plugin();
+      if (p)
+         p->MainThreadHook();
+      }
+}
+
+bool cPluginManager::Active(const char *Prompt)
+{
+  if (pluginManager) {
+     for (cDll *dll = pluginManager->dlls.First(); dll; dll = pluginManager->dlls.Next(dll)) {
+         cPlugin *p = dll->Plugin();
+         if (p) {
+            cString s = p->Active();
+            if (!isempty(*s)) {
+               if (!Prompt || !Interface->Confirm(cString::sprintf("%s - %s", *s, Prompt)))
+                  return true;
+               }
+            }
+         }
+     }
+  return false;
 }
 
 bool cPluginManager::HasPlugins(void)
@@ -369,15 +423,50 @@ cPlugin *cPluginManager::GetPlugin(const char *Name)
   return NULL;
 }
 
+cPlugin *cPluginManager::CallFirstService(const char *Id, void *Data)
+{
+  if (pluginManager) {
+     for (cDll *dll = pluginManager->dlls.First(); dll; dll = pluginManager->dlls.Next(dll)) {
+         cPlugin *p = dll->Plugin();
+         if (p && p->Service(Id, Data))
+            return p;
+         }
+     }
+  return NULL;
+}
+
+bool cPluginManager::CallAllServices(const char *Id, void *Data)
+{
+  bool found=false;
+  if (pluginManager) {
+     for (cDll *dll = pluginManager->dlls.First(); dll; dll = pluginManager->dlls.Next(dll)) {
+         cPlugin *p = dll->Plugin();
+         if (p && p->Service(Id, Data))
+            found = true;
+         }
+     }
+  return found;
+}
+
+void cPluginManager::StopPlugins(void)
+{
+  for (cDll *dll = dlls.Last(); dll; dll = dlls.Prev(dll)) {
+      cPlugin *p = dll->Plugin();
+      if (p && p->started) {
+         isyslog("stopping plugin: %s", p->Name());
+         p->Stop();
+         p->started = false;
+         }
+      }
+}
+
 void cPluginManager::Shutdown(bool Log)
 {
   cDll *dll;
   while ((dll = dlls.Last()) != NULL) {
-        if (Log) {
-           cPlugin *p = dll->Plugin();
-           if (p)
-              isyslog("stopping plugin: %s", p->Name());
-           }
+        cPlugin *p = dll->Plugin();
+        if (p && Log)
+           isyslog("deleting plugin: %s", p->Name());
         dlls.Del(dll);
         }
 }

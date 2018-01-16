@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: cutter.c 1.5 2003/08/17 09:04:04 kls Exp $
+ * $Id: cutter.c 1.15 2006/02/12 10:07:23 kls Exp $
  */
 
 #include "cutter.h"
@@ -18,8 +18,7 @@
 class cCuttingThread : public cThread {
 private:
   const char *error;
-  bool active;
-  int fromFile, toFile;
+  cUnbufferedFile *fromFile, *toFile;
   cFileName *fromFileName, *toFileName;
   cIndexFile *fromIndex, *toIndex;
   cMarks fromMarks, toMarks;
@@ -32,10 +31,10 @@ public:
   };
 
 cCuttingThread::cCuttingThread(const char *FromFileName, const char *ToFileName)
+:cThread("video cutting")
 {
   error = NULL;
-  active = false;
-  fromFile = toFile = -1;
+  fromFile = toFile = NULL;
   fromFileName = toFileName = NULL;
   fromIndex = toIndex = NULL;
   if (fromMarks.Load(FromFileName) && fromMarks.Count()) {
@@ -52,7 +51,6 @@ cCuttingThread::cCuttingThread(const char *FromFileName, const char *ToFileName)
 
 cCuttingThread::~cCuttingThread()
 {
-  active = false;
   Cancel(3);
   delete fromFileName;
   delete toFileName;
@@ -62,13 +60,13 @@ cCuttingThread::~cCuttingThread()
 
 void cCuttingThread::Action(void)
 {
-  dsyslog("video cutting thread started (pid=%d)", getpid());
-
   cMark *Mark = fromMarks.First();
   if (Mark) {
      fromFile = fromFileName->Open();
      toFile = toFileName->Open();
-     active = fromFile >= 0 && toFile >= 0;
+     if (!fromFile || !toFile)
+        return;
+     fromFile->SetReadAhead(MEGABYTE(20));
      int Index = Mark->position;
      Mark = fromMarks.Next(Mark);
      int FileSize = 0;
@@ -79,7 +77,7 @@ void cCuttingThread::Action(void)
      uchar buffer[MAXFRAMESIZE];
      bool LastMark = false;
      bool cutIn = true;
-     while (active) {
+     while (Running()) {
            uchar FileNumber;
            int FileOffset, Length;
            uchar PictureType;
@@ -93,9 +91,10 @@ void cCuttingThread::Action(void)
            if (fromIndex->Get(Index++, &FileNumber, &FileOffset, &PictureType, &Length)) {
               if (FileNumber != CurrentFileNumber) {
                  fromFile = fromFileName->SetOffset(FileNumber, FileOffset);
+                 fromFile->SetReadAhead(MEGABYTE(20));
                  CurrentFileNumber = FileNumber;
                  }
-              if (fromFile >= 0) {
+              if (fromFile) {
                  int len = ReadFrame(fromFile, buffer,  Length, sizeof(buffer));
                  if (len < 0) {
                     error = "ReadFrame";
@@ -121,7 +120,7 @@ void cCuttingThread::Action(void)
                  break;
               if (FileSize > MEGABYTE(Setup.MaxVideoFileSize)) {
                  toFile = toFileName->NextFile();
-                 if (toFile < 0) {
+                 if (!toFile) {
                     error = "toFile 1";
                     break;
                     }
@@ -134,7 +133,7 @@ void cCuttingThread::Action(void)
                  cutIn = false;
                  }
               }
-           if (safe_write(toFile, buffer, Length) < 0) {
+           if (toFile->Write(buffer, Length) < 0) {
               error = "safe_write";
               break;
               }
@@ -161,7 +160,7 @@ void cCuttingThread::Action(void)
                  cutIn = true;
                  if (Setup.SplitEditedFiles) {
                     toFile = toFileName->NextFile();
-                    if (toFile < 0) {
+                    if (!toFile) {
                        error = "toFile 2";
                        break;
                        }
@@ -175,7 +174,6 @@ void cCuttingThread::Action(void)
      }
   else
      esyslog("no editing marks found!");
-  dsyslog("end video cutting thread");
 }
 
 // --- cCutter ---------------------------------------------------------------
@@ -206,7 +204,8 @@ bool cCutter::Start(const char *FileName)
         free(s);
         // XXX
         editedVersionName = strdup(evn);
-        Recording.WriteSummary();
+        Recording.WriteInfo();
+        Recordings.AddByName(editedVersionName);
         cuttingThread = new cCuttingThread(FileName, editedVersionName);
         return true;
         }
@@ -226,6 +225,7 @@ void cCutter::Stop(void)
      if (Error)
         esyslog("ERROR: '%s' during editing process", Error);
      RemoveVideoFile(editedVersionName); //XXX what if this file is currently being replayed?
+     Recordings.DelByName(editedVersionName);
      }
 }
 

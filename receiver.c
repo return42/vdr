@@ -4,33 +4,36 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: receiver.c 1.3 2002/07/28 15:14:49 kls Exp $
+ * $Id: receiver.c 1.5 2006/03/26 14:07:21 kls Exp $
  */
 
+#include "receiver.h"
 #include <stdarg.h>
 #include <stdio.h>
-#include "receiver.h"
 #include "tools.h"
 
-cReceiver::cReceiver(int Ca, int Priority, int NumPids, ...)
+cReceiver::cReceiver(int Ca, int Priority, int Pid, const int *Pids1, const int *Pids2, const int *Pids3)
 {
   device = NULL;
   ca = Ca;
   priority = Priority;
-  for (int i = 0; i < MAXRECEIVEPIDS; i++)
-      pids[i] = 0;
-  if (NumPids) {
-     va_list ap;
-     va_start(ap, NumPids);
-     int n = 0;
-     while (n < MAXRECEIVEPIDS && NumPids--) {
-           if ((pids[n] = va_arg(ap, int)) != 0)
-              n++;
-           }
-     va_end(ap);
+  numPids = 0;
+  if (Pid)
+     pids[numPids++] = Pid;
+  if (Pids1) {
+     while (*Pids1 && numPids < MAXRECEIVEPIDS)
+           pids[numPids++] = *Pids1++;
      }
-  else
-     esyslog("ERROR: cReceiver called without a PID!");
+  if (Pids2) {
+     while (*Pids2 && numPids < MAXRECEIVEPIDS)
+           pids[numPids++] = *Pids2++;
+     }
+  if (Pids3) {
+     while (*Pids3 && numPids < MAXRECEIVEPIDS)
+           pids[numPids++] = *Pids3++;
+     }
+  if (numPids >= MAXRECEIVEPIDS)
+     dsyslog("too many PIDs in cReceiver");
 }
 
 cReceiver::~cReceiver()
@@ -41,11 +44,9 @@ cReceiver::~cReceiver()
 bool cReceiver::WantsPid(int Pid)
 {
   if (Pid) {
-     for (int i = 0; i < MAXRECEIVEPIDS; i++) {
+     for (int i = 0; i < numPids; i++) {
          if (pids[i] == Pid)
             return true;
-         if (!pids[i])
-            break;
          }
      }
   return false;

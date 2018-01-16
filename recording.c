@@ -4,10 +4,11 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: recording.c 1.86 2003/11/08 15:25:35 kls Exp $
+ * $Id: recording.c 1.148 2006/04/29 13:22:20 kls Exp $
  */
 
 #include "recording.h"
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -18,13 +19,16 @@
 #include "i18n.h"
 #include "interface.h"
 #include "remux.h" //XXX+ I_FRAME
+#include "skins.h"
 #include "tools.h"
 #include "videodir.h"
+
+#define SUMMARYFALLBACK
 
 #define RECEXT       ".rec"
 #define DELEXT       ".del"
 /* This was the original code, which works fine in a Linux only environment.
-   Unfortunately, because of windows and its brain dead file system, we have
+   Unfortunately, because of Windows and its brain dead file system, we have
    to use a more complicated approach, in order to allow users who have enabled
    the VFAT compile time option to see their recordings even if they forget to
    enable VFAT when compiling a new version of VDR... Gee, do I hate Windows.
@@ -32,26 +36,20 @@
 #define DATAFORMAT   "%4d-%02d-%02d.%02d:%02d.%02d.%02d" RECEXT
 #define NAMEFORMAT   "%s/%s/" DATAFORMAT
 */
-// start of implementation for brain dead systems
 #define DATAFORMAT   "%4d-%02d-%02d.%02d%*c%02d.%02d.%02d" RECEXT
-#ifdef VFAT
-#define nameFORMAT   "%4d-%02d-%02d.%02d.%02d.%02d.%02d" RECEXT
-#else
-#define nameFORMAT   "%4d-%02d-%02d.%02d:%02d.%02d.%02d" RECEXT
-#endif
-#define NAMEFORMAT   "%s/%s/" nameFORMAT
-// end of implementation for brain dead systems
+#define NAMEFORMAT   "%s/%s/" "%4d-%02d-%02d.%02d.%02d.%02d.%02d" RECEXT
 
 #define RESUMEFILESUFFIX  "/resume%s%s.vdr"
+#ifdef SUMMARYFALLBACK
 #define SUMMARYFILESUFFIX "/summary.vdr"
+#endif
+#define INFOFILESUFFIX    "/info.vdr"
 #define MARKSFILESUFFIX   "/marks.vdr"
-
-#define FINDCMD      "cd '%s' && find '%s' -follow -type d -name '%s' 2> /dev/null"
 
 #define MINDISKSPACE 1024 // MB
 
-#define DELETEDLIFETIME     1 // hours after which a deleted recording will be actually removed
-#define REMOVECHECKDELTA 3600 // seconds between checks for removing deleted files
+#define REMOVECHECKDELTA   60 // seconds between checks for removing deleted files
+#define DELETEDLIFETIME   300 // seconds after which a deleted recording will be actually removed
 #define DISKCHECKDELTA    100 // seconds between checks for free disk space
 #define REMOVELATENCY      10 // seconds to wait until next check after removing a file
 
@@ -60,43 +58,80 @@
 
 #define MAX_SUBTITLE_LENGTH  40
 
+#define MAX_LINK_LEVEL  6
+
+bool VfatFileSystem = false;
+
+cRecordings DeletedRecordings(true);
+
+// --- cRemoveDeletedRecordingsThread ----------------------------------------
+
+class cRemoveDeletedRecordingsThread : public cThread {
+protected:
+  virtual void Action(void);
+public:
+  cRemoveDeletedRecordingsThread(void);
+  };
+
+cRemoveDeletedRecordingsThread::cRemoveDeletedRecordingsThread(void)
+:cThread("remove deleted recordings")
+{
+}
+
+void cRemoveDeletedRecordingsThread::Action(void)
+{
+  // Make sure only one instance of VDR does this:
+  cLockFile LockFile(VideoDirectory);
+  if (LockFile.Lock()) {
+     bool deleted = false;
+     cThreadLock DeletedRecordingsLock(&DeletedRecordings);
+     for (cRecording *r = DeletedRecordings.First(); r; ) {
+         if (r->deleted && time(NULL) - r->deleted > DELETEDLIFETIME) {
+            cRecording *next = DeletedRecordings.Next(r);
+            r->Remove();
+            DeletedRecordings.Del(r);
+            r = next;
+            deleted = true;
+            continue;
+            }
+         r = DeletedRecordings.Next(r);
+         }
+     if (deleted)
+        RemoveEmptyVideoDirectories();
+     }
+}
+
+static cRemoveDeletedRecordingsThread RemoveDeletedRecordingsThread;
+
+// ---
+
 void RemoveDeletedRecordings(void)
 {
   static time_t LastRemoveCheck = 0;
   if (time(NULL) - LastRemoveCheck > REMOVECHECKDELTA) {
-     // Make sure only one instance of VDR does this:
-     cLockFile LockFile(VideoDirectory);
-     if (!LockFile.Lock())
-        return;
-     // Remove the oldest file that has been "deleted":
-     cRecordings Recordings;
-     if (Recordings.Load(true)) {
-        cRecording *r = Recordings.First();
-        cRecording *r0 = r;
-        while (r) {
-              if (r->start < r0->start)
-                 r0 = r;
-              r = Recordings.Next(r);
-              }
-        if (r0 && time(NULL) - r0->start > DELETEDLIFETIME * 3600) {
-           r0->Remove();
-           RemoveEmptyVideoDirectories();
-           LastRemoveCheck += REMOVELATENCY;
-           return;
-           }
+     if (!RemoveDeletedRecordingsThread.Active()) {
+        cThreadLock DeletedRecordingsLock(&DeletedRecordings);
+        for (cRecording *r = DeletedRecordings.First(); r; r = DeletedRecordings.Next(r)) {
+            if (r->deleted && time(NULL) - r->deleted > DELETEDLIFETIME) {
+               RemoveDeletedRecordingsThread.Start();
+               break;
+               }
+            }
         }
      LastRemoveCheck = time(NULL);
      }
 }
 
-void AssertFreeDiskSpace(int Priority)
+void AssertFreeDiskSpace(int Priority, bool Force)
 {
+  static cMutex Mutex;
+  cMutexLock MutexLock(&Mutex);
   // With every call to this function we try to actually remove
   // a file, or mark a file for removal ("delete" it), so that
   // it will get removed during the next call.
   static time_t LastFreeDiskCheck = 0;
   int Factor = (Priority == -1) ? 10 : 1;
-  if (time(NULL) - LastFreeDiskCheck > DISKCHECKDELTA / Factor) {
+  if (Force || time(NULL) - LastFreeDiskCheck > DISKCHECKDELTA / Factor) {
      if (!VideoFileSpaceAvailable(MINDISKSPACE)) {
         // Make sure only one instance of VDR does this:
         cLockFile LockFile(VideoDirectory);
@@ -104,29 +139,36 @@ void AssertFreeDiskSpace(int Priority)
            return;
         // Remove the oldest file that has been "deleted":
         isyslog("low disk space while recording, trying to remove a deleted recording...");
-        cRecordings Recordings;
-        if (Recordings.Load(true)) {
-           cRecording *r = Recordings.First();
+        cThreadLock DeletedRecordingsLock(&DeletedRecordings);
+        if (DeletedRecordings.Count()) {
+           cRecording *r = DeletedRecordings.First();
            cRecording *r0 = r;
            while (r) {
                  if (r->start < r0->start)
                     r0 = r;
-                 r = Recordings.Next(r);
+                 r = DeletedRecordings.Next(r);
                  }
            if (r0 && r0->Remove()) {
+              DeletedRecordings.Del(r0);
               LastFreeDiskCheck += REMOVELATENCY / Factor;
               return;
               }
            }
+        // DeletedRecordings was empty, so to be absolutely sure there are no
+        // deleted recordings we need to double check:
+        DeletedRecordings.Update(true);
+        if (DeletedRecordings.Count())
+           return; // the next call will actually remove it
         // No "deleted" files to remove, so let's see if we can delete a recording:
         isyslog("...no deleted recording found, trying to delete an old recording...");
-        if (Recordings.Load(false)) {
+        cThreadLock RecordingsLock(&Recordings);
+        if (Recordings.Count()) {
            cRecording *r = Recordings.First();
            cRecording *r0 = NULL;
            while (r) {
                  if (!r->IsEdited() && r->lifetime < MAXLIFETIME) { // edited recordings and recordings with MAXLIFETIME live forever
                     if ((r->lifetime == 0 && Priority > r->priority) || // the recording has no guaranteed lifetime and the new recording has higher priority
-                        (time(NULL) - r->start) / SECSINDAY > r->lifetime) { // the recording's guaranteed lifetime has expired
+                        (r->lifetime > 0 && (time(NULL) - r->start) / SECSINDAY >= r->lifetime)) { // the recording's guaranteed lifetime has expired
                        if (r0) {
                           if (r->priority < r0->priority || (r->priority == r0->priority && r->start < r0->start))
                              r0 = r; // in any case we delete the one with the lowest priority (or the older one in case of equal priorities)
@@ -137,25 +179,27 @@ void AssertFreeDiskSpace(int Priority)
                     }
                  r = Recordings.Next(r);
                  }
-           if (r0 && r0->Delete())
+           if (r0 && r0->Delete()) {
+              Recordings.Del(r0);
               return;
+              }
            }
         // Unable to free disk space, but there's nothing we can do about that...
         isyslog("...no old recording found, giving up");
-        Interface->Confirm(tr("Low disk space!"), 30);
+        Skins.QueueMessage(mtWarning, tr("Low disk space!"), 5, -1);
         }
      LastFreeDiskCheck = time(NULL);
      }
 }
 
-// --- cResumeFile ------------------------------------------------------------
+// --- cResumeFile -----------------------------------------------------------
 
 cResumeFile::cResumeFile(const char *FileName)
 {
   fileName = MALLOC(char, strlen(FileName) + strlen(RESUMEFILESUFFIX) + 1);
   if (fileName) {
      strcpy(fileName, FileName);
-     sprintf(fileName + strlen(fileName), RESUMEFILESUFFIX, Setup.ResumeID ? "." : "", Setup.ResumeID ? itoa(Setup.ResumeID) : "");
+     sprintf(fileName + strlen(fileName), RESUMEFILESUFFIX, Setup.ResumeID ? "." : "", Setup.ResumeID ? *itoa(Setup.ResumeID) : "");
      }
   else
      esyslog("ERROR: can't allocate memory for resume file name");
@@ -192,11 +236,12 @@ int cResumeFile::Read(void)
 bool cResumeFile::Save(int Index)
 {
   if (fileName) {
-     int f = open(fileName, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+     int f = open(fileName, O_WRONLY | O_CREAT | O_TRUNC, DEFFILEMODE);
      if (f >= 0) {
         if (safe_write(f, &Index, sizeof(Index)) < 0)
            LOG_ERROR_STR(fileName);
         close(f);
+        Recordings.ResetResume(fileName);
         return true;
         }
      }
@@ -208,7 +253,133 @@ void cResumeFile::Delete(void)
   if (fileName) {
      if (remove(fileName) < 0 && errno != ENOENT)
         LOG_ERROR_STR(fileName);
+     Recordings.ResetResume(fileName);
      }
+}
+
+// --- cRecordingInfo --------------------------------------------------------
+
+cRecordingInfo::cRecordingInfo(const cChannel *Channel, const cEvent *Event)
+{
+  channelID = Channel ? Channel->GetChannelID() : tChannelID::InvalidID;
+  ownEvent = Event ? NULL : new cEvent(0);
+  event = ownEvent ? ownEvent : Event;
+  aux = NULL;
+  if (Channel) {
+     // Since the EPG data's component records can carry only a single
+     // language code, let's see whether the channel's PID data has
+     // more information:
+     cComponents *Components = (cComponents *)event->Components();
+     if (!Components)
+        Components = new cComponents;
+     for (int i = 0; i < MAXAPIDS; i++) {
+         const char *s = Channel->Alang(i);
+         if (*s) {
+            tComponent *Component = Components->GetComponent(i, 2, 3);
+            if (!Component)
+               Components->SetComponent(Components->NumComponents(), 2, 3, s, NULL);
+            else if (strlen(s) > strlen(Component->language))
+               strn0cpy(Component->language, s, sizeof(Component->language));
+            }
+         }
+     // There's no "multiple languages" for Dolby Digital tracks, but
+     // we do the same procedure here, too, in case there is no component
+     // information at all:
+     for (int i = 0; i < MAXDPIDS; i++) {
+         const char *s = Channel->Dlang(i);
+         if (*s) {
+            tComponent *Component = Components->GetComponent(i, 2, 5);
+            if (!Component)
+               Components->SetComponent(Components->NumComponents(), 2, 5, s, NULL);
+            else if (strlen(s) > strlen(Component->language))
+               strn0cpy(Component->language, s, sizeof(Component->language));
+            }
+         }
+     if (Components != event->Components())
+        ((cEvent *)event)->SetComponents(Components);
+     }
+}
+
+cRecordingInfo::~cRecordingInfo()
+{
+  delete ownEvent;
+  free(aux);
+}
+
+void cRecordingInfo::SetData(const char *Title, const char *ShortText, const char *Description)
+{
+  if (!isempty(Title))
+     ((cEvent *)event)->SetTitle(Title);
+  if (!isempty(ShortText))
+     ((cEvent *)event)->SetShortText(ShortText);
+  if (!isempty(Description))
+     ((cEvent *)event)->SetDescription(Description);
+}
+
+void cRecordingInfo::SetAux(const char *Aux)
+{
+  free(aux);
+  aux = Aux ? strdup(Aux) : NULL;
+}
+
+bool cRecordingInfo::Read(FILE *f)
+{
+  if (ownEvent) {
+     cReadLine ReadLine;
+     char *s;
+     int line = 0;
+     while ((s = ReadLine.Read(f)) != NULL) {
+           ++line;
+           char *t = skipspace(s + 1);
+           switch (*s) {
+             case 'C': {
+                         char *p = strchr(t, ' ');
+                         if (p)
+                            *p = 0; // strips optional channel name
+                         if (*t)
+                            channelID = tChannelID::FromString(t);
+                       }
+                       break;
+             case 'E': {
+                         unsigned int EventID;
+                         time_t StartTime;
+                         int Duration;
+                         unsigned int TableID = 0;
+                         unsigned int Version = 0xFF;
+                         int n = sscanf(t, "%u %ld %d %X %X", &EventID, &StartTime, &Duration, &TableID, &Version);
+                         if (n >= 3 && n <= 5) {
+                            ownEvent->SetEventID(EventID);
+                            ownEvent->SetStartTime(StartTime);
+                            ownEvent->SetDuration(Duration);
+                            ownEvent->SetTableID(TableID);
+                            ownEvent->SetVersion(Version);
+                            }
+                       }
+                       break;
+             case '@': free(aux);
+                       aux = strdup(t);
+                       break;
+             case '#': break; // comments are ignored
+             default: if (!ownEvent->Parse(s)) {
+                         esyslog("ERROR: EPG data problem in line %d", line);
+                         return false;
+                         }
+                      break;
+             }
+           }
+     return true;
+     }
+  return false;
+}
+
+bool cRecordingInfo::Write(FILE *f, const char *Prefix) const
+{
+  if (channelID.Valid())
+     fprintf(f, "%sC %s\n", Prefix, *channelID.ToString());
+  event->Dump(f, Prefix, true);
+  if (aux)
+     fprintf(f, "%s@ %s\n", Prefix, aux);
+  return true;
 }
 
 // --- cRecording ------------------------------------------------------------
@@ -218,103 +389,110 @@ void cResumeFile::Delete(void)
 struct tCharExchange { char a; char b; };
 tCharExchange CharExchange[] = {
   { '~',  '/'    },
+  { '/',  '~'    },
   { ' ',  '_'    },
+  // backwards compatibility:
+  { '\'', '\''   },
   { '\'', '\x01' },
   { '/',  '\x02' },
   { 0, 0 }
   };
 
-static char *ExchangeChars(char *s, bool ToFileSystem)
+char *ExchangeChars(char *s, bool ToFileSystem)
 {
   char *p = s;
   while (*p) {
-#ifdef VFAT
-        // The VFAT file system can't handle all characters, so we
-        // have to take extra efforts to encode/decode them:
-        if (ToFileSystem) {
-           switch (*p) {
-                  // characters that can be used "as is":
-                  case '!':
-                  case '@':
-                  case '$':
-                  case '%':
-                  case '&':
-                  case '(':
-                  case ')':
-                  case '+':
-                  case ',':
-                  case '-':
-                  case ';':
-                  case '=':
-                  case '0' ... '9':
-                  case 'a' ... 'z':
-                  case 'A' ... 'Z':
-                  case 'ä': case 'Ä':
-                  case 'ö': case 'Ö':
-                  case 'ü': case 'Ü':
-                  case 'ß':
-                       break;
-                  // characters that can be mapped to other characters:
-                  case ' ': *p = '_'; break;
-                  case '~': *p = '/'; break;
-                  // characters that have to be encoded:
-                  default:
-                    if (*p != '.' || !*(p + 1) || *(p + 1) == '~') { // Windows can't handle '.' at the end of directory names
-                       int l = p - s;
-                       s = (char *)realloc(s, strlen(s) + 10);
-                       p = s + l;
-                       char buf[4];
-                       sprintf(buf, "#%02X", (unsigned char)*p);
-                       memmove(p + 2, p, strlen(p) + 1);
-                       strncpy(p, buf, 3);
-                       p += 2;
-                       }
-                  }
+        if (VfatFileSystem) {
+           // The VFAT file system can't handle all characters, so we
+           // have to take extra efforts to encode/decode them:
+           if (ToFileSystem) {
+              switch (*p) {
+                     // characters that can be used "as is":
+                     case '!':
+                     case '@':
+                     case '$':
+                     case '%':
+                     case '&':
+                     case '(':
+                     case ')':
+                     case '+':
+                     case ',':
+                     case '-':
+                     case ';':
+                     case '=':
+                     case '0' ... '9':
+                     case 'a' ... 'z':
+                     case 'A' ... 'Z':
+                     case 'ä': case 'Ä':
+                     case 'ö': case 'Ö':
+                     case 'ü': case 'Ü':
+                     case 'ß':
+                          break;
+                     // characters that can be mapped to other characters:
+                     case ' ': *p = '_'; break;
+                     case '~': *p = '/'; break;
+                     // characters that have to be encoded:
+                     default:
+                       if (*p != '.' || !*(p + 1) || *(p + 1) == '~') { // Windows can't handle '.' at the end of directory names
+                          int l = p - s;
+                          s = (char *)realloc(s, strlen(s) + 10);
+                          p = s + l;
+                          char buf[4];
+                          sprintf(buf, "#%02X", (unsigned char)*p);
+                          memmove(p + 2, p, strlen(p) + 1);
+                          strncpy(p, buf, 3);
+                          p += 2;
+                          }
+                     }
+              }
+           else {
+              switch (*p) {
+                // mapped characters:
+                case '_': *p = ' '; break;
+                case '/': *p = '~'; break;
+                // encodes characters:
+                case '#': {
+                     if (strlen(p) > 2) {
+                        char buf[3];
+                        sprintf(buf, "%c%c", *(p + 1), *(p + 2));
+                        unsigned char c = strtol(buf, NULL, 16);
+                        *p = c;
+                        memmove(p + 1, p + 3, strlen(p) - 2);
+                        }
+                     }
+                     break;
+                // backwards compatibility:
+                case '\x01': *p = '\''; break;
+                case '\x02': *p = '/';  break;
+                case '\x03': *p = ':';  break;
+                }
+              }
            }
         else {
-           switch (*p) {
-             // mapped characters:
-             case '_': *p = ' '; break;
-             case '/': *p = '~'; break;
-             // encodes characters:
-             case '#': {
-                  if (strlen(p) > 2) {
-                     char buf[3];
-                     sprintf(buf, "%c%c", *(p + 1), *(p + 2));
-                     unsigned char c = strtol(buf, NULL, 16);
-                     *p = c;
-                     memmove(p + 1, p + 3, strlen(p) - 2);
-                     }
-                  }
+           for (struct tCharExchange *ce = CharExchange; ce->a && ce->b; ce++) {
+               if (*p == (ToFileSystem ? ce->a : ce->b)) {
+                  *p = ToFileSystem ? ce->b : ce->a;
                   break;
-             // backwards compatibility:
-             case '\x01': *p = '\''; break;
-             case '\x02': *p = '/';  break;
-             case '\x03': *p = ':';  break;
-             }
-           }
-#else
-        for (struct tCharExchange *ce = CharExchange; ce->a && ce->b; ce++) {
-            if (*p == (ToFileSystem ? ce->a : ce->b)) {
-               *p = ToFileSystem ? ce->b : ce->a;
-               break;
+                  }
                }
-            }
-#endif
+           }
         p++;
         }
   return s;
 }
 
-cRecording::cRecording(cTimer *Timer, const char *Title, const char *Subtitle, const char *Summary)
+cRecording::cRecording(cTimer *Timer, const cEvent *Event)
 {
   resume = RESUME_NOT_INITIALIZED;
   titleBuffer = NULL;
   sortBuffer = NULL;
   fileName = NULL;
   name = NULL;
+  fileSizeMB = -1; // unknown
+  deleted = 0;
   // set up the actual name:
-  const char *OriginalSubtitle = Subtitle;
+  const char *Title = Event ? Event->Title() : NULL;
+  const char *Subtitle = Event ? Event->ShortText() : NULL;
   char SubtitleBuffer[MAX_SUBTITLE_LENGTH];
   if (isempty(Title))
      Title = Timer->Channel()->Name();
@@ -331,9 +509,17 @@ cRecording::cRecording(cTimer *Timer, const char *Title, const char *Subtitle, c
      name = strdup(Timer->File());
      name = strreplace(name, TIMERMACRO_TITLE, Title);
      name = strreplace(name, TIMERMACRO_EPISODE, Subtitle);
+     // avoid blanks at the end:
+     int l = strlen(name);
+     while (l-- > 2) {
+           if (name[l] == ' ' && name[l - 1] != '~')
+              name[l] = 0;
+           else
+              break;
+           }
      if (Timer->IsSingleEvent()) {
         Timer->SetFile(name); // this was an instant recording, so let's set the actual data
-        Timers.Save();
+        Timers.SetModified();
         }
      }
   else if (Timer->IsSingleEvent() || !Setup.UseSubtitle)
@@ -345,22 +531,16 @@ cRecording::cRecording(cTimer *Timer, const char *Title, const char *Subtitle, c
   start = Timer->StartTime();
   priority = Timer->Priority();
   lifetime = Timer->Lifetime();
-  // handle summary:
-  summary = !isempty(Timer->Summary()) ? strdup(Timer->Summary()) : NULL;
-  if (!summary) {
-     Subtitle = OriginalSubtitle;
-     if (isempty(Subtitle))
-        Subtitle = "";
-     if (isempty(Summary))
-        Summary = "";
-     if (*Subtitle || *Summary)
-        asprintf(&summary, "%s\n\n%s%s%s", Title, Subtitle, (*Subtitle && *Summary) ? "\n\n" : "", Summary);
-     }
+  // handle info:
+  info = new cRecordingInfo(Timer->Channel(), Event);
+  info->SetAux(Timer->Aux());
 }
 
 cRecording::cRecording(const char *FileName)
 {
   resume = RESUME_NOT_INITIALIZED;
+  fileSizeMB = -1; // unknown
+  deleted = 0;
   titleBuffer = NULL;
   sortBuffer = NULL;
   fileName = strdup(FileName);
@@ -368,7 +548,7 @@ cRecording::cRecording(const char *FileName)
   char *p = strrchr(FileName, '/');
 
   name = NULL;
-  summary = NULL;
+  info = new cRecordingInfo;
   if (p) {
      time_t now = time(NULL);
      struct tm tm_r;
@@ -384,39 +564,73 @@ cRecording::cRecording(const char *FileName)
         name[p - FileName] = 0;
         name = ExchangeChars(name, false);
         }
-     // read an optional summary file:
-     char *SummaryFileName = NULL;
-     asprintf(&SummaryFileName, "%s%s", fileName, SUMMARYFILESUFFIX);
-     int f = open(SummaryFileName, O_RDONLY);
-     if (f >= 0) {
-        struct stat buf;
-        if (fstat(f, &buf) == 0) {
-           int size = buf.st_size;
-           summary = MALLOC(char, size + 1); // +1 for terminating 0
-           if (summary) {
-              int rbytes = safe_read(f, summary, size);
-              if (rbytes >= 0) {
-                 summary[rbytes] = 0;
-                 if (rbytes != size)
-                    esyslog("%s: expected %d bytes but read %d", SummaryFileName, size, rbytes);
-                 }
-              else {
-                 LOG_ERROR_STR(SummaryFileName);
-                 free(summary);
-                 summary = NULL;
-                 }
-
-              }
-           else
-              esyslog("can't allocate %d byte of memory for summary file '%s'", size + 1, SummaryFileName);
-           close(f);
-           }
-        else
-           LOG_ERROR_STR(SummaryFileName);
+     GetResume();
+     // read an optional info file:
+     char *InfoFileName = NULL;
+     asprintf(&InfoFileName, "%s%s", fileName, INFOFILESUFFIX);
+     FILE *f = fopen(InfoFileName, "r");
+     if (f) {
+        if (!info->Read(f))
+           esyslog("ERROR: EPG data problem in file %s", InfoFileName);
+        fclose(f);
         }
      else if (errno != ENOENT)
-        LOG_ERROR_STR(SummaryFileName);
-     free(SummaryFileName);
+        LOG_ERROR_STR(InfoFileName);
+     free(InfoFileName);
+#ifdef SUMMARYFALLBACK
+     // fall back to the old 'summary.vdr' if there was no 'info.vdr':
+     if (isempty(info->Title())) {
+        char *SummaryFileName = NULL;
+        asprintf(&SummaryFileName, "%s%s", fileName, SUMMARYFILESUFFIX);
+        FILE *f = fopen(SummaryFileName, "r");
+        if (f) {
+           int line = 0;
+           char *data[3] = { NULL };
+           cReadLine ReadLine;
+           char *s;
+           while ((s = ReadLine.Read(f)) != NULL) {
+                 if (*s || line > 1) {
+                    if (data[line]) {
+                       int len = strlen(s);
+                       len += strlen(data[line]) + 1;
+                       data[line] = (char *)realloc(data[line], len + 1);
+                       strcat(data[line], "\n");
+                       strcat(data[line], s);
+                       }
+                    else
+                       data[line] = strdup(s);
+                    }
+                 else
+                    line++;
+                 }
+           fclose(f);
+           if (!data[2]) {
+              data[2] = data[1];
+              data[1] = NULL;
+              }
+           else if (data[1] && data[2]) {
+              // if line 1 is too long, it can't be the short text,
+              // so assume the short text is missing and concatenate
+              // line 1 and line 2 to be the long text:
+              int len = strlen(data[1]);
+              if (len > 80) {
+                 data[1] = (char *)realloc(data[1], len + 1 + strlen(data[2]) + 1);
+                 strcat(data[1], "\n");
+                 strcat(data[1], data[2]);
+                 free(data[2]);
+                 data[2] = data[1];
+                 data[1] = NULL;
+                 }
+              }
+           info->SetData(data[0], data[1], data[2]);
+           for (int i = 0; i < 3; i ++)
+               free(data[i]);
+           }
+        else if (errno != ENOENT)
+           LOG_ERROR_STR(SummaryFileName);
+        free(SummaryFileName);
+        }
+#endif
      }
 }
 
@@ -426,7 +640,7 @@ cRecording::~cRecording()
   free(sortBuffer);
   free(fileName);
   free(name);
-  free(summary);
+  delete info;
 }
 
 char *cRecording::StripEpisodeName(char *s)
@@ -449,11 +663,12 @@ char *cRecording::StripEpisodeName(char *s)
   return s;
 }
 
-char *cRecording::SortName(void)
+char *cRecording::SortName(void) const
 {
   if (!sortBuffer) {
      char *s = StripEpisodeName(strdup(FileName() + strlen(VideoDirectory) + 1));
-     int l = strxfrm(NULL, s, 0);
+     strreplace(s, '/', 'a'); // some locales ignore '/' when sorting
+     int l = strxfrm(NULL, s, 0) + 1;
      sortBuffer = MALLOC(char, l);
      strxfrm(sortBuffer, s, l);
      free(s);
@@ -461,7 +676,7 @@ char *cRecording::SortName(void)
   return sortBuffer;
 }
 
-int cRecording::GetResume(void)
+int cRecording::GetResume(void) const
 {
   if (resume == RESUME_NOT_INITIALIZED) {
      cResumeFile ResumeFile(FileName());
@@ -470,13 +685,13 @@ int cRecording::GetResume(void)
   return resume;
 }
 
-bool cRecording::operator< (const cListObject &ListObject)
+int cRecording::Compare(const cListObject &ListObject) const
 {
   cRecording *r = (cRecording *)&ListObject;
-  return strcasecmp(SortName(), r->SortName()) < 0;
+  return strcasecmp(SortName(), r->SortName());
 }
 
-const char *cRecording::FileName(void)
+const char *cRecording::FileName(void) const
 {
   if (!fileName) {
      struct tm tm_r;
@@ -488,7 +703,7 @@ const char *cRecording::FileName(void)
   return fileName;
 }
 
-const char *cRecording::Title(char Delimiter, bool NewIndicator, int Level)
+const char *cRecording::Title(char Delimiter, bool NewIndicator, int Level) const
 {
   char New = NewIndicator && IsNew() ? '*' : ' ';
   free(titleBuffer);
@@ -501,9 +716,10 @@ const char *cRecording::Title(char Delimiter, bool NewIndicator, int Level)
         s++;
      else
         s = name;
-     asprintf(&titleBuffer, "%02d.%02d%c%02d:%02d%c%c%s",
+     asprintf(&titleBuffer, "%02d.%02d.%02d%c%02d:%02d%c%c%s",
                             t->tm_mday,
                             t->tm_mon + 1,
+                            t->tm_year % 100,
                             Delimiter,
                             t->tm_hour,
                             t->tm_min,
@@ -511,7 +727,8 @@ const char *cRecording::Title(char Delimiter, bool NewIndicator, int Level)
                             Delimiter,
                             s);
      // let's not display a trailing '~':
-     stripspace(titleBuffer);
+     if (!NewIndicator)
+        stripspace(titleBuffer);
      s = &titleBuffer[strlen(titleBuffer) - 1];
      if (*s == '~')
         *s = 0;
@@ -539,8 +756,8 @@ const char *cRecording::Title(char Delimiter, bool NewIndicator, int Level)
 
 const char *cRecording::PrefixFileName(char Prefix)
 {
-  const char *p = PrefixVideoFileName(FileName(), Prefix);
-  if (p) {
+  cString p = PrefixVideoFileName(FileName(), Prefix);
+  if (*p) {
      free(fileName);
      fileName = strdup(p);
      return fileName;
@@ -548,7 +765,7 @@ const char *cRecording::PrefixFileName(char Prefix)
   return NULL;
 }
 
-int cRecording::HierarchyLevels(void)
+int cRecording::HierarchyLevels(void) const
 {
   const char *s = name;
   int level = 0;
@@ -559,28 +776,25 @@ int cRecording::HierarchyLevels(void)
   return level;
 }
 
-bool cRecording::IsEdited(void)
+bool cRecording::IsEdited(void) const
 {
   const char *s = strrchr(name, '~');
   s = !s ? name : s + 1;
   return *s == '%';
 }
 
-bool cRecording::WriteSummary(void)
+bool cRecording::WriteInfo(void)
 {
-  if (summary) {
-     char *SummaryFileName = NULL;
-     asprintf(&SummaryFileName, "%s%s", fileName, SUMMARYFILESUFFIX);
-     FILE *f = fopen(SummaryFileName, "w");
-     if (f) {
-        if (fputs(summary, f) < 0)
-           LOG_ERROR_STR(SummaryFileName);
-        fclose(f);
-        }
-     else
-        LOG_ERROR_STR(SummaryFileName);
-     free(SummaryFileName);
+  char *InfoFileName = NULL;
+  asprintf(&InfoFileName, "%s%s", fileName, INFOFILESUFFIX);
+  FILE *f = fopen(InfoFileName, "w");
+  if (f) {
+     info->Write(f);
+     fclose(f);
      }
+  else
+     LOG_ERROR_STR(InfoFileName);
+  free(InfoFileName);
   return true;
 }
 
@@ -589,15 +803,20 @@ bool cRecording::Delete(void)
   bool result = true;
   char *NewName = strdup(FileName());
   char *ext = strrchr(NewName, '.');
-  if (strcmp(ext, RECEXT) == 0) {
+  if (ext && strcmp(ext, RECEXT) == 0) {
      strncpy(ext, DELEXT, strlen(ext));
      if (access(NewName, F_OK) == 0) {
         // the new name already exists, so let's remove that one first:
-        isyslog("removing recording %s", NewName);
+        isyslog("removing recording '%s'", NewName);
         RemoveVideoFile(NewName);
         }
-     isyslog("deleting recording %s", FileName());
-     result = RenameVideoFile(FileName(), NewName);
+     isyslog("deleting recording '%s'", FileName());
+     if (access(FileName(), F_OK) == 0)
+        result = RenameVideoFile(FileName(), NewName);
+     else {
+        isyslog("recording '%s' vanished", FileName());
+        result = true; // well, we were going to delete it, anyway
+        }
      }
   free(NewName);
   return result;
@@ -614,32 +833,132 @@ bool cRecording::Remove(void)
   return RemoveVideoFile(FileName());
 }
 
+void cRecording::ResetResume(void) const
+{
+  resume = RESUME_NOT_INITIALIZED;
+}
+
 // --- cRecordings -----------------------------------------------------------
 
-bool cRecordings::Load(bool Deleted)
+cRecordings Recordings;
+
+char *cRecordings::updateFileName = NULL;
+
+cRecordings::cRecordings(bool Deleted)
+:cThread("video directory scanner")
 {
+  deleted = Deleted;
+  lastUpdate = 0;
+  state = 0;
+}
+
+cRecordings::~cRecordings()
+{
+  Cancel(3);
+}
+
+void cRecordings::Action(void)
+{
+  Refresh();
+}
+
+const char *cRecordings::UpdateFileName(void)
+{
+  if (!updateFileName)
+     updateFileName = strdup(AddDirectory(VideoDirectory, ".update"));
+  return updateFileName;
+}
+
+void cRecordings::Refresh(bool Foreground)
+{
+  lastUpdate = time(NULL); // doing this first to make sure we don't miss anything
+  Lock();
   Clear();
-  bool result = false;
-  char *cmd = NULL;
-  asprintf(&cmd, FINDCMD, VideoDirectory, VideoDirectory, Deleted ? "*" DELEXT : "*" RECEXT);
-  FILE *p = popen(cmd, "r");
-  if (p) {
-     char *s;
-     while ((s = readline(p)) != NULL) {
-           cRecording *r = new cRecording(s);
-           if (r->Name())
-              Add(r);
-           else
-              delete r;
+  ChangeState();
+  Unlock();
+  ScanVideoDir(VideoDirectory, Foreground);
+}
+
+void cRecordings::ScanVideoDir(const char *DirName, bool Foreground, int LinkLevel)
+{
+  cReadDir d(DirName);
+  struct dirent *e;
+  while ((Foreground || Running()) && (e = d.Next()) != NULL) {
+        if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..")) {
+           char *buffer;
+           asprintf(&buffer, "%s/%s", DirName, e->d_name);
+           struct stat st;
+           if (stat(buffer, &st) == 0) {
+              int Link = 0;
+              if (S_ISLNK(st.st_mode)) {
+                 if (LinkLevel > MAX_LINK_LEVEL) {
+                    isyslog("max link level exceeded - not scanning %s", buffer);
+                    continue;
+                    }
+                 Link = 1;
+                 char *old = buffer;
+                 buffer = ReadLink(old);
+                 free(old);
+                 if (!buffer)
+                    continue;
+                 if (stat(buffer, &st) != 0) {
+                    free(buffer);
+                    continue;
+                    }
+                 }
+              if (S_ISDIR(st.st_mode)) {
+                 if (endswith(buffer, deleted ? DELEXT : RECEXT)) {
+                    cRecording *r = new cRecording(buffer);
+                    if (r->Name()) {
+                       Lock();
+                       Add(r);
+                       ChangeState();
+                       Unlock();
+                       if (deleted) {
+                          r->fileSizeMB = DirSizeMB(buffer);
+                          r->deleted = time(NULL);
+                          }
+                       }
+                    else
+                       delete r;
+                    }
+                 else
+                    ScanVideoDir(buffer, Foreground, LinkLevel + Link);
+                 }
+              }
+           free(buffer);
            }
-     pclose(p);
-     Sort();
-     result = Count() > 0;
+        }
+}
+
+bool cRecordings::StateChanged(int &State)
+{
+  int NewState = state;
+  bool Result = State != NewState;
+  State = state;
+  return Result;
+}
+
+void cRecordings::TouchUpdate(void)
+{
+  TouchFile(UpdateFileName());
+  lastUpdate = time(NULL); // make sure we don't tigger ourselves
+}
+
+bool cRecordings::NeedsUpdate(void)
+{
+  return lastUpdate < LastModifiedTime(UpdateFileName());
+}
+
+bool cRecordings::Update(bool Wait)
+{
+  if (Wait) {
+     Refresh(true);
+     return Count() > 0;
      }
   else
-     Interface->Error("Error while opening pipe!");
-  free(cmd);
-  return result;
+     Start();
+  return false;
 }
 
 cRecording *cRecordings::GetByName(const char *FileName)
@@ -651,9 +970,61 @@ cRecording *cRecordings::GetByName(const char *FileName)
   return NULL;
 }
 
-// --- cMark -----------------------------------------------------------------
+void cRecordings::AddByName(const char *FileName)
+{
+  LOCK_THREAD;
+  cRecording *recording = GetByName(FileName);
+  if (!recording) {
+     recording = new cRecording(FileName);
+     Add(recording);
+     ChangeState();
+     TouchUpdate();
+     }
+}
 
-char *cMark::buffer = NULL;
+void cRecordings::DelByName(const char *FileName)
+{
+  LOCK_THREAD;
+  cRecording *recording = GetByName(FileName);
+  if (recording) {
+     cThreadLock DeletedRecordingsLock(&DeletedRecordings);
+     Del(recording, false);
+     char *ext = strrchr(recording->FileName(), '.');
+     if (ext) {
+        strncpy(ext, DELEXT, strlen(ext));
+        recording->fileSizeMB = DirSizeMB(recording->FileName());
+        recording->deleted = time(NULL);
+        DeletedRecordings.Add(recording);
+        }
+     else
+        delete recording;
+     ChangeState();
+     TouchUpdate();
+     }
+}
+
+int cRecordings::TotalFileSizeMB(void)
+{
+  int size = 0;
+  LOCK_THREAD;
+  for (cRecording *recording = First(); recording; recording = Next(recording)) {
+      if (recording->fileSizeMB > 0)
+         size += recording->fileSizeMB;
+      }
+  return size;
+}
+
+void cRecordings::ResetResume(const char *ResumeFileName)
+{
+  LOCK_THREAD;
+  for (cRecording *recording = First(); recording; recording = Next(recording)) {
+      if (!ResumeFileName || strncmp(ResumeFileName, recording->FileName(), strlen(recording->FileName())) == 0)
+         recording->ResetResume();
+      }
+  ChangeState();
+}
+
+// --- cMark -----------------------------------------------------------------
 
 cMark::cMark(int Position, const char *Comment)
 {
@@ -666,11 +1037,11 @@ cMark::~cMark()
   free(comment);
 }
 
-const char *cMark::ToText(void)
+cString cMark::ToText(void)
 {
-  free(buffer);
-  asprintf(&buffer, "%s%s%s\n", IndexToHMSF(position, true), comment ? " " : "", comment ? comment : "");
-  return buffer;
+  char *buffer;
+  asprintf(&buffer, "%s%s%s\n", *IndexToHMSF(position, true), comment ? " " : "", comment ? comment : "");
+  return cString(buffer, true);
 }
 
 bool cMark::Parse(const char *s)
@@ -689,15 +1060,14 @@ bool cMark::Parse(const char *s)
 
 bool cMark::Save(FILE *f)
 {
-  return fprintf(f, ToText()) > 0;
+  return fprintf(f, "%s", *ToText()) > 0;
 }
 
 // --- cMarks ----------------------------------------------------------------
 
 bool cMarks::Load(const char *RecordingFileName)
 {
-  const char *MarksFile = AddDirectory(RecordingFileName, MARKSFILESUFFIX);
-  if (cConfig<cMark>::Load(MarksFile)) {
+  if (cConfig<cMark>::Load(AddDirectory(RecordingFileName, MARKSFILESUFFIX))) {
      Sort();
      return true;
      }
@@ -761,7 +1131,7 @@ void cRecordingUserCommand::InvokeCommand(const char *State, const char *Recordi
 {
   if (command) {
      char *cmd;
-     asprintf(&cmd, "%s %s \"%s\"", command, State, strescape(RecordingFileName, "\"$"));
+     asprintf(&cmd, "%s %s \"%s\"", command, State, *strescape(RecordingFileName, "\"$"));
      isyslog("executing '%s'", cmd);
      SystemExec(cmd);
      free(cmd);
@@ -827,7 +1197,7 @@ cIndexFile::cIndexFile(const char *FileName, bool Record)
                        LOG_ERROR_STR(fileName);
                     }
                  else
-                    esyslog("ERROR: can't allocate %d bytes for index '%s'", size * sizeof(tIndex), fileName);
+                    esyslog("ERROR: can't allocate %zd bytes for index '%s'", size * sizeof(tIndex), fileName);
                  }
               }
            else
@@ -836,7 +1206,7 @@ cIndexFile::cIndexFile(const char *FileName, bool Record)
         else if (!Record)
            isyslog("missing index file %s", fileName);
         if (Record) {
-           if ((f = open(fileName, O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) >= 0) {
+           if ((f = open(fileName, O_WRONLY | O_CREAT | O_APPEND, DEFFILEMODE)) >= 0) {
               if (delta) {
                  esyslog("ERROR: padding index file with %d '0' bytes", delta);
                  while (delta--)
@@ -907,7 +1277,7 @@ bool cIndexFile::CatchUp(int Index)
             LOG_ERROR_STR(fileName);
          if (Index < last - (i ? 2 * INDEXSAFETYLIMIT : 0) || Index > 10 * INDEXSAFETYLIMIT) // keep off the end in case of "Pause live video"
             break;
-         sleep(1);
+         cCondWait::SleepMs(1000);
          }
      }
   return index != NULL;
@@ -1001,6 +1371,11 @@ int cIndexFile::Get(uchar FileNumber, int FileOffset)
   return -1;
 }
 
+bool cIndexFile::IsStillRecording()
+{
+  return f >= 0;
+}
+
 // --- cFileName -------------------------------------------------------------
 
 #include <errno.h>
@@ -1013,7 +1388,7 @@ int cIndexFile::Get(uchar FileNumber, int FileOffset)
 
 cFileName::cFileName(const char *FileName, bool Record, bool Blocking)
 {
-  file = -1;
+  file = NULL;
   fileNumber = 0;
   record = Record;
   blocking = Blocking;
@@ -1034,21 +1409,21 @@ cFileName::~cFileName()
   free(fileName);
 }
 
-int cFileName::Open(void)
+cUnbufferedFile *cFileName::Open(void)
 {
-  if (file < 0) {
+  if (!file) {
      int BlockingFlag = blocking ? 0 : O_NONBLOCK;
      if (record) {
         dsyslog("recording to '%s'", fileName);
         file = OpenVideoFile(fileName, O_RDWR | O_CREAT | BlockingFlag);
-        if (file < 0)
+        if (!file)
            LOG_ERROR_STR(fileName);
         }
      else {
         if (access(fileName, R_OK) == 0) {
            dsyslog("playing '%s'", fileName);
-           file = open(fileName, O_RDONLY | BlockingFlag);
-           if (file < 0)
+           file = cUnbufferedFile::Create(fileName, O_RDONLY | BlockingFlag);
+           if (!file)
               LOG_ERROR_STR(fileName);
            }
         else if (errno != ENOENT)
@@ -1060,14 +1435,14 @@ int cFileName::Open(void)
 
 void cFileName::Close(void)
 {
-  if (file >= 0) {
-     if ((record && CloseVideoFile(file) < 0) || (!record && close(file) < 0))
+  if (file) {
+     if (CloseVideoFile(file) < 0)
         LOG_ERROR_STR(fileName);
-     file = -1;
+     file = NULL;
      }
 }
 
-int cFileName::SetOffset(int Number, int Offset)
+cUnbufferedFile *cFileName::SetOffset(int Number, int Offset)
 {
   if (fileNumber != Number)
      Close();
@@ -1075,36 +1450,49 @@ int cFileName::SetOffset(int Number, int Offset)
      fileNumber = Number;
      sprintf(pFileNumber, RECORDFILESUFFIX, fileNumber);
      if (record) {
-        if (access(fileName, F_OK) == 0) // file exists, let's try next suffix
-           return SetOffset(Number + 1);
+        if (access(fileName, F_OK) == 0) {
+           // files exists, check if it has non-zero size
+           struct stat buf;
+           if (stat(fileName, &buf) == 0) {
+              if (buf.st_size != 0)
+                 return SetOffset(Number + 1); // file exists and has non zero size, let's try next suffix
+              else {
+                 // zero size file, remove it
+                 dsyslog ("cFileName::SetOffset: removing zero-sized file %s", fileName);
+                 unlink (fileName);
+                 }
+              }
+           else
+              return SetOffset(Number + 1); // error with fstat - should not happen, just to be on the safe side
+           }
         else if (errno != ENOENT) { // something serious has happened
            LOG_ERROR_STR(fileName);
-           return -1;
+           return NULL;
            }
         // found a non existing file suffix
         }
      if (Open() >= 0) {
-        if (!record && Offset >= 0 && lseek(file, Offset, SEEK_SET) != Offset) {
+        if (!record && Offset >= 0 && file && file->Seek(Offset, SEEK_SET) != Offset) {
            LOG_ERROR_STR(fileName);
-           return -1;
+           return NULL;
            }
         }
      return file;
      }
   esyslog("ERROR: max number of files (%d) exceeded", MAXFILESPERRECORDING);
-  return -1;
+  return NULL;
 }
 
-int cFileName::NextFile(void)
+cUnbufferedFile *cFileName::NextFile(void)
 {
   return SetOffset(fileNumber + 1);
 }
 
 // --- Index stuff -----------------------------------------------------------
 
-const char *IndexToHMSF(int Index, bool WithFrame)
+cString IndexToHMSF(int Index, bool WithFrame)
 {
-  static char buffer[16];
+  char buffer[16];
   int f = (Index % FRAMESPERSEC) + 1;
   int s = (Index / FRAMESPERSEC);
   int m = s / 60 % 60;
@@ -1129,7 +1517,7 @@ int SecondsToFrames(int Seconds)
 
 // --- ReadFrame -------------------------------------------------------------
 
-int ReadFrame(int f, uchar *b, int Length, int Max)
+int ReadFrame(cUnbufferedFile *f, uchar *b, int Length, int Max)
 {
   if (Length == -1)
      Length = Max; // this means we read up to EOF (see cIndex)
@@ -1137,10 +1525,8 @@ int ReadFrame(int f, uchar *b, int Length, int Max)
      esyslog("ERROR: frame larger than buffer (%d > %d)", Length, Max);
      Length = Max;
      }
-  int r = safe_read(f, b, Length);
+  int r = f->Read(b, Length);
   if (r < 0)
      LOG_ERROR;
   return r;
 }
-
-

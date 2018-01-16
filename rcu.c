@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: rcu.c 1.5 2003/05/02 14:42:40 kls Exp $
+ * $Id: rcu.c 1.13 2006/01/08 11:40:09 kls Exp $
  */
 
 #include "rcu.h"
@@ -16,14 +16,15 @@
 #define REPEATLIMIT  20 // ms
 #define REPEATDELAY 350 // ms
 
-cRcuRemote::cRcuRemote(char *DeviceName)
+cRcuRemote::cRcuRemote(const char *DeviceName)
 :cRemote("RCU")
+,cThread("RCU remote control")
 {
   dp = 0;
   mode = modeB;
   code = 0;
-  numberToSend = -1;
-  lastNumber = 0;
+  number = 0;
+  data = 0;
   receivedCommand = false;
   if ((f = open(DeviceName, O_RDWR | O_NONBLOCK)) >= 0) {
      struct termios t;
@@ -31,7 +32,7 @@ cRcuRemote::cRcuRemote(char *DeviceName)
         cfsetspeed(&t, B9600);
         cfmakeraw(&t);
         if (tcsetattr(f, TCSAFLUSH, &t) == 0) {
-           Number(0);//XXX 8888???
+           SetNumber(8888);
            const char *Setup = GetSetup();
            if (Setup) {
               code = *Setup;
@@ -92,68 +93,74 @@ void cRcuRemote::Action(void)
     } buffer;
 #pragma pack()
 
-  dsyslog("RCU remote control thread started (pid=%d)", getpid());
-
   time_t LastCodeRefresh = 0;
-  int FirstTime = 0;
+  cTimeMs FirstTime;
+  unsigned char LastCode = 0, LastMode = 0;
   uint64 LastCommand = 0;
+  unsigned int LastData = 0;
   bool repeat = false;
 
-  //XXX
-  for (; f >= 0;) {
-
-      LOCK_THREAD;
-
-      if (ReceiveByte(REPEATLIMIT) == 'X') {
-         for (int i = 0; i < 6; i++) {
-             int b = ReceiveByte();
-             if (b >= 0) {
-                buffer.raw[i] = b;
-                if (i == 5) {
-                   unsigned short Address = ntohs(buffer.data.address); // the PIC sends bytes in "network order"
-                   uint64         Command = ntohl(buffer.data.command);
-                   if (code == 'B' && Address == 0x0000 && Command == 0x00004000)
-                      // Well, well, if it isn't the "d-box"...
-                      // This remote control sends the above command before and after
-                      // each keypress - let's just drop this:
-                      break;
-                   int Now = time_ms();
-                   Command |= uint64(Address) << 32;
-                   if (Command != LastCommand) {
-                      LastCommand = Command;
-                      repeat = false;
-                      FirstTime = Now;
-                      }
-                   else {
-                      if (Now - FirstTime < REPEATDELAY)
-                         break; // repeat function kicks in after a short delay
-                      repeat = true;
-                      }
-                   Put(Command, repeat);
-                   receivedCommand = true;
-                   }
-                }
-             else
-                break;
-             }
-         }
-      else if (repeat) { // the last one was a repeat, so let's generate a release
-         Put(LastCommand, false, true);
-         repeat = false;
-         LastCommand = 0;
-         }
-      else {
-         LastCommand = 0;
-         if (numberToSend >= 0) {
-            Number(numberToSend);
-            numberToSend = -1;
-            }
-         }
-      if (code && time(NULL) - LastCodeRefresh > 60) {
-         SendCommand(code); // in case the PIC listens to the wrong code
-         LastCodeRefresh = time(NULL);
-         }
-      }
+  while (Running() && f >= 0) {
+        if (ReceiveByte(REPEATLIMIT) == 'X') {
+           for (int i = 0; i < 6; i++) {
+               int b = ReceiveByte();
+               if (b >= 0) {
+                  buffer.raw[i] = b;
+                  if (i == 5) {
+                     unsigned short Address = ntohs(buffer.data.address); // the PIC sends bytes in "network order"
+                     uint64         Command = ntohl(buffer.data.command);
+                     if (code == 'B' && Address == 0x0000 && Command == 0x00004000)
+                        // Well, well, if it isn't the "d-box"...
+                        // This remote control sends the above command before and after
+                        // each keypress - let's just drop this:
+                        break;
+                     Command |= uint64(Address) << 32;
+                     if (Command != LastCommand) {
+                        LastCommand = Command;
+                        repeat = false;
+                        FirstTime.Set();
+                        }
+                     else {
+                        if (FirstTime.Elapsed() < REPEATDELAY)
+                           break; // repeat function kicks in after a short delay
+                        repeat = true;
+                        }
+                     Put(Command, repeat);
+                     receivedCommand = true;
+                     }
+                  }
+               else
+                  break;
+               }
+           }
+        else if (repeat) { // the last one was a repeat, so let's generate a release
+           Put(LastCommand, false, true);
+           repeat = false;
+           LastCommand = 0;
+           }
+        else {
+           unsigned int d = data;
+           if (d != LastData) {
+              SendData(d);
+              LastData = d;
+              }
+           unsigned char c = code;
+           if (c != LastCode) {
+              SendCommand(c);
+              LastCode = c;
+              }
+           unsigned char m = mode;
+           if (m != LastMode) {
+              SendCommand(m);
+              LastMode = m;
+              }
+           LastCommand = 0;
+           }
+        if (code && time(NULL) - LastCodeRefresh > 60) {
+           SendCommand(code); // in case the PIC listens to the wrong code
+           LastCodeRefresh = time(NULL);
+           }
+        }
 }
 
 int cRcuRemote::ReceiveByte(int TimeoutMs)
@@ -195,8 +202,6 @@ bool cRcuRemote::SendByteHandshake(unsigned char c)
 
 bool cRcuRemote::SendByte(unsigned char c)
 {
-  LOCK_THREAD;
-
   for (int retry = 5; retry--;) {
       if (SendByteHandshake(c))
          return true;
@@ -204,32 +209,34 @@ bool cRcuRemote::SendByte(unsigned char c)
   return false;
 }
 
-bool cRcuRemote::SetCode(unsigned char Code)
+bool cRcuRemote::SendData(unsigned int n)
 {
-  code = Code;
-  return SendCommand(code);
-}
-
-bool cRcuRemote::SetMode(unsigned char Mode)
-{
-  mode = Mode;
+  for (int i = 0; i < 4; i++) {
+      if (!SendByte(n & 0x7F))
+         return false;
+      n >>= 8;
+      }
   return SendCommand(mode);
 }
 
+void cRcuRemote::SetCode(unsigned char Code)
+{
+  code = Code;
+}
+
+void cRcuRemote::SetMode(unsigned char Mode)
+{
+  mode = Mode;
+}
+
 bool cRcuRemote::SendCommand(unsigned char Cmd)
-{ 
+{
   return SendByte(Cmd | 0x80);
 }
 
-bool cRcuRemote::Digit(int n, int v)
-{ 
-  return SendByte(((n & 0x03) << 5) | (v & 0x0F) | (((dp >> n) & 0x01) << 4));
-}
-
-bool cRcuRemote::Number(int n, bool Hex)
+void cRcuRemote::SetNumber(int n, bool Hex)
 {
-  LOCK_THREAD;
-
+  number = n;
   if (!Hex) {
      char buf[8];
      sprintf(buf, "%4d", n & 0xFFFF);
@@ -240,19 +247,17 @@ bool cRcuRemote::Number(int n, bool Hex)
          n = (n << 4) | ((*d - '0') & 0x0F);
          }
      }
-  lastNumber = n;
+  unsigned int m = 0;
   for (int i = 0; i < 4; i++) {
-      if (!Digit(i, n))
-         return false;
+      m <<= 8;
+      m |= ((i & 0x03) << 5) | (n & 0x0F) | (((dp >> i) & 0x01) << 4);
       n >>= 4;
       }
-  return SendCommand(mode);
+  data = m;
 }
 
-bool cRcuRemote::String(char *s)
+void cRcuRemote::SetString(char *s)
 {
-  LOCK_THREAD;
-
   const char *chars = mode == modeH ? "0123456789ABCDEF" : "0123456789-EHLP ";
   int n = 0;
 
@@ -265,16 +270,16 @@ bool cRcuRemote::String(char *s)
              }
           }
       }
-  return Number(n, true);
+  SetNumber(n, true);
 }
 
 void cRcuRemote::SetPoints(unsigned char Dp, bool On)
-{ 
+{
   if (On)
      dp |= Dp;
   else
      dp &= ~Dp;
-  Number(lastNumber, true);
+  SetNumber(number);
 }
 
 bool cRcuRemote::DetectCode(unsigned char *Code)
@@ -294,12 +299,12 @@ bool cRcuRemote::DetectCode(unsigned char *Code)
      SetMode(modeH);
      char buf[5];
      sprintf(buf, "C0D%c", *Code);
-     String(buf);
+     SetString(buf);
      SetCode(*Code);
-     delay_ms(2 * REPEATDELAY);
+     cCondWait::SleepMs(2 * REPEATDELAY);
      if (receivedCommand) {
         SetMode(modeB);
-        String("----");
+        SetString("----");
         return true;
         }
      if (*Code < 'D') {
@@ -313,13 +318,11 @@ bool cRcuRemote::DetectCode(unsigned char *Code)
 
 void cRcuRemote::ChannelSwitch(const cDevice *Device, int ChannelNumber)
 {
-  if (ChannelNumber && Device->IsPrimaryDevice()) {
-     LOCK_THREAD;
-     numberToSend = cDevice::CurrentChannel();
-     }
+  if (ChannelNumber && Device->IsPrimaryDevice())
+     SetNumber(cDevice::CurrentChannel());
 }
 
-void cRcuRemote::Recording(const cDevice *Device, const char *Name)
+void cRcuRemote::Recording(const cDevice *Device, const char *Name, const char *FileName, bool On)
 {
   SetPoints(1 << Device->DeviceNumber(), Device->Receiving());
 }

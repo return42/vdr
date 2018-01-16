@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: keys.c 1.5 2003/09/14 10:07:47 kls Exp $
+ * $Id: keys.c 1.13 2006/04/15 13:50:43 kls Exp $
  */
 
 #include "keys.h"
@@ -32,18 +32,23 @@ static tKey keyTable[] = { // "Up" and "Down" must be the first two keys!
                     { k7,             "7"          },
                     { k8,             "8"          },
                     { k9,             "9"          },
+                    { kInfo,          "Info"       },
                     { kPlay,          "Play"       },
                     { kPause,         "Pause"      },
                     { kStop,          "Stop"       },
                     { kRecord,        "Record"     },
                     { kFastFwd,       "FastFwd"    },
                     { kFastRew,       "FastRew"    },
+                    { kNext,          "Next"       },
+                    { kPrev,          "Prev"       },
                     { kPower,         "Power"      },
                     { kChanUp,        "Channel+"   },
                     { kChanDn,        "Channel-"   },
+                    { kChanPrev,      "PrevChannel"},
                     { kVolUp,         "Volume+"    },
                     { kVolDn,         "Volume-"    },
                     { kMute,          "Mute"       },
+                    { kAudio,         "Audio"      },
                     { kSchedule,      "Schedule"   },
                     { kChannels,      "Channels"   },
                     { kTimers,        "Timers"     },
@@ -195,7 +200,8 @@ bool cKeyMacro::Parse(char *s)
 {
   int n = 0;
   char *p;
-  while ((p = strtok(s, " \t")) != NULL) {
+  char *strtok_next;
+  while ((p = strtok_r(s, " \t", &strtok_next)) != NULL) {
         if (n < MAXKEYSINMACRO) {
            if (*p == '@') {
               if (plugin) {
@@ -206,9 +212,8 @@ bool cKeyMacro::Parse(char *s)
                  esyslog("ERROR: @plugin can't be first in macro");
                  return false;
                  }
-              macro[n++] = k_Plugin;
+              macro[n] = k_Plugin;
               if (n < MAXKEYSINMACRO) {
-                 macro[n] = kOk;
                  plugin = strdup(p + 1);
                  if (!cPluginManager::GetPlugin(plugin)) {
                     esyslog("ERROR: unknown plugin '%s'", plugin);
@@ -248,9 +253,11 @@ cKeyMacros KeyMacros;
 
 const cKeyMacro *cKeyMacros::Get(eKeys Key)
 {
-  for (cKeyMacro *k = First(); k; k = Next(k)) {
-      if (*k->Macro() == Key)
-         return k;
-      }
+  if (Key != kNone) {
+     for (cKeyMacro *k = First(); k; k = Next(k)) {
+         if (*k->Macro() == Key)
+            return k;
+         }
+     }
   return NULL;
 }

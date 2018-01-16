@@ -4,57 +4,69 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: menuitems.c 1.13 2003/04/12 09:21:33 kls Exp $
+ * $Id: menuitems.c 1.44 2006/04/25 15:59:02 kls Exp $
  */
 
 #include "menuitems.h"
 #include <ctype.h>
 #include "i18n.h"
 #include "plugin.h"
+#include "remote.h"
+#include "skins.h"
 #include "status.h"
 
-const char *FileNameChars = " abcdefghijklmnopqrstuvwxyz0123456789-.#~";
+#define AUTO_ADVANCE_TIMEOUT  1500 // ms before auto advance when entering characters via numeric keys
+
+const char *FileNameChars = " abcdefghijklmnopqrstuvwxyz0123456789-.#~,/_@";
 
 // --- cMenuEditItem ---------------------------------------------------------
 
 cMenuEditItem::cMenuEditItem(const char *Name)
 {
-  name = strdup(Name);
-  value = NULL;
+  name = strdup(Name ? Name : "???");
 }
 
 cMenuEditItem::~cMenuEditItem()
 {
   free(name);
-  free(value);
 }
 
 void cMenuEditItem::SetValue(const char *Value)
 {
-  free(value);
-  value = strdup(Value);
   char *buffer = NULL;
-  asprintf(&buffer, "%s:\t%s", name, value);
+  asprintf(&buffer, "%s:\t%s", name, Value);
   SetText(buffer, false);
-  Display();
+  cStatus::MsgOsdCurrentItem(buffer);
 }
 
 // --- cMenuEditIntItem ------------------------------------------------------
 
-cMenuEditIntItem::cMenuEditIntItem(const char *Name, int *Value, int Min, int Max)
+cMenuEditIntItem::cMenuEditIntItem(const char *Name, int *Value, int Min, int Max, const char *MinString, const char *MaxString)
 :cMenuEditItem(Name)
 {
   value = Value;
   min = Min;
   max = Max;
+  minString = MinString;
+  maxString = MaxString;
+  if (*value < min)
+     *value = min;
+  else if (*value > max)
+     *value = max;
   Set();
 }
 
 void cMenuEditIntItem::Set(void)
 {
-  char buf[16];
-  snprintf(buf, sizeof(buf), "%d", *value);
-  SetValue(buf);
+  if (minString && *value == min)
+     SetValue(minString);
+  else if (maxString && *value == max)
+     SetValue(maxString);
+  else {
+     char buf[16];
+     snprintf(buf, sizeof(buf), "%d", *value);
+     SetValue(buf);
+     }
 }
 
 eOSState cMenuEditIntItem::ProcessKey(eKeys Key)
@@ -68,10 +80,10 @@ eOSState cMenuEditIntItem::ProcessKey(eKeys Key)
        case kNone: break;
        case k0 ... k9:
             if (fresh) {
-               *value = 0;
+               newValue = 0;
                fresh = false;
                }
-            newValue = *value * 10 + (Key - k0);
+            newValue = newValue * 10 + (Key - k0);
             break;
        case kLeft: // TODO might want to increase the delta if repeated quickly?
             newValue = *value - 1;
@@ -86,7 +98,7 @@ eOSState cMenuEditIntItem::ProcessKey(eKeys Key)
             if (*value > max) { *value = max; Set(); }
             return state;
        }
-     if ((!fresh || min <= newValue) && newValue <= max) {
+     if (newValue != *value && (!fresh || min <= newValue) && newValue <= max) {
         *value = newValue;
         Set();
         }
@@ -110,6 +122,23 @@ void cMenuEditBoolItem::Set(void)
   char buf[16];
   snprintf(buf, sizeof(buf), "%s", *value ? trueString : falseString);
   SetValue(buf);
+}
+
+// --- cMenuEditBitItem ------------------------------------------------------
+
+cMenuEditBitItem::cMenuEditBitItem(const char *Name, uint *Value, uint Mask, const char *FalseString, const char *TrueString)
+:cMenuEditBoolItem(Name, &bit, FalseString, TrueString)
+{
+  value = Value;
+  bit = (*value & Mask) != 0;
+  mask = Mask;
+  Set();
+}
+
+void cMenuEditBitItem::Set(void)
+{
+  *value = bit ? *value | mask : *value & ~mask;
+  cMenuEditBoolItem::Set();
 }
 
 // --- cMenuEditNumItem ------------------------------------------------------
@@ -172,7 +201,7 @@ cMenuEditChrItem::cMenuEditChrItem(const char *Name, char *Value, const char *Al
 :cMenuEditItem(Name)
 {
   value = Value;
-  allowed = strdup(Allowed);
+  allowed = strdup(Allowed ? Allowed : "");
   current = strchr(allowed, *Value);
   if (!current)
      current = allowed;
@@ -218,49 +247,70 @@ eOSState cMenuEditChrItem::ProcessKey(eKeys Key)
 cMenuEditStrItem::cMenuEditStrItem(const char *Name, char *Value, int Length, const char *Allowed)
 :cMenuEditItem(Name)
 {
+  orgValue = NULL;
   value = Value;
   length = Length;
-  allowed = strdup(Allowed);
+  allowed = strdup(Allowed ? Allowed : "");
   pos = -1;
   insert = uppercase = false;
   newchar = true;
+  charMap = tr(" 0\t-.#~,/_@1\tabc2\tdef3\tghi4\tjkl5\tmno6\tpqrs7\ttuv8\twxyz9");
+  currentChar = NULL;
+  lastKey = kNone;
   Set();
 }
 
 cMenuEditStrItem::~cMenuEditStrItem()
 {
+  free(orgValue);
   free(allowed);
 }
 
 void cMenuEditStrItem::SetHelpKeys(void)
 {
-  if (pos >= 0)
-     Interface->Help(tr("ABC/abc"), tr(insert ? "Overwrite" : "Insert"), tr("Delete"));
+  if (InEditMode())
+     cSkinDisplay::Current()->SetButtons(tr("Button$ABC/abc"), tr(insert ? "Button$Overwrite" : "Button$Insert"), tr("Button$Delete"));
   else
-     Interface->Help(NULL);
+     cSkinDisplay::Current()->SetButtons(NULL);
+}
+
+void cMenuEditStrItem::AdvancePos(void)
+{
+  if (pos < length - 2 && pos < int(strlen(value)) ) {
+     if (++pos >= int(strlen(value))) {
+        if (pos >= 2 && value[pos - 1] == ' ' && value[pos - 2] == ' ')
+           pos--; // allow only two blanks at the end
+        else {
+           value[pos] = ' ';
+           value[pos + 1] = 0;
+           }
+        }
+     }
+  newchar = true;
+  if (!insert && isalpha(value[pos]))
+     uppercase = isupper(value[pos]);
 }
 
 void cMenuEditStrItem::Set(void)
 {
   char buf[1000];
-  const char *fmt = insert && newchar ? "[]%c%s" : "[%c]%s";
 
-  if (pos >= 0) {
+  if (InEditMode()) {
+     const cFont *font = cFont::GetFont(fontOsd);
      strncpy(buf, value, pos);
-     snprintf(buf + pos, sizeof(buf) - pos - 2, fmt, *(value + pos), value + pos + 1);
-     int width = Interface->Width() - Interface->GetCols()[0];
-     if (cOsd::WidthInCells(buf) <= width) {
+     snprintf(buf + pos, sizeof(buf) - pos - 2, insert && newchar ? "[]%c%s" : "[%c]%s", *(value + pos), value + pos + 1);
+     int width = cSkinDisplay::Current()->EditableWidth();
+     if (font->Width(buf) <= width) {
         // the whole buffer fits on the screen
         SetValue(buf);
         return;
         }
-     width *= cOsd::CellWidth();
-     width -= cOsd::Width('>'); // assuming '<' and '>' have the same with
+     width -= font->Width('>'); // assuming '<' and '>' have the same with
      int w = 0;
      int i = 0;
      int l = strlen(buf);
      while (i < l && w <= width)
-           w += cOsd::Width(buf[i++]);
+           w += font->Width(buf[i++]);
      if (i >= pos + 4) {
         // the cursor fits on the screen
         buf[i - 1] = '>';
@@ -277,7 +327,7 @@ void cMenuEditStrItem::Set(void)
      else
         i--;
      while (i >= 0 && w <= width)
-           w += cOsd::Width(buf[i--]);
+           w += font->Width(buf[i--]);
      buf[++i] = '<';
      SetValue(buf + i);
      }
@@ -301,23 +351,39 @@ char cMenuEditStrItem::Inc(char c, bool Up)
 
 eOSState cMenuEditStrItem::ProcessKey(eKeys Key)
 {
+  bool SameKey = NORMALKEY(Key) == lastKey;
+  if (Key != kNone)
+     lastKey = NORMALKEY(Key);
+  else if (!newchar && k0 <= lastKey && lastKey <= k9 && autoAdvanceTimeout.TimedOut()) {
+     AdvancePos();
+     newchar = true;
+     currentChar = NULL;
+     Set();
+     return osContinue;
+     }
   switch (Key) {
     case kRed:   // Switch between upper- and lowercase characters
-                 if (pos >= 0 && (!insert || !newchar)) {
-                    uppercase = !uppercase;
-                    value[pos] = uppercase ? toupper(value[pos]) : tolower(value[pos]);
+                 if (InEditMode()) {
+                    if (!insert || !newchar) {
+                       uppercase = !uppercase;
+                       value[pos] = uppercase ? toupper(value[pos]) : tolower(value[pos]);
+                       }
                     }
+                 else
+                    return osUnknown;
                  break;
     case kGreen: // Toggle insert/overwrite modes
-                 if (pos >= 0) {
+                 if (InEditMode()) {
                     insert = !insert;
                     newchar = true;
+                    SetHelpKeys();
                     }
-                 SetHelpKeys();
+                 else
+                    return osUnknown;
                  break;
     case kYellow|k_Repeat:
     case kYellow: // Remove the character at current position; in insert mode it is the character to the right of cursor
-                 if (pos >= 0) {
+                 if (InEditMode()) {
                     if (strlen(value) > 1) {
                        if (!insert || pos < int(strlen(value)) - 1)
                           memmove(value + pos, value + pos + 1, strlen(value) - pos);
@@ -331,6 +397,15 @@ eOSState cMenuEditStrItem::ProcessKey(eKeys Key)
                        uppercase = isupper(value[pos]);
                     newchar = true;
                     }
+                 else
+                    return osUnknown;
+                 break;
+    case kBlue|k_Repeat:
+    case kBlue:  // consume the key only if in edit-mode
+                 if (InEditMode())
+                    ;
+                 else
+                    return osUnknown;
                  break;
     case kLeft|k_Repeat:
     case kLeft:  if (pos > 0) {
@@ -342,26 +417,16 @@ eOSState cMenuEditStrItem::ProcessKey(eKeys Key)
                     uppercase = isupper(value[pos]);
                  break;
     case kRight|k_Repeat:
-    case kRight: if (pos < length - 2 && pos < int(strlen(value)) ) {
-                    if (++pos >= int(strlen(value))) {
-                       if (pos >= 2 && value[pos - 1] == ' ' && value[pos - 2] == ' ')
-                          pos--; // allow only two blanks at the end
-                       else {
-                          value[pos] = ' ';
-                          value[pos + 1] = 0;
-                          }
-                       }
-                    }
-                 newchar = true;
-                 if (!insert && isalpha(value[pos]))
-                    uppercase = isupper(value[pos]);
-                 if (pos == 0)
+    case kRight: AdvancePos();
+                 if (pos == 0) {
+                    orgValue = strdup(value);
                     SetHelpKeys();
+                    }
                  break;
     case kUp|k_Repeat:
     case kUp:
     case kDown|k_Repeat:
-    case kDown:  if (pos >= 0) {
+    case kDown:  if (InEditMode()) {
                     if (insert && newchar) {
                        // create a new character in insert mode
                        if (int(strlen(value)) < length - 1) {
@@ -378,7 +443,50 @@ eOSState cMenuEditStrItem::ProcessKey(eKeys Key)
                  else
                     return cMenuEditItem::ProcessKey(Key);
                  break;
-    case kOk:    if (pos >= 0) {
+    case k0|k_Repeat ... k9|k_Repeat:
+    case k0 ... k9: {
+                 if (InEditMode()) {
+                    if (!SameKey) {
+                       if (!newchar)
+                          AdvancePos();
+                       currentChar = NULL;
+                       }
+                    if (insert && newchar) {
+                       // create a new character in insert mode
+                       if (int(strlen(value)) < length - 1) {
+                          memmove(value + pos + 1, value + pos, strlen(value) - pos + 1);
+                          value[pos] = ' ';
+                          }
+                       }
+                    if (!currentChar || !*currentChar || *currentChar == '\t') {
+                       // find the beginning of the character map entry for Key
+                       int n = NORMALKEY(Key) - k0;
+                       currentChar = charMap;
+                       while (n > 0 && *currentChar) {
+                             if (*currentChar++ == '\t')
+                                n--;
+                             }
+                       }
+                    if (*currentChar && *currentChar != '\t') {
+                       value[pos] = *currentChar;
+                       if (uppercase)
+                          value[pos] = toupper(value[pos]);
+                       currentChar++;
+                       }
+                    newchar = false;
+                    autoAdvanceTimeout.Set(AUTO_ADVANCE_TIMEOUT);
+                    }
+                 else
+                    return cMenuEditItem::ProcessKey(Key);
+                 }
+                 break;
+    case kBack:
+    case kOk:    if (InEditMode()) {
+                    if (Key == kBack && orgValue) {
+                       strcpy(value, orgValue);
+                       free(orgValue);
+                       orgValue = NULL;
+                       }
                     pos = -1;
                     newchar = true;
                     stripspace(value);
@@ -386,7 +494,7 @@ eOSState cMenuEditStrItem::ProcessKey(eKeys Key)
                     break;
                     }
                  // run into default
-    default:     if (pos >= 0 && BASICKEY(Key) == kKbd) {
+    default:     if (InEditMode() && BASICKEY(Key) == kKbd) {
                     int c = KEYKBD(Key);
                     if (c <= 0xFF) {
                        const char *p = strchr(allowed, tolower(c));
@@ -443,98 +551,307 @@ void cMenuEditStraItem::Set(void)
   SetValue(strings[*value]);
 }
 
-// --- cMenuTextItem ---------------------------------------------------------
+// --- cMenuEditChanItem -----------------------------------------------------
 
-cMenuTextItem::cMenuTextItem(const char *Text, int X, int Y, int W, int H, eDvbColor FgColor, eDvbColor BgColor, eDvbFont Font)
+cMenuEditChanItem::cMenuEditChanItem(const char *Name, int *Value, const char *NoneString)
+:cMenuEditIntItem(Name, Value, NoneString ? 0 : 1, Channels.MaxNumber())
 {
-  x = X;
-  y = Y;
-  w = W;
-  h = H;
-  fgColor = FgColor;
-  bgColor = BgColor;
-  font = Font;
-  offset = 0;
-  eDvbFont oldFont = Interface->SetFont(font);
-  text = Interface->WrapText(Text, w - 1, &lines);
-  Interface->SetFont(oldFont);
-  if (h < 0)
-     h = lines;
+  noneString = NoneString;
+  Set();
 }
 
-cMenuTextItem::~cMenuTextItem()
+void cMenuEditChanItem::Set(void)
 {
-  free(text);
-}
-
-void cMenuTextItem::Clear(void)
-{
-  Interface->Fill(x, y, w, h, bgColor);
-}
-
-void cMenuTextItem::Display(int Offset, eDvbColor FgColor, eDvbColor BgColor)
-{
-  int l = 0;
-  char *t = text;
-  eDvbFont oldFont = Interface->SetFont(font);
-  while (*t) {
-        char *n = strchr(t, '\n');
-        if (l >= offset) {
-           if (n)
-              *n = 0;
-           Interface->Write(x, y + l - offset, t, fgColor, bgColor);
-           if (n)
-              *n = '\n';
-           else
-              break;
-           }
-        if (!n)
-           break;
-        t = n + 1;
-        if (++l >= h + offset)
-           break;
-        }
-  Interface->SetFont(oldFont);
-  // scroll indicators use inverted color scheme!
-  if (CanScrollUp())   Interface->Write(x + w - 1, y,         "^", bgColor, fgColor);
-  if (CanScrollDown()) Interface->Write(x + w - 1, y + h - 1, "v", bgColor, fgColor);
-  cStatus::MsgOsdTextItem(text);
-}
-
-void cMenuTextItem::ScrollUp(bool Page)
-{
-  if (CanScrollUp()) {
-     Clear();
-     offset = max(offset - (Page ? h : 1), 0);
-     Display();
+  if (*value > 0) {
+     char buf[255];
+     cChannel *channel = Channels.GetByNumber(*value);
+     snprintf(buf, sizeof(buf), "%d %s", *value, channel ? channel->Name() : "");
+     SetValue(buf);
      }
-  cStatus::MsgOsdTextItem(NULL, true);
+  else if (noneString)
+     SetValue(noneString);
 }
 
-void cMenuTextItem::ScrollDown(bool Page)
+eOSState cMenuEditChanItem::ProcessKey(eKeys Key)
 {
-  if (CanScrollDown()) {
-     Clear();
-     offset = min(offset + (Page ? h : 1), lines - h);
-     Display();
-     }
-  cStatus::MsgOsdTextItem(NULL, false);
-}
+  int delta = 1;
 
-eOSState cMenuTextItem::ProcessKey(eKeys Key)
-{
   switch (Key) {
     case kLeft|k_Repeat:
-    case kLeft:
-    case kUp|k_Repeat:
-    case kUp:            ScrollUp(NORMALKEY(Key) == kLeft);    break;
+    case kLeft:  delta = -1;
     case kRight|k_Repeat:
     case kRight:
-    case kDown|k_Repeat:
-    case kDown:          ScrollDown(NORMALKEY(Key) == kRight); break;
-    default:             return osUnknown;
+                 {
+                   cChannel *channel = Channels.GetByNumber(*value + delta, delta);
+                   if (channel)
+                      *value = channel->Number();
+                   else if (delta < 0 && noneString)
+                      *value = 0;
+                   Set();
+                 }
+                 break;
+    default: return cMenuEditIntItem::ProcessKey(Key);
     }
   return osContinue;
+}
+
+// --- cMenuEditTranItem -----------------------------------------------------
+
+cMenuEditTranItem::cMenuEditTranItem(const char *Name, int *Value, int *Source)
+:cMenuEditChanItem(Name, &number, "-")
+{
+  number = 0;
+  source = Source;
+  transponder = Value;
+  cChannel *channel = Channels.First();
+  while (channel) {
+        if (!channel->GroupSep() && *source == channel->Source() && ISTRANSPONDER(channel->Transponder(), *Value)) {
+           number = channel->Number();
+           break;
+           }
+        channel = (cChannel *)channel->Next();
+        }
+  Set();
+}
+
+eOSState cMenuEditTranItem::ProcessKey(eKeys Key)
+{
+  eOSState state = cMenuEditChanItem::ProcessKey(Key);
+  cChannel *channel = Channels.GetByNumber(number);
+  if (channel) {
+     *source = channel->Source();
+     *transponder = channel->Transponder();
+     }
+  else {
+     *source = 0;
+     *transponder = 0;
+     }
+  return state;
+}
+
+// --- cMenuEditDateItem -----------------------------------------------------
+
+static int ParseWeekDays(const char *s)
+{
+  time_t day;
+  int weekdays;
+  return cTimer::ParseDay(s, day, weekdays) ? weekdays : 0;
+}
+
+int cMenuEditDateItem::days[] = { ParseWeekDays("M------"),
+                                  ParseWeekDays("-T-----"),
+                                  ParseWeekDays("--W----"),
+                                  ParseWeekDays("---T---"),
+                                  ParseWeekDays("----F--"),
+                                  ParseWeekDays("-----S-"),
+                                  ParseWeekDays("------S"),
+                                  ParseWeekDays("MTWTF--"),
+                                  ParseWeekDays("MTWTFS-"),
+                                  ParseWeekDays("MTWTFSS"),
+                                  ParseWeekDays("-----SS"),
+                                  0 };
+
+cMenuEditDateItem::cMenuEditDateItem(const char *Name, time_t *Value, int *WeekDays)
+:cMenuEditItem(Name)
+{
+  value = Value;
+  weekdays = WeekDays;
+  oldvalue = 0;
+  dayindex = weekdays ? FindDayIndex(*weekdays) : 0;
+  Set();
+}
+
+int cMenuEditDateItem::FindDayIndex(int WeekDays)
+{
+  for (unsigned int i = 0; i < sizeof(days) / sizeof(int); i++)
+      if (WeekDays == days[i])
+         return i;
+  return 0;
+}
+
+void cMenuEditDateItem::Set(void)
+{
+#define DATEBUFFERSIZE 32
+  char buf[DATEBUFFERSIZE];
+  if (weekdays && *weekdays) {
+     SetValue(cTimer::PrintDay(0, *weekdays));
+     return;
+     }
+  else if (*value) {
+     struct tm tm_r;
+     localtime_r(value, &tm_r);
+     strftime(buf, DATEBUFFERSIZE, "%Y-%m-%d ", &tm_r);
+     strcat(buf, WeekDayName(tm_r.tm_wday));
+     }
+  else
+     *buf = 0;
+  SetValue(buf);
+}
+
+eOSState cMenuEditDateItem::ProcessKey(eKeys Key)
+{
+  eOSState state = cMenuEditItem::ProcessKey(Key);
+
+  if (state == osUnknown) {
+     time_t now = time(NULL);
+     if (NORMALKEY(Key) == kLeft) { // TODO might want to increase the delta if repeated quickly?
+        if (!weekdays || !*weekdays) {
+           // Decrement single day:
+           time_t v = *value;
+           v -= SECSINDAY;
+           if (v < now) {
+              if (now <= v + SECSINDAY) { // switched from tomorrow to today
+                 if (!weekdays)
+                    v = 0;
+                 }
+              else if (weekdays) { // switched from today to yesterday, so enter weekdays mode
+                 v = 0;
+                 dayindex = sizeof(days) / sizeof(int) - 2;
+                 *weekdays = days[dayindex];
+                 }
+              else // don't go before today
+                 v = *value;
+              }
+           *value = v;
+           }
+        else {
+           // Decrement weekday index:
+           if (dayindex > 0)
+              *weekdays = days[--dayindex];
+           }
+        }
+     else if (NORMALKEY(Key) == kRight) {
+        if (!weekdays || !*weekdays) {
+           // Increment single day:
+           if (!*value)
+              *value = cTimer::SetTime(now, 0);
+           *value += SECSINDAY;
+           }
+        else {
+           // Increment weekday index:
+           *weekdays = days[++dayindex];
+           if (!*weekdays) { // was last weekday entry, so switch to today
+              *value = cTimer::SetTime(now, 0);
+              dayindex = 0;
+              }
+           }
+        }
+     else if (weekdays) {
+        if (Key == k0) {
+           // Toggle between weekdays and single day:
+           if (*weekdays) {
+              *value = cTimer::SetTime(oldvalue ? oldvalue : now, 0);
+              oldvalue = 0;
+              *weekdays = 0;
+              }
+           else {
+              *weekdays = days[cTimer::GetWDay(*value)];
+              dayindex = FindDayIndex(*weekdays);
+              oldvalue = *value;
+              *value = 0;
+              }
+           }
+        else if (k1 <= Key && Key <= k7) {
+           // Toggle individual weekdays:
+           if (*weekdays) {
+              int v = *weekdays ^ (1 << (Key - k1));
+              if (v != 0)
+                 *weekdays = v; // can't let this become all 0
+              }
+           }
+        else
+           return state;
+        }
+     else
+        return state;
+     Set();
+     state = osContinue;
+     }
+  return state;
+}
+
+// --- cMenuEditTimeItem -----------------------------------------------------
+
+cMenuEditTimeItem::cMenuEditTimeItem(const char *Name, int *Value)
+:cMenuEditItem(Name)
+{
+  value = Value;
+  hh = *value / 100;
+  mm = *value % 100;
+  pos = 0;
+  Set();
+}
+
+void cMenuEditTimeItem::Set(void)
+{
+  char buf[10];
+  switch (pos) {
+    case 1:  snprintf(buf, sizeof(buf), "%01d-:--", hh / 10); break;
+    case 2:  snprintf(buf, sizeof(buf), "%02d:--", hh); break;
+    case 3:  snprintf(buf, sizeof(buf), "%02d:%01d-", hh, mm / 10); break;
+    default: snprintf(buf, sizeof(buf), "%02d:%02d", hh, mm);
+    }
+  SetValue(buf);
+}
+
+eOSState cMenuEditTimeItem::ProcessKey(eKeys Key)
+{
+  eOSState state = cMenuEditItem::ProcessKey(Key);
+
+  if (state == osUnknown) {
+     if (k0 <= Key && Key <= k9) {
+        if (fresh || pos > 3) {
+           pos = 0;
+           fresh = false;
+           }
+        int n = Key - k0;
+        switch (pos) {
+          case 0: if (n <= 2) {
+                     hh = n * 10;
+                     mm = 0;
+                     pos++;
+                     }
+                  break;
+          case 1: if (hh + n <= 23) {
+                     hh += n;
+                     pos++;
+                     }
+                  break;
+          case 2: if (n <= 5) {
+                     mm += n * 10;
+                     pos++;
+                     }
+                  break;
+          case 3: if (mm + n <= 59) {
+                     mm += n;
+                     pos++;
+                     }
+                  break;
+          }
+        }
+     else if (NORMALKEY(Key) == kLeft) { // TODO might want to increase the delta if repeated quickly?
+        if (--mm < 0) {
+           mm = 59;
+           if (--hh < 0)
+              hh = 23;
+           }
+        fresh = true;
+        }
+     else if (NORMALKEY(Key) == kRight) {
+        if (++mm > 59) {
+           mm = 0;
+           if (++hh > 23)
+              hh = 0;
+           }
+        fresh = true;
+        }
+     else
+        return state;
+     *value = hh * 100 + mm;
+     Set();
+     state = osContinue;
+     }
+  return state;
 }
 
 // --- cMenuSetupPage --------------------------------------------------------
