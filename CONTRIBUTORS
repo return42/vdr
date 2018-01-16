@@ -219,6 +219,9 @@ Stefan Huelswitt <huels@iname.com>
  again
  for reporting a problem with channel up/down switching on single card systems
  for fixing the PremiereContentTransmissionDescriptor in 'libsi'
+ for reporting a double fdopen() in cPipe::Open()
+ for suggesting to increase the APIVERSION to allow plugins that relied on the
+ cStatus::MsgSetVolume() bug to react properly
 
 Ulrich Röder <roeder@efr-net.de>
  for pointing out that there are channels that have a symbol rate higher than 27500
@@ -276,6 +279,8 @@ Artur Skawina <skawina@geocities.com>
  for a patch that contained a fix for checking toFile in cCuttingThread::Action()
  for improving cUnbufferedFile
  for fixing calculating the cache size in cUnbufferedFile::Read()
+ for making the /video/.update file be touched _after_ an editing process is finished
+ in order to avoid excessive disk access
 
 Werner Fink <werner@suse.de>
  for making I/O more robust by handling EINTR
@@ -340,6 +345,8 @@ Andy Grobb <Charly98@01019freenet.de>
  for reporting a bug in handling min/max borders when entering integer values
  for reporting a problem with replaying in fast forward mode if the video directory
  is mounted via a Samba share
+ for suggesting to make menu items that are derived from cMenuEditIntItem loop
+ though their values if they have a dedicated minimum or maximum limit
 
 Thomas Heiligenmann <thomas@heiligenmann.de>
  for implementing the SVDRP commands LSTR and DELR
@@ -574,6 +581,8 @@ Helmut Auer <vdr@helmutauer.de>
  for reporting a problem with the "Press any key on the RC unit" step when learning
  LIRC remote control codes
  for suggesting to reduce the logging for the SVDRP GRAB command
+ for reporting that the shutdown script is given a reboot time in the past if there
+ is a recording going on or about to start, and the user insists in shutting down now
 
 Jeremy Hall <jhall@UU.NET>
  for fixing an incomplete initialization of the filter parameters in eit.c
@@ -630,6 +639,7 @@ Oliver Endriss <o.endriss@gmx.de>
  against invalid data
  for reporting a problem in extracting APIVERSION with older versions of 'sed'
  for fixing broken APIVERSION extraction line in 'newplugin'
+ for making VDR no longer stop removing empty directories if an error occurs
 
 Reinhard Walter Buchner <rw.buchner@freenet.de>
  for adding some satellites to 'sources.conf'
@@ -1221,6 +1231,8 @@ Andreas Regel <andreas.regel@gmx.de>
  for reporting a problem in handling Transfer Mode for radio channels
  for reporting a problem with messages when a cOsdObject uses the raw OSD
  for implementing palette replace mode in the OSD bitmaps
+ for fixing handling numeric keys in the channel display after switching channel
+ groups
 
 Thomas Bergwinkl <Thomas.Bergwinkl@vr-web.de>
  for fixing the validity check for channel IDs, because some providers use TIDs
@@ -1364,6 +1376,8 @@ Marco Schlüßler <marco@lordzodiac.de>
  and PremiereContentTransmissionDescriptor to 'libsi'
  for pointing out that plugins might be compiled with different DVB driver header
  files than VDR itself
+ for adding a missing initialization of 'mutex' in cCiMenu::cCiMenu() and removing
+ some superfluous semicolons in ci.c
 
 Jürgen Schmitz <j.schmitz@web.de>
  for reporting a bug in displaying the current channel when switching via the SVDRP
@@ -1440,6 +1454,15 @@ Udo Richter <udo_richter@gmx.de>
  for fixing handling the "Power" key in case a timer is about to start recording
  for fixing calculating the start time of repeated timers with "first day"
  for setting a timer's cached start time to 0 after a call to Skip()
+ for adding "-fPIC" to the compiler options in Make.config.template when compiling
+ plugins
+ for reporting a missing '--vfat' in the vdr.1 man page
+ for fixing deleting the last character of a string menu item in insert mode
+ for reporting that the shutdown message "Recording in ... minutes, shut down anyway?"
+ may have been given with a negative number of minutes
+ for fixing getting the next active timer when shutting down
+ for reporting a problem with cPlugin::ConfigDirectory() in case a plugin calls it
+ from a separate thread
 
 Sven Kreiensen <svenk@kammer.uni-hannover.de>
  for his help in keeping 'channels.conf.terr' up to date
@@ -1601,6 +1624,9 @@ Ville Skyttä <ville.skytta@iki.fi>
  for fixing several spelling errors
  for reporting that the call to pthread_setschedparam(childTid, SCHED_RR, 0) in
  thread.c caused a compiler warning with g++ 4.1.1
+ for fixing converting the port number in the "connect from..." log message of SVDRP
+ for reporting that there are places where ntohs() is assigned to different types
+ for adapting cThread::ThreadId() to recent kernels
 
 Steffen Beyer <cpunk@reactor.de>
  for fixing setting the colored button help after deleting a recording in case the next
@@ -1783,6 +1809,8 @@ Gavin Hamill <gdh@acentral.co.uk>
 Petri Hintukainen <Petri.Hintukainen@hut.fi>
  for suggesting to disable the use of "fadvise" in cUnbufferedFile because there
  have been several reports that it causes more problems than it solves
+ for suggesting to add --remove-destination to the 'cp' command for binaries in
+ the Makefile to avoid a crash in case a new version is installed on a running system
 
 Marcel Schaeben <mts280@gmx.de>
  for his "Easy Input" patch
@@ -1792,6 +1820,7 @@ Ingo Schneider <mail@ingo-schneider.de>
 
 Patrick Cernko <errror@errror.org>
  for suggesting to add a note about "modprobe capability" to INSTALL
+ for reporting a problem with relative link targets in the ReadLink() function
 
 Philippe Gramoullé <philippe@gramoulle.com>
  for reporting a a missing '-' in the example for viewing a grabbed image on a remote
@@ -1860,6 +1889,7 @@ Christoph Haubrich <christoph1.haubrich@arcor.de>
  the jump instead of closing the display
  for reporting that the log message "deleting plugin: ..." is irritating when
  calling "vdr --help"
+ for fixing cDevice::ToggleMute()
 
 Pekka Mauno <pekka.mauno@iki.fi>
  for fixing cSchedule::GetFollowingEvent() in case there is currently no present
@@ -1925,6 +1955,35 @@ M. Kiesel <vdr@continuity.cjb.net>
 
 Prakash Punnoor <prakash@punnoor.de>
  for suggesting to remove -fPIC from VDR's and libsi's Makefile
+ for adding a missing variable initialization in cRingBufferLinear::cRingBufferLinear()
 
 Anssi Hannula <anssi.hannula@gmail.com>
  for a patch that was used to implement processing the "frequency list descriptor"
+ for suggesting that cDevice::GetDevice() should prefer any device that's already
+ receiving and doesn't require detatching receivers
+ for improving handling Transfer Mode devices when selecting a device to receive
+
+Antti Hartikainen <ami+vdr@ah.fi>
+ for updating 'S13E' in 'sources.conf'
+
+Bernd Melcher <bernd@bernd-melcher.de>
+ for reporting a problem with the 'servicedemo' plugin having no PLUGIN macro
+
+Patrick Maier <maierp@informatik.tu-muenchen.de>
+ for fixing handling network masks in the svdrphosts.conf file
+
+Norbert Wentz <norbert.wentz@online.de>
+ for reporting a bug in handling relative volume settings in the call to
+ cStatus::MsgSetVolume()
+
+Frank Schmirler <vdr@schmirler.de>
+ for fixing handling client side termination of SVDRP connections
+ for fixing assigning schedules to channels in case there is no initial EPG information
+
+Jörn Reder <joern@zyn.de>
+ for reporting that a recording may unnecessarily block a device with a CAM, while
+ it could record on the primary device as well
+
+Tomas Berglund <tomber@telia.com>
+ for reporting a problem with sticky PIDs in CAMs when switching between encrypted
+ channels on the same transponder

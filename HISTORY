@@ -4782,3 +4782,116 @@ Video Disk Recorder Revision History
 - Changed the log messages when grabbing an image from 'isyslog()' to 'dsyslog()'
   so that they can be suppressed in normal operation mode to avoid clogging the
   log file in case this function is used frequently (suggested by Helmut Auer).
+
+2006-06-18: Version 1.4.1-1
+
+- Added "-fPIC" to the compiler options in Make.config.template when compiling
+  plugins (thanks to Udo Richter). If you use your own Make.config file, you may
+  want to add these lines there, too.
+- Added some comment to cDevice::GetDevice() to explain how the individual
+  conditions are put together to make a decision on which device to use.
+- Updated 'S13E' in 'sources.conf' (thanks to Antti Hartikainen).
+- Now making sure VPS timers don't get stuck with outdated events, and that the
+  actual device isn't used for updating a VPS timer's event as long as other
+  free devices are available.
+- Modified rcu.c to better handle RC5 codes.
+- Added a missing variable initialization in cRingBufferLinear::cRingBufferLinear()
+  (thanks to Prakash Punnoor).
+- Fixed handling relative link targets in the ReadLink() function (reported by
+  Patrick Cernko).
+- Now making sure a VPS timer has a schedule in case the epg.data file didn't
+  contain one when VDR was started.
+
+2006-07-23: Version 1.4.1-2
+
+- Fixed the Makefile of the 'servicedemo' plugin, so that it defines the
+  PLUGIN macro, which allows the Make.config file to react properly when
+  compiling the plugin (reported by Bernd Melcher).
+  Note to all plugin developers: a plugin's Makefile *must* define the PLUGIN
+  macro, even if it doesn't use it itself!
+- Added a comment regarding the PLUGIN macro to the 'newplugin' script.
+- Added '--vfat' to the vdr.1 man page (reported by Udo Richter).
+- Removed a double fdopen() in cPipe::Open() (reported by Stefan Huelswitt).
+- Fixed handling the running status of EPG events before the currently running one,
+  in case they are added after the current event.
+- cEIT::cEIT() now calls pSchedule->SetPresentSeen() even if OnlyRunningStatus is
+  true.
+- Newlines in title and short text of an EPG event are now changed into blanks only
+  after all other fixes, because a short text might become a description.
+- Fixed handling network masks in the svdrphosts.conf file (thanks to Patrick
+  Maier).
+- Fixed handling relative volume settings in the call to cStatus::MsgSetVolume()
+  (reported by Norbert Wentz).
+- Added a missing initialization of 'mutex' in cCiMenu::cCiMenu() and removed
+  some superfluous semicolons in ci.c (thanks to Marco Schlüßler).
+- Fixed handling client side termination of SVDRP connections (thanks to Frank
+  Schmirler).
+- cDevice::GetDevice() now prefers any device that's already receiving and doesn't
+  require detatching receivers (suggested by Anssi Hannula).
+- Fixed handling numeric keys in the channel display after switching channel groups
+  (thanks to Andreas Regel).
+- Menu items derived from cMenuEditIntItem now loop though their values if they
+  have a dedicated minimum or maximum limit (suggested by Andy Grobb). Looping is
+  only done for normal keypresses, not for repeated ones. This allows the user to
+  scroll the value all the way to the limit by keeping the key pressed.
+
+2006-08-06: Version 1.4.1-3
+
+- Fixed assigning schedules to channels in case there is no initial EPG information
+  (thanks to Frank Schmirler).
+- Increased the APIVERSION to allow plugins that relied on the cStatus::MsgSetVolume()
+  bug to react properly (suggested by Stefan Huelswitt).
+- Fixed cDevice::ToggleMute() (thanks to Christoph Haubrich).
+- Fixed deleting the last character of a string menu item in insert mode (thanks
+  to Udo Richter).
+- The /video/.update file is now touched _after_ an editing process is finished
+  in order to avoid excessive disk access (thanks to Artur Skawina).
+- Fixed handling the running status of EPG events before the currently running one,
+  in case they are added after the current event (cont'd from version 1.4.1-2).
+- Modified the shutdown mechanism, so that the shutdown script is never given a
+  time in the past (reported by Helmut Auer). If a timer is currently recording,
+  or a recording would start within the next 30 minutes (default for the "Min.
+  event timeout" setup parameter), and the user insists in shutting down now, the
+  reboot time given to the shutdown script will correspond to a time that is
+  "Min. event timeout" minutes (default is 30) in the future.
+- Avoiding shutdown message "Recording in ... minutes, shut down anyway?" with
+  a negative number of minutes (reported by Udo Richter).
+- Fixed getting the next active timer when shutting down (thanks to Udo Richter).
+- Modified the cSVDRP::Close() function to avoid code duplication.
+
+2006-08-13: Version 1.4.1-4
+
+- Fixed converting the port number in the "connect from..." log message of SVDRP
+  (thanks to Ville Skyttä).
+- Made the cCiSession members sessionId and resourceId uint16_t and uint32_t,
+  respectively, to match their types in the CI session data (thanks to Ville Skyttä
+  for reporting that there are places where ntohs() is assigned to different types).
+- Changed the way a device is selected for receiving in order to keep devices with
+  CAMs better available, even if this means recording on the primary device (reported
+  by Jörn Reder; thanks to Anssi Hannula for improving handling Transfer Mode devices
+  in this).
+- No longer stopping removing empty directories if an error occurs (thanks to
+  Oliver Endriss).
+- Added a log error message to cPlugin::ConfigDirectory() in case a plugin calls it
+  from a separate thread (reported by Udo Richter).
+
+2006-08-20: Version 1.4.1-5
+
+- Replaced the "quick workaround for additional live audio PIDs" in
+  cDvbDevice::SetChannelDevice() with an actual solution in
+  cDvbDevice::SetAudioTrackDevice() in order to prevent sticky PIDs in CAMs,
+  which caused long switching times or completely blank screens when switching
+  between encrypted channels on the same transponder (reported by Tomas Berglund).
+- Adapted cThread::ThreadId() to recent kernels (thanks to Ville Skyttä).
+- Added --remove-destination to the 'cp' command for binaries in the Makefile to
+  avoid a crash in case a new version is installed on a running system (suggested
+  by Petri Hintukainen).
+- Fixed handling "Ca Info" in case the CAM sends this again if the smart card is
+  replaced with a different one.
+
+2006-08-27: Version 1.4.2
+
+- Revoked the change to cDevice::GetDevice() that was introduced in version 1.4.1-2,
+  which made it prefer any device that's already receiving and doesn't require
+  detatching receivers. This change has caused some unwanted behavior, so further
+  testing is necessary.

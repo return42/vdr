@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: device.c 1.130 2006/05/27 11:14:42 kls Exp $
+ * $Id: device.c 1.136 2006/08/26 14:11:03 kls Exp $
  */
 
 #include "device.h"
@@ -281,19 +281,26 @@ cDevice *cDevice::GetDevice(int Index)
 cDevice *cDevice::GetDevice(const cChannel *Channel, int Priority, bool *NeedsDetachReceivers)
 {
   cDevice *d = NULL;
-  uint Impact = 0xFFFFFFFF;
+  uint Impact = 0xFFFFFFFF; // we're looking for a device with the least impact
   for (int i = 0; i < numDevices; i++) {
       bool ndr;
       if (device[i]->ProvidesChannel(Channel, Priority, &ndr)) { // this device is basicly able to do the job
+         // Put together an integer number that reflects the "impact" using
+         // this device would have on the overall system. Each condition is represented
+         // by one bit in the number (or several bits, if the condition is actually
+         // a numeric value). The sequence in which the conditions are listed corresponds
+         // to their individual severity, where the one listed first will make the most
+         // difference, because it results in the most significant bit of the result.
          uint imp = 0;
-         imp <<= 1; imp |= !device[i]->Receiving() || ndr;
-         imp <<= 1; imp |= device[i]->Receiving();
-         imp <<= 1; imp |= device[i] == ActualDevice();
-         imp <<= 1; imp |= device[i]->IsPrimaryDevice();
-         imp <<= 1; imp |= device[i]->HasDecoder();
-         imp <<= 8; imp |= min(max(device[i]->Priority() + MAXPRIORITY, 0), 0xFF);
-         imp <<= 8; imp |= min(max(device[i]->ProvidesCa(Channel), 0), 0xFF);
+         imp <<= 1; imp |= !device[i]->Receiving() || ndr;                         // use receiving devices if we don't need to detach existing receivers
+         imp <<= 1; imp |= device[i]->Receiving();                                 // avoid devices that are receiving
+         imp <<= 1; imp |= device[i] == cTransferControl::ReceiverDevice();        // avoid the Transfer Mode receiver device
+         imp <<= 8; imp |= min(max(device[i]->Priority() + MAXPRIORITY, 0), 0xFF); // use the device with the lowest priority (+MAXPRIORITY to assure that values -99..99 can be used)
+         imp <<= 8; imp |= min(max(device[i]->ProvidesCa(Channel), 0), 0xFF);      // use the device that provides the lowest number of conditional access methods
+         imp <<= 1; imp |= device[i]->IsPrimaryDevice();                           // avoid the primary device
+         imp <<= 1; imp |= device[i]->HasDecoder();                                // avoid full featured cards
          if (imp < Impact) {
+            // This device has less impact than any previous one, so we take it.
             Impact = imp;
             d = device[i];
             if (NeedsDetachReceivers)
@@ -744,12 +751,12 @@ bool cDevice::ToggleMute(void)
   mute = !mute;
   //XXX why is it necessary to use different sequences???
   if (mute) {
-     SetVolume(0, mute);
+     SetVolume(0, true);
      Audios.MuteAudio(mute); // Mute external audio after analog audio
      }
   else {
      Audios.MuteAudio(mute); // Enable external audio before analog audio
-     SetVolume(0, mute);
+     SetVolume(OldVolume, true);
      }
   volume = OldVolume;
   return mute;
@@ -769,9 +776,10 @@ void cDevice::SetAudioChannel(int AudioChannel)
 
 void cDevice::SetVolume(int Volume, bool Absolute)
 {
+  int OldVolume = volume;
   volume = min(max(Absolute ? Volume : volume + Volume, 0), MAXVOLUME);
   SetVolumeDevice(volume);
-  cStatus::MsgSetVolume(volume, Absolute);
+  cStatus::MsgSetVolume(Absolute ? volume : volume - OldVolume, Absolute);
   if (volume > 0) {
      mute = false;
      Audios.MuteAudio(mute);

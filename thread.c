@@ -4,7 +4,7 @@
  * See the main source file 'vdr.c' for copyright information and
  * how to reach the author.
  *
- * $Id: thread.c 1.55 2006/06/02 13:51:39 kls Exp $
+ * $Id: thread.c 1.57 2006/08/20 10:20:44 kls Exp $
  */
 
 #include "thread.h"
@@ -316,11 +316,9 @@ bool cThread::EmergencyExit(bool Request)
   return emergencyExitRequested = true; // yes, it's an assignment, not a comparison!
 }
 
-_syscall0(pid_t, gettid)
-
 tThreadId cThread::ThreadId(void)
 {
-  return gettid();
+  return syscall(__NR_gettid);
 }
 
 void cThread::SetMainThreadId(void)
@@ -423,7 +421,6 @@ bool cPipe::Open(const char *Command, const char *Mode)
         iopipe = 1;
         }
      close(fd[iopipe]);
-     f = fdopen(fd[1 - iopipe], mode);
      if ((f = fdopen(fd[1 - iopipe], mode)) == NULL) {
         LOG_ERROR;
         close(fd[1 - iopipe]);
